@@ -1,1 +1,1 @@
-worker: python restore_db.py && python bot.py
+worker: python bot.py
