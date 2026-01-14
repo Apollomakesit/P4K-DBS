@@ -25,52 +25,57 @@ class Pro4KingsScraper:
                     
                     actions = []
                     
-                    # Find the "Ultimele acțiuni" section
-                    actions_section = soup.find('div', class_='card') or soup.find('div', string=re.compile(r'Ultimele.*ac.*iuni', re.IGNORECASE))
+                    # Find all text that contains "Jucatorul" or "Jucătorul"
+                    # The actions appear in the HTML as text nodes
+                    all_text = soup.get_text()
                     
-                    if not actions_section:
-                        # Try alternative selectors
-                        actions_section = soup
+                    # Split by common delimiters and process each potential action
+                    lines = all_text.split('\n')
                     
-                    # Look for action items - they typically appear in list format or as text blocks
-                    action_elements = actions_section.find_all(['li', 'div', 'p'], recursive=True)
-                    
-                    for elem in action_elements:
-                        text = elem.get_text(strip=True)
+                    for i, line in enumerate(lines):
+                        line = line.strip()
                         
-                        # Check if this is an action (contains "Jucatorul" or "Jucătorul")
-                        if not ('Jucatorul' in text or 'Jucătorul' in text):
+                        # Check if this line contains an action
+                        if not ('Jucatorul' in line or 'Jucătorul' in line):
                             continue
                         
-                        # Extract timestamp in format: 2026-01-14 21:47:14
+                        # Look for timestamp in the same line or next line
                         timestamp = None
+                        text = line
+                        
+                        # Pattern 1: Timestamp in same line
                         timestamp_match = re.search(r'(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})', text)
-                        
                         if timestamp_match:
+                            timestamp_str = timestamp_match.group(0)
                             try:
-                                timestamp_str = timestamp_match.group(0)
                                 timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
-                                # Remove timestamp from text
-                                text = text.replace(timestamp_str, '').strip()
                             except:
-                                timestamp = datetime.now()
-                        else:
-                            # Try alternative timestamp formats
-                            timestamp_elem = elem.find('time')
-                            if timestamp_elem:
-                                timestamp_str = timestamp_elem.get('datetime') or timestamp_elem.get_text(strip=True)
-                                try:
-                                    timestamp = datetime.strptime(timestamp_str, '%d/%m/%Y %H:%M:%S')
-                                except:
-                                    try:
-                                        timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                                    except:
-                                        timestamp = datetime.now()
-                            else:
-                                timestamp = datetime.now()
+                                pass
                         
-                        # Clean up text (remove clock emoji and extra whitespace)
+                        # Pattern 2: Check next line for timestamp
+                        if not timestamp and i + 1 < len(lines):
+                            next_line = lines[i + 1].strip()
+                            timestamp_match = re.search(r'(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})', next_line)
+                            if timestamp_match:
+                                timestamp_str = timestamp_match.group(0)
+                                try:
+                                    timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+                                    # Combine text with timestamp line for full context
+                                    text = f"{text} {next_line}"
+                                except:
+                                    pass
+                        
+                        if not timestamp:
+                            timestamp = datetime.now()
+                        
+                        # Clean up text
+                        text = re.sub(r'\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}', '', text).strip()
                         text = re.sub(r'[🕐⏰🕑🕒🕓🕔🕕🕖🕗🕘🕙🕚🕛]', '', text).strip()
+                        text = re.sub(r'\s+', ' ', text)
+                        
+                        # Skip if text is too short
+                        if len(text) < 20:
+                            continue
                         
                         # Parse the action
                         parsed = self._parse_action(text)
@@ -87,6 +92,7 @@ class Pro4KingsScraper:
                                 'item': parsed.get('item'),
                                 'action_type': parsed.get('action_type')
                             })
+                            print(f"✓ Parsed action: {parsed.get('from_player')}({parsed.get('from_id')}) -> {parsed.get('action_type')}")
                     
                     return actions
             except Exception as e:
@@ -107,8 +113,9 @@ class Pro4KingsScraper:
             'action_type': None
         }
         
-        # Extract "from" player: Jucatorul NAME(ID)
-        from_match = re.search(r'Juc[aă]torul\s+([^\(]+)\((\d+)\)', text, re.IGNORECASE)
+        # Extract "from" player: Jucatorul NAME(ID) or Jucătorul NAME(ID)
+        # Handle special characters in names
+        from_match = re.search(r'Juc[aă]torul\s+(.+?)\((\d+)\)', text, re.IGNORECASE)
         if from_match:
             result['from_player'] = from_match.group(1).strip()
             result['from_id'] = int(from_match.group(2))
@@ -116,7 +123,8 @@ class Pro4KingsScraper:
         # Determine action type and extract "to" player
         if 'dat lui' in text or 'a dat lui' in text or 'ia dat lui' in text:
             result['action_type'] = 'gave'
-            to_match = re.search(r'lui\s+([^\(]+)\((\d+)\)', text)
+            # Extract receiver: lui NAME(ID)
+            to_match = re.search(r'lui\s+(.+?)\((\d+)\)', text)
             if to_match:
                 result['to_player'] = to_match.group(1).strip()
                 result['to_id'] = int(to_match.group(2))
@@ -129,11 +137,23 @@ class Pro4KingsScraper:
         elif 'primit' in text or 'a primit' in text:
             result['action_type'] = 'received'
         
-        # Extract quantity and item: 1316180x Bani Murdari or 1x Ketamina
-        item_match = re.search(r'(\d+)x?\s+([^\.]+)', text)
-        if item_match:
-            result['quantity'] = int(item_match.group(1).replace('x', ''))
-            result['item'] = item_match.group(2).strip()
+        # Extract quantity and item: NUMBER + "x" + ITEM or NUMBER + ITEM
+        # Examples: "1316180x Bani Murdari", "1x Ketamina", "8.686.625 bani murdari"
+        item_patterns = [
+            r'(\d[\d\.,]*)\s*x\s+([^\.]+?)(?=\s+si\s+|\.|$)',  # "1316180x Bani Murdari"
+            r'(\d[\d\.,]*)\s+([a-zA-Z][^\.]+?)(?=\s+si\s+|\.|$)',  # "8.686.625 bani murdari"
+        ]
+        
+        for pattern in item_patterns:
+            item_match = re.search(pattern, text)
+            if item_match:
+                try:
+                    quantity_str = item_match.group(1).replace('.', '').replace(',', '')
+                    result['quantity'] = int(quantity_str)
+                    result['item'] = item_match.group(2).strip()
+                    break
+                except:
+                    pass
         
         return result
     
@@ -164,13 +184,16 @@ class Pro4KingsScraper:
                         page_players = []
                         for elem in player_elements:
                             try:
-                                # Get ID from first column
-                                id_elem = elem.select_one('td:first-child')
-                                if not id_elem:
+                                # Get all columns
+                                cols = elem.find_all('td')
+                                if len(cols) < 2:
                                     continue
                                 
-                                # Get name from link in second column
-                                name_elem = elem.select_one('td:nth-child(2) a')
+                                # First column: ID
+                                id_elem = cols[0]
+                                # Second column: Name (with link)
+                                name_elem = cols[1].find('a')
+                                
                                 if not name_elem:
                                     continue
                                 
@@ -209,7 +232,7 @@ class Pro4KingsScraper:
                         page += 1
                         
                         # Rate limiting - don't hammer the server
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(0.3)
                         
                 except Exception as e:
                     print(f"Error on page {page}: {e}")
@@ -241,12 +264,25 @@ class Pro4KingsScraper:
                     player_name = name_elem.get_text(strip=True)
                     # Clean up name
                     player_name = re.sub(r'^\s*[•●]\s*', '', player_name)
-                    player_name = re.sub(r'\s*\(Online\)|\(Offline\)', '', player_name, flags=re.IGNORECASE)
                     
-                    # Check online status
+                    # FIXED: Better online status detection
                     is_online = False
-                    if name_elem.find('i', class_='text-success') or soup.find(text=re.compile(r'Online', re.IGNORECASE)):
+                    
+                    # Check in name element for "(Online)" text
+                    if '(Online)' in player_name or 'Online' in name_elem.get_text():
                         is_online = True
+                    
+                    # Check for green indicator icon
+                    if name_elem.find('i', class_='text-success'):
+                        is_online = True
+                    
+                    # Check for badge with "Online" text
+                    online_badge = soup.find('span', class_='badge', string=re.compile(r'Online', re.IGNORECASE))
+                    if online_badge:
+                        is_online = True
+                    
+                    # Clean up name (remove status indicators)
+                    player_name = re.sub(r'\s*\(Online\)|\(Offline\)', '', player_name, flags=re.IGNORECASE).strip()
                     
                     # Get profile table
                     table = soup.find('table', class_='table')
@@ -334,17 +370,27 @@ class Pro4KingsScraper:
                 print(f"Error scraping profile {player_id}: {e}")
                 return None
     
-    async def batch_get_profiles(self, player_ids, delay=0.5):
-        """Get multiple profiles with delay between requests"""
+    async def batch_get_profiles(self, player_ids, delay=0.3, concurrent=10):
+        """Get multiple profiles with concurrent requests"""
         results = []
-        for i, player_id in enumerate(player_ids):
-            result = await self.get_player_profile(player_id)
-            if result:
-                results.append(result)
+        
+        # Process in batches for better performance
+        for i in range(0, len(player_ids), concurrent):
+            batch = player_ids[i:i + concurrent]
             
-            if (i + 1) % 50 == 0:
-                print(f"✓ Scraped {i + 1}/{len(player_ids)} profiles")
+            # Fetch batch concurrently
+            tasks = [self.get_player_profile(pid) for pid in batch]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            await asyncio.sleep(delay)
+            for result in batch_results:
+                if result and not isinstance(result, Exception):
+                    results.append(result)
+            
+            if (i + concurrent) % 50 == 0:
+                print(f"✓ Scraped {min(i + concurrent, len(player_ids))}/{len(player_ids)} profiles")
+            
+            # Delay between batches
+            if i + concurrent < len(player_ids):
+                await asyncio.sleep(delay)
         
         return results
