@@ -1,30 +1,34 @@
 import asyncio
-from initial_scan import BulkProfileScraper
+from scraper import Pro4KingsScraper
 from database import Database
 import os
 
 async def resume_scan():
+    """Resume scan from where it left off"""
     db = Database(os.getenv('DATABASE_URL', 'sqlite:///pro4kings.db'))
+    scraper = Pro4KingsScraper()
     
+    # Get current progress
     progress = db.get_scan_progress()
-    print(f"Current progress: {progress['total_scanned']}/{progress['total_target']} profiles")
-    print(f"Percentage: {progress['percentage']:.1f}%")
-    print()
+    print(f"📊 Current progress: {progress['total_scanned']:,} profiles scanned")
     
+    # Find the highest ID scanned
     with db.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT MAX(player_id) as max_id FROM player_profiles')
         result = cursor.fetchone()
-        start_id = result['max_id'] + 1 if result['max_id'] else 1
+        last_id = result['max_id'] if result and result['max_id'] else 0
     
-    print(f"Resuming from ID: {start_id}")
-    print()
+    print(f"🔄 Resuming from ID: {last_id + 1}")
     
-    scraper = BulkProfileScraper(num_workers=30)
-    await scraper.scan_all_profiles(start_id=start_id, end_id=223797)
-    
-    db.mark_scan_complete()
-    print("\n✅ Initial scan marked as complete!")
+    # Import and run fast scanner
+    from initial_scan import fast_initial_scan
+    await fast_initial_scan(
+        start_id=last_id + 1,
+        end_id=223797,
+        batch_size=100,
+        concurrent=20
+    )
 
 if __name__ == '__main__':
     asyncio.run(resume_scan())
