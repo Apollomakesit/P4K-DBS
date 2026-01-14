@@ -53,10 +53,12 @@ async def scrape_actions():
             
     except Exception as e:
         print(f"✗ Error scraping actions: {e}")
+        import traceback
+        traceback.print_exc()
 
 @tasks.loop(minutes=2)
 async def scrape_online_players():
-    """Scrape online players every 2 minutes (handles 500+ players efficiently)"""
+    """Scrape ALL online players across all pages every 2 minutes"""
     try:
         online_players = await scraper.get_online_players()
         current_time = datetime.now()
@@ -90,6 +92,8 @@ async def scrape_online_players():
         
     except Exception as e:
         print(f"✗ Error scraping online players: {e}")
+        import traceback
+        traceback.print_exc()
 
 @tasks.loop(minutes=3)
 async def update_pending_profiles():
@@ -111,6 +115,8 @@ async def update_pending_profiles():
         
     except Exception as e:
         print(f"✗ Error updating pending profiles: {e}")
+        import traceback
+        traceback.print_exc()
 
 @tasks.loop(hours=6)
 async def cleanup_old_data():
@@ -122,24 +128,39 @@ async def cleanup_old_data():
         print(f"✗ Error cleaning data: {e}")
 
 # ============================================================================
+# HELPER FUNCTION TO RESOLVE PLAYER IDENTIFIER
+# ============================================================================
+
+async def resolve_player_info(identifier):
+    """Helper function to get player info from ID or name"""
+    if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
+        player_id = int(identifier)
+        profile = db.get_player_last_connection(player_id)
+        if not profile:
+            profile = await scraper.get_player_profile(player_id)
+            if profile:
+                db.save_player_profile(profile)
+        return profile
+    else:
+        # Search by name
+        players = db.search_player_by_name(identifier)
+        if players:
+            return players[0]  # Return first match
+        return None
+
+# ============================================================================
 # DISCORD COMMANDS - PLAYER INFO
 # ============================================================================
 
-@bot.tree.command(name="player_info", description="Vezi informații complete despre un jucător")
-async def player_info(interaction: discord.Interaction, player_id: int):
+@bot.tree.command(name="player_info", description="Vezi informații complete despre un jucător (ID sau nume)")
+async def player_info(interaction: discord.Interaction, identifier: str):
     await interaction.response.defer()
     
-    profile = db.get_player_last_connection(player_id)
+    profile = await resolve_player_info(identifier)
     
     if not profile:
-        profile_data = await scraper.get_player_profile(player_id)
-        
-        if not profile_data:
-            await interaction.followup.send(f"❌ Nu am găsit jucătorul cu ID **{player_id}**.")
-            return
-        
-        db.save_player_profile(profile_data)
-        profile = profile_data
+        await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**.")
+        return
     
     embed = discord.Embed(
         title=f"👤 {profile['player_name']}",
@@ -159,7 +180,7 @@ async def player_info(interaction: discord.Interaction, player_id: int):
     
     rank = profile.get('faction_rank')
     if rank:
-        rank_history = db.get_player_rank_history(player_id)
+        rank_history = db.get_player_rank_history(profile['player_id'])
         if rank_history and rank_history[0].get('is_current'):
             rank_obtained = rank_history[0].get('rank_obtained')
             if rank_obtained:
@@ -204,19 +225,15 @@ async def player_info(interaction: discord.Interaction, player_id: int):
     
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="player_last_seen", description="Vezi ultima conectare a unui jucător")
-async def player_last_seen(interaction: discord.Interaction, player_id: int):
+@bot.tree.command(name="player_last_seen", description="Vezi ultima conectare a unui jucător (ID sau nume)")
+async def player_last_seen(interaction: discord.Interaction, identifier: str):
     await interaction.response.defer()
     
-    profile = db.get_player_last_connection(player_id)
+    profile = await resolve_player_info(identifier)
     
     if not profile:
-        profile_data = await scraper.get_player_profile(player_id)
-        if not profile_data:
-            await interaction.followup.send(f"❌ Nu am găsit jucătorul cu ID **{player_id}**.")
-            return
-        db.save_player_profile(profile_data)
-        profile = profile_data
+        await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**.")
+        return
     
     embed = discord.Embed(
         title=f"👤 {profile['player_name']}",
@@ -273,18 +290,25 @@ async def find_player(interaction: discord.Interaction, name: str):
     await interaction.followup.send(embed=embed)
 
 # ============================================================================
-# DISCORD COMMANDS - PLAYER ACTIONS
+# DISCORD COMMANDS - PLAYER ACTIONS (UPDATED WITH ID SUPPORT)
 # ============================================================================
 
-@bot.tree.command(name="player_actions", description="Vezi toate acțiunile unui jucător")
-async def player_actions(interaction: discord.Interaction, player_name: str, days: int = 7):
+@bot.tree.command(name="player_actions", description="Vezi toate acțiunile unui jucător (ID sau nume)")
+async def player_actions(interaction: discord.Interaction, identifier: str, days: int = 7):
     await interaction.response.defer()
     
-    actions = db.get_player_actions(player_name, days)
+    actions = db.get_player_actions(identifier, days)
     
     if not actions:
-        await interaction.followup.send(f"❌ Nu am găsit acțiuni pentru **{player_name}** în ultimele {days} zile.")
+        await interaction.followup.send(f"❌ Nu am găsit acțiuni pentru **{identifier}** în ultimele {days} zile.")
         return
+    
+    # Get player name for display
+    player_name = identifier
+    if actions and actions[0].get('from_player'):
+        player_name = actions[0]['from_player']
+    elif actions and actions[0].get('to_player'):
+        player_name = actions[0]['to_player']
     
     embed = discord.Embed(
         title=f"📋 Acțiuni - {player_name}",
@@ -308,19 +332,24 @@ async def player_actions(interaction: discord.Interaction, player_name: str, day
     
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="player_gave", description="Vezi ce a dat un jucător altora")
-async def player_gave(interaction: discord.Interaction, player_name: str, days: int = 7):
+@bot.tree.command(name="player_gave", description="Vezi ce a dat un jucător altora (ID sau nume)")
+async def player_gave(interaction: discord.Interaction, identifier: str, days: int = 7):
     await interaction.response.defer()
     
-    interactions = db.get_player_gave(player_name, days)
+    interactions = db.get_player_gave(identifier, days)
     
     if not interactions:
-        await interaction.followup.send(f"❌ **{player_name}** nu a dat nimic în ultimele {days} zile.")
+        await interaction.followup.send(f"❌ **{identifier}** nu a dat nimic în ultimele {days} zile.")
         return
+    
+    # Get player name for display
+    player_name = identifier
+    if interactions and interactions[0].get('from_player'):
+        player_name = interactions[0]['from_player']
     
     embed = discord.Embed(
         title=f"📤 Iteme Date de {player_name}",
-        description=f"Ultimele {days} zile",
+        description=f"Ultimele {days} zile • {len(interactions)} tranzacții",
         color=discord.Color.green()
     )
     
@@ -328,27 +357,38 @@ async def player_gave(interaction: discord.Interaction, player_name: str, days: 
         timestamp = item['timestamp']
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
+        to_info = f"{item['to_player']}"
+        if item.get('to_id'):
+            to_info += f" (ID: {item['to_id']})"
         embed.add_field(
-            name=f"→ {item['to_player']}",
+            name=f"→ {to_info}",
             value=f"**{item['quantity']}x** {item['item']}\n{timestamp.strftime('%d.%m %H:%M')}",
             inline=True
         )
     
+    if len(interactions) > 25:
+        embed.set_footer(text=f"Afișate primele 25 din {len(interactions)} tranzacții")
+    
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="player_received", description="Vezi ce a primit un jucător")
-async def player_received(interaction: discord.Interaction, player_name: str, days: int = 7):
+@bot.tree.command(name="player_received", description="Vezi ce a primit un jucător (ID sau nume)")
+async def player_received(interaction: discord.Interaction, identifier: str, days: int = 7):
     await interaction.response.defer()
     
-    interactions = db.get_player_received(player_name, days)
+    interactions = db.get_player_received(identifier, days)
     
     if not interactions:
-        await interaction.followup.send(f"❌ **{player_name}** nu a primit nimic în ultimele {days} zile.")
+        await interaction.followup.send(f"❌ **{identifier}** nu a primit nimic în ultimele {days} zile.")
         return
+    
+    # Get player name for display
+    player_name = identifier
+    if interactions and interactions[0].get('to_player'):
+        player_name = interactions[0]['to_player']
     
     embed = discord.Embed(
         title=f"📥 Iteme Primite de {player_name}",
-        description=f"Ultimele {days} zile",
+        description=f"Ultimele {days} zile • {len(interactions)} tranzacții",
         color=discord.Color.orange()
     )
     
@@ -356,16 +396,64 @@ async def player_received(interaction: discord.Interaction, player_name: str, da
         timestamp = item['timestamp']
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
+        from_info = f"{item['from_player']}"
+        if item.get('from_id'):
+            from_info += f" (ID: {item['from_id']})"
         embed.add_field(
-            name=f"← {item['from_player']}",
+            name=f"← {from_info}",
             value=f"**{item['quantity']}x** {item['item']}\n{timestamp.strftime('%d.%m %H:%M')}",
             inline=True
         )
     
+    if len(interactions) > 25:
+        embed.set_footer(text=f"Afișate primele 25 din {len(interactions)} tranzacții")
+    
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="player_interactions", description="Vezi interacțiunile între doi jucători")
-async def player_interactions(interaction: discord.Interaction, player1: str, player2: str, days: int = 7):
+@bot.tree.command(name="player_interactions", description="Vezi toate persoanele cu care un jucător a interacționat (ID sau nume)")
+async def player_interactions(interaction: discord.Interaction, identifier: str, days: int = 7):
+    await interaction.response.defer()
+    
+    interactions = db.get_all_player_interactions(identifier, days)
+    
+    if not interactions:
+        await interaction.followup.send(f"❌ **{identifier}** nu a avut interacțiuni în ultimele {days} zile.")
+        return
+    
+    # Get player info
+    profile = await resolve_player_info(identifier)
+    player_name = profile['player_name'] if profile else identifier
+    
+    embed = discord.Embed(
+        title=f"🤝 Interacțiuni - {player_name}",
+        description=f"Ultimele {days} zile • {len(interactions)} jucători unici",
+        color=discord.Color.purple(),
+        timestamp=datetime.now()
+    )
+    
+    for interaction_data in interactions[:25]:
+        other_player = interaction_data['other_player']
+        other_id = interaction_data.get('other_player_id', 'N/A')
+        gave_count = interaction_data['gave_count']
+        received_count = interaction_data['received_count']
+        total_count = interaction_data['interaction_count']
+        
+        value_text = f"📊 Total: **{total_count}** tranzacții\n"
+        value_text += f"📤 Dat: **{gave_count}** • 📥 Primit: **{received_count}**"
+        
+        embed.add_field(
+            name=f"👤 {other_player} (ID: {other_id})",
+            value=value_text,
+            inline=False
+        )
+    
+    if len(interactions) > 25:
+        embed.set_footer(text=f"Afișați primii 25 din {len(interactions)} jucători")
+    
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="player_interactions_with", description="Vezi interacțiunile între doi jucători")
+async def player_interactions_with(interaction: discord.Interaction, player1: str, player2: str, days: int = 7):
     await interaction.response.defer()
     
     interactions = db.get_interactions_between(player1, player2, days)
@@ -376,7 +464,7 @@ async def player_interactions(interaction: discord.Interaction, player1: str, pl
     
     embed = discord.Embed(
         title=f"🔄 Interacțiuni",
-        description=f"**{player1}** ↔ **{player2}**\nUltimele {days} zile",
+        description=f"**{player1}** ↔ **{player2}**\nUltimele {days} zile • {len(interactions)} tranzacții",
         color=discord.Color.gold()
     )
     
@@ -391,25 +479,33 @@ async def player_interactions(interaction: discord.Interaction, player1: str, pl
             inline=False
         )
     
+    if len(interactions) > 25:
+        embed.set_footer(text=f"Afișate primele 25 din {len(interactions)} tranzacții")
+    
     await interaction.followup.send(embed=embed)
 
 # ============================================================================
-# DISCORD COMMANDS - SESSIONS
+# DISCORD COMMANDS - SESSIONS (UPDATED WITH ID SUPPORT)
 # ============================================================================
 
-@bot.tree.command(name="player_sessions", description="Vezi sesiunile de joc")
-async def player_sessions(interaction: discord.Interaction, player_name: str, days: int = 7):
+@bot.tree.command(name="player_sessions", description="Vezi sesiunile de joc (ID sau nume)")
+async def player_sessions(interaction: discord.Interaction, identifier: str, days: int = 7):
     await interaction.response.defer()
     
-    sessions = db.get_player_sessions(player_name, days)
+    sessions = db.get_player_sessions(identifier, days)
     
     if not sessions:
-        await interaction.followup.send(f"❌ Nu am date despre sesiunile lui **{player_name}**.")
+        await interaction.followup.send(f"❌ Nu am date despre sesiunile lui **{identifier}**.")
         return
+    
+    # Get player name for display
+    player_name = identifier
+    if sessions and sessions[0].get('player_name'):
+        player_name = sessions[0]['player_name']
     
     embed = discord.Embed(
         title=f"🎮 Sesiuni - {player_name}",
-        description=f"Ultimele {days} zile",
+        description=f"Ultimele {days} zile • {len(sessions)} sesiuni",
         color=discord.Color.purple()
     )
     
@@ -435,6 +531,12 @@ async def player_sessions(interaction: discord.Interaction, player_name: str, da
     if total_time.total_seconds() > 0:
         embed.set_footer(text=f"⏱️ Timp total de joc: {str(total_time).split('.')[0]}")
     
+    if len(sessions) > 25:
+        footer_text = f"Afișate primele 25 din {len(sessions)} sesiuni"
+        if total_time.total_seconds() > 0:
+            footer_text += f" • ⏱️ Timp total: {str(total_time).split('.')[0]}"
+        embed.set_footer(text=footer_text)
+    
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="online_players", description="Vezi jucătorii online acum")
@@ -454,11 +556,20 @@ async def online_players(interaction: discord.Interaction):
         timestamp=datetime.now()
     )
     
-    player_list = "\n".join([f"• **{p['player_name']}** (ID: {p['player_id']})" for p in players[:50]])
-    embed.add_field(name="Jucători", value=player_list or "Nimeni", inline=False)
+    # Split players into chunks for better display
+    chunk_size = 50
+    player_chunks = [players[i:i + chunk_size] for i in range(0, len(players), chunk_size)]
     
-    if len(players) > 50:
-        embed.set_footer(text=f"Afișați primii 50 din {len(players)} jucători")
+    for i, chunk in enumerate(player_chunks[:3]):  # Max 3 chunks (150 players)
+        player_list = "\n".join([f"• **{p['player_name']}** (ID: {p['player_id']})" for p in chunk])
+        embed.add_field(
+            name=f"Jucători (Partea {i+1})" if len(player_chunks) > 1 else "Jucători",
+            value=player_list or "Nimeni",
+            inline=False
+        )
+    
+    if len(players) > 150:
+        embed.set_footer(text=f"Afișați primii 150 din {len(players)} jucători")
     
     await interaction.followup.send(embed=embed)
 
@@ -490,7 +601,7 @@ async def faction_members(interaction: discord.Interaction, faction_name: str):
         
         embed.add_field(
             name=f"{status} {member['player_name']} (ID: {member['player_id']})",
-            value=f"Job: **{member.get('job', 'N/A')}** • Ore: **{member.get('played_hours', 0)}**{rank_text}{warn_text}",
+            value=f"Job: **{member.get('job', 'N/A')}** • Ore: **{member.get('played_hours', 0):.1f}**{rank_text}{warn_text}",
             inline=False
         )
     
@@ -499,21 +610,25 @@ async def faction_members(interaction: discord.Interaction, faction_name: str):
     
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="rank_history", description="Vezi istoricul rank-urilor")
-async def rank_history(interaction: discord.Interaction, player_id: int):
+@bot.tree.command(name="rank_history", description="Vezi istoricul rank-urilor (ID sau nume)")
+async def rank_history(interaction: discord.Interaction, identifier: str):
     await interaction.response.defer()
     
-    history = db.get_player_rank_history(player_id)
+    profile = await resolve_player_info(identifier)
     
-    if not history:
-        await interaction.followup.send(f"❌ Nu am găsit istoric de rank-uri pentru ID **{player_id}**.")
+    if not profile:
+        await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**.")
         return
     
-    player_name = history[0]['player_name']
+    history = db.get_player_rank_history(profile['player_id'])
+    
+    if not history:
+        await interaction.followup.send(f"❌ Nu am găsit istoric de rank-uri pentru **{profile['player_name']}**.")
+        return
     
     embed = discord.Embed(
-        title=f"🎖️ Istoric Rank-uri - {player_name}",
-        description=f"ID: **{player_id}**",
+        title=f"🎖️ Istoric Rank-uri - {profile['player_name']}",
+        description=f"ID: **{profile['player_id']}**",
         color=discord.Color.gold()
     )
     
@@ -611,6 +726,9 @@ async def players_with_rank(interaction: discord.Interaction, rank_name: str):
             inline=False
         )
     
+    if len(players) > 25:
+        embed.set_footer(text=f"Afișați primii 25 din {len(players)} jucători")
+    
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="recent_promotions", description="Vezi promovările recente")
@@ -650,6 +768,9 @@ async def recent_promotions(interaction: discord.Interaction, days: int = 7):
             inline=False
         )
     
+    if len(promotions) > 25:
+        embed.set_footer(text=f"Afișate primele 25 din {len(promotions)} schimbări")
+    
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="warned_players", description="Vezi jucătorii cu warn-uri")
@@ -678,6 +799,9 @@ async def warned_players(interaction: discord.Interaction, min_warns: int = 1):
             value=f"⚠️ **{warns}/3** warns • {faction}",
             inline=False
         )
+    
+    if len(players) > 25:
+        embed.set_footer(text=f"Afișați primii 25 din {len(players)} jucători")
     
     await interaction.followup.send(embed=embed)
 
@@ -725,36 +849,45 @@ async def scan_progress(interaction: discord.Interaction):
     
     await interaction.followup.send(embed=embed)
 
-@bot.tree.command(name="update_player_now", description="Actualizează profilul unui jucător")
-async def update_player_now(interaction: discord.Interaction, player_id: int):
+@bot.tree.command(name="update_player_now", description="Actualizează profilul unui jucător (ID sau nume)")
+async def update_player_now(interaction: discord.Interaction, identifier: str):
     await interaction.response.defer()
     
-    profile = await scraper.get_player_profile(player_id)
-    
+    # Resolve to player ID
+    profile = await resolve_player_info(identifier)
     if not profile:
+        await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**.")
+        return
+    
+    player_id = profile['player_id']
+    
+    # Fetch fresh profile
+    fresh_profile = await scraper.get_player_profile(player_id)
+    
+    if not fresh_profile:
         await interaction.followup.send(f"❌ Nu am putut accesa profilul ID **{player_id}**.")
         return
     
-    db.save_player_profile(profile)
+    db.save_player_profile(fresh_profile)
     
     embed = discord.Embed(
-        title=f"✅ Profil actualizat: {profile['player_name']}",
-        description=f"ID: **{profile['player_id']}**",
+        title=f"✅ Profil actualizat: {fresh_profile['player_name']}",
+        description=f"ID: **{fresh_profile['player_id']}**",
         color=discord.Color.green()
     )
     
-    embed.add_field(name="Facțiune", value=profile.get('faction', 'N/A'), inline=True)
-    embed.add_field(name="Rank", value=profile.get('faction_rank', 'N/A'), inline=True)
-    embed.add_field(name="Job", value=profile.get('job', 'N/A'), inline=True)
-    embed.add_field(name="Warns", value=f"{profile.get('warns', 0)}/3", inline=True)
-    embed.add_field(name="Ore jucate", value=str(profile.get('played_hours', 0)), inline=True)
+    embed.add_field(name="Facțiune", value=fresh_profile.get('faction', 'N/A'), inline=True)
+    embed.add_field(name="Rank", value=fresh_profile.get('faction_rank', 'N/A'), inline=True)
+    embed.add_field(name="Job", value=fresh_profile.get('job', 'N/A'), inline=True)
+    embed.add_field(name="Warns", value=f"{fresh_profile.get('warns', 0)}/3", inline=True)
+    embed.add_field(name="Ore jucate", value=f"{fresh_profile.get('played_hours', 0):.1f}", inline=True)
     
-    if profile.get('is_online'):
+    if fresh_profile.get('is_online'):
         embed.add_field(name="Status", value="🟢 **Online acum**", inline=False)
-    elif profile.get('last_connection'):
+    elif fresh_profile.get('last_connection'):
         embed.add_field(
             name="Ultima conectare",
-            value=f"**{profile['last_connection'].strftime('%d.%m.%Y %H:%M:%S')}**",
+            value=f"**{fresh_profile['last_connection'].strftime('%d.%m.%Y %H:%M:%S')}**",
             inline=False
         )
     
