@@ -1,179 +1,67 @@
 import asyncio
-import aiohttp
-from bs4 import BeautifulSoup
-from datetime import datetime
-import re
+from scraper import Pro4KingsScraper
 from database import Database
 import os
 
-class BulkProfileScraper:
-    def __init__(self, num_workers=30):
-        self.base_url = "https://panel.pro4kings.ro/profile"
-        self.num_workers = num_workers
-        self.db = Database(os.getenv('DATABASE_URL', 'sqlite:///pro4kings.db'))
-        self.total_scraped = 0
-        self.total_failed = 0
-        
-    async def get_player_profile(self, player_id, session):
-        url = f"{self.base_url}/{player_id}"
-        try:
-            async with session.get(url, timeout=10) as response:
-                if response.status == 404:
-                    return None
-                    
-                if response.status != 200:
-                    return None
-                
-                html = await response.text()
-                soup = BeautifulSoup(html, 'html.parser')
-                
-                name_elem = soup.select_one('h4.card-title')
-                if not name_elem:
-                    return None
-                
-                player_name = name_elem.get_text(strip=True)
-                player_name = re.sub(r'^\s*[•●]\s*', '', player_name)
-                player_name = re.sub(r'\s*\(Online\)|\(Offline\)', '', player_name, flags=re.IGNORECASE)
-                
-                is_online = bool(name_elem.find('i', class_='text-success'))
-                
-                table = soup.find('table', class_='table')
-                if not table:
-                    return None
-                
-                last_connection = None
-                faction = None
-                faction_rank = None
-                warns = None
-                job = None
-                played_hours = None
-                age_ic = None
-                
-                for row in table.find_all('tr'):
-                    header = row.find('th')
-                    data_cell = row.find('td')
-                    
-                    if not header or not data_cell:
-                        continue
-                    
-                    header_text = header.get_text(strip=True)
-                    data_text = data_cell.get_text(strip=True)
-                    
-                    if 'Ultima conectare' in header_text:
-                        try:
-                            last_connection = datetime.strptime(data_text, '%d/%m/%Y %H:%M:%S')
-                        except:
-                            pass
-                    elif 'Facțiune' in header_text or 'Factiune' in header_text:
-                        if 'Rank' not in header_text:
-                            faction = data_text
-                    elif 'Rank Facțiune' in header_text or 'Rank Factiune' in header_text:
-                        rank_link = data_cell.find('a')
-                        faction_rank = rank_link.get_text(strip=True) if rank_link else data_text
-                        if faction_rank:
-                            faction_rank = ' '.join(faction_rank.split())
-                    elif 'Warn' in header_text:
-                        try:
-                            warns = int(re.search(r'\d+', data_text).group())
-                        except:
-                            warns = 0
-                    elif 'Job' in header_text:
-                        job = data_text
-                    elif 'Ore jucate' in header_text:
-                        try:
-                            played_hours = int(re.search(r'\d+', data_text).group())
-                        except:
-                            played_hours = 0
-                    elif 'Vârsta IC' in header_text or 'Varsta IC' in header_text:
-                        try:
-                            age_ic = int(re.search(r'\d+', data_text).group())
-                        except:
-                            pass
-                
-                return {
-                    'player_id': player_id,
-                    'player_name': player_name,
-                    'last_connection': last_connection,
-                    'is_online': is_online,
-                    'faction': faction,
-                    'faction_rank': faction_rank,
-                    'warns': warns,
-                    'job': job,
-                    'played_hours': played_hours,
-                    'age_ic': age_ic
-                }
-        except:
-            return None
+async def fast_initial_scan(start_id=1, end_id=223797, batch_size=50, concurrent=20):
+    """
+    Fast initial scan using concurrent workers
     
-    async def worker(self, worker_id, queue):
-        connector = aiohttp.TCPConnector(limit_per_host=10)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            while True:
-                try:
-                    player_id = await queue.get()
-                    
-                    if player_id is None:
-                        queue.task_done()
-                        break
-                    
-                    result = await self.get_player_profile(player_id, session)
-                    
-                    if result:
-                        self.db.save_player_profile(result)
-                        self.total_scraped += 1
-                        
-                        if self.total_scraped % 100 == 0:
-                            print(f"[Worker {worker_id}] ✓ {self.total_scraped} profiles scraped")
-                    else:
-                        self.total_failed += 1
-                    
-                    queue.task_done()
-                    await asyncio.sleep(0.3)
-                    
-                except Exception as e:
-                    queue.task_done()
+    Args:
+        start_id: Starting player ID
+        end_id: Ending player ID
+        batch_size: Number of profiles to fetch before saving
+        concurrent: Number of concurrent requests
+    """
+    db = Database(os.getenv('DATABASE_URL', 'sqlite:///pro4kings.db'))
+    scraper = Pro4KingsScraper()
     
-    async def scan_all_profiles(self, start_id=1, end_id=223797):
-        print(f"🚀 Starting initial scan: ID {start_id} to {end_id}")
-        print(f"👷 Using {self.num_workers} concurrent workers")
-        print(f"⏱️  Estimated time: ~{((end_id - start_id + 1) * 0.3) / self.num_workers / 3600:.1f} hours")
-        print()
+    print(f"🚀 Starting fast initial scan from ID {start_id} to {end_id}")
+    print(f"⚙️ Settings: batch_size={batch_size}, concurrent={concurrent}")
+    
+    total_scanned = 0
+    total_found = 0
+    
+    # Process in large batches
+    for batch_start in range(start_id, end_id + 1, batch_size):
+        batch_end = min(batch_start + batch_size, end_id + 1)
+        player_ids = list(range(batch_start, batch_end))
         
-        queue = asyncio.Queue()
-        for player_id in range(start_id, end_id + 1):
-            await queue.put(player_id)
+        print(f"\n📦 Processing batch: {batch_start} to {batch_end-1}")
         
-        for _ in range(self.num_workers):
-            await queue.put(None)
+        # Fetch profiles with concurrent workers
+        results = await scraper.batch_get_profiles(player_ids, delay=0.1, concurrent=concurrent)
         
-        start_time = datetime.now()
-        workers = [asyncio.create_task(self.worker(i + 1, queue)) for i in range(self.num_workers)]
+        # Save to database
+        for profile in results:
+            if profile:
+                db.save_player_profile(profile)
+                total_found += 1
         
-        await queue.join()
-        await asyncio.gather(*workers)
+        total_scanned += len(player_ids)
         
-        duration = datetime.now() - start_time
+        progress = (total_scanned / (end_id - start_id + 1)) * 100
+        print(f"✅ Batch complete: Found {len(results)}/{len(player_ids)} profiles")
+        print(f"📊 Progress: {total_scanned:,}/{end_id-start_id+1:,} ({progress:.2f}%) | Found: {total_found:,} profiles")
         
-        print()
-        print("=" * 60)
-        print("✅ INITIAL SCAN COMPLETE!")
-        print(f"✓ Successfully scraped: {self.total_scraped} profiles")
-        print(f"✗ Failed/Not found: {self.total_failed} profiles")
-        print(f"⏱️  Duration: {duration}")
-        print(f"⚡ Average speed: {self.total_scraped / duration.total_seconds():.1f} profiles/second")
-        print("=" * 60)
-
-async def main():
-    scraper = BulkProfileScraper(num_workers=30)
-    await scraper.scan_all_profiles(start_id=1, end_id=223797)
+        # Short delay between batches
+        await asyncio.sleep(0.5)
+    
+    # Mark scan as complete
+    db.mark_scan_complete()
+    print(f"\n🎉 Initial scan complete!")
+    print(f"📈 Total scanned: {total_scanned:,} IDs")
+    print(f"✅ Total found: {total_found:,} profiles")
+    print(f"📊 Success rate: {(total_found/total_scanned)*100:.2f}%")
 
 if __name__ == '__main__':
-    print("=" * 60)
-    print("PRO4KINGS INITIAL PROFILE SCAN")
-    print("=" * 60)
-    print()
-    
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n⚠️  Scan interrupted by user")
+    # Run the scan
+    # Adjust parameters based on your needs:
+    # - Higher concurrent = faster but more server load
+    # - Lower delay = faster but might hit rate limits
+    asyncio.run(fast_initial_scan(
+        start_id=1,
+        end_id=223797,
+        batch_size=100,     # Fetch 100 profiles per batch
+        concurrent=20       # 20 concurrent requests
+    ))
