@@ -12,7 +12,7 @@ class Pro4KingsScraper:
         self.profile_url = f"{self.base_url}/profile"
         
     async def get_latest_actions(self):
-        """Scrape the 'Ultimele acțiuni' section"""
+        """Scrape the 'Ultimele acțiuni' section from homepage"""
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.get(self.actions_url, timeout=15) as response:
@@ -24,14 +24,39 @@ class Pro4KingsScraper:
                     soup = BeautifulSoup(html, 'html.parser')
                     
                     actions = []
-                    action_elements = soup.select('li')
+                    
+                    # Find the "Ultimele acțiuni" section
+                    actions_section = soup.find('div', class_='card') or soup.find('div', string=re.compile(r'Ultimele.*ac.*iuni', re.IGNORECASE))
+                    
+                    if not actions_section:
+                        # Try alternative selectors
+                        actions_section = soup
+                    
+                    # Look for action items - they typically appear in list format or as text blocks
+                    action_elements = actions_section.find_all(['li', 'div', 'p'], recursive=True)
                     
                     for elem in action_elements:
                         text = elem.get_text(strip=True)
                         
-                        if 'Jucatorul' in text or 'Jucătorul' in text:
-                            timestamp_elem = elem.find('time') or elem.find(class_='timestamp') or elem.find('small')
-                            
+                        # Check if this is an action (contains "Jucatorul" or "Jucătorul")
+                        if not ('Jucatorul' in text or 'Jucătorul' in text):
+                            continue
+                        
+                        # Extract timestamp in format: 2026-01-14 21:47:14
+                        timestamp = None
+                        timestamp_match = re.search(r'(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})', text)
+                        
+                        if timestamp_match:
+                            try:
+                                timestamp_str = timestamp_match.group(0)
+                                timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+                                # Remove timestamp from text
+                                text = text.replace(timestamp_str, '').strip()
+                            except:
+                                timestamp = datetime.now()
+                        else:
+                            # Try alternative timestamp formats
+                            timestamp_elem = elem.find('time')
                             if timestamp_elem:
                                 timestamp_str = timestamp_elem.get('datetime') or timestamp_elem.get_text(strip=True)
                                 try:
@@ -43,9 +68,14 @@ class Pro4KingsScraper:
                                         timestamp = datetime.now()
                             else:
                                 timestamp = datetime.now()
-                            
-                            parsed = self._parse_action(text)
-                            
+                        
+                        # Clean up text (remove clock emoji and extra whitespace)
+                        text = re.sub(r'[🕐⏰🕑🕒🕓🕔🕕🕖🕗🕘🕙🕚🕛]', '', text).strip()
+                        
+                        # Parse the action
+                        parsed = self._parse_action(text)
+                        
+                        if parsed.get('from_id'):  # Only save if we got valid data
                             actions.append({
                                 'timestamp': timestamp,
                                 'text': text,
@@ -61,6 +91,8 @@ class Pro4KingsScraper:
                     return actions
             except Exception as e:
                 print(f"Error scraping actions: {e}")
+                import traceback
+                traceback.print_exc()
                 return []
     
     def _parse_action(self, text):
@@ -75,74 +107,116 @@ class Pro4KingsScraper:
             'action_type': None
         }
         
-        from_match = re.search(r'Juc[aă]torul\s+(\w+)\((\d+)\)', text)
+        # Extract "from" player: Jucatorul NAME(ID)
+        from_match = re.search(r'Juc[aă]torul\s+([^\(]+)\((\d+)\)', text, re.IGNORECASE)
         if from_match:
-            result['from_player'] = from_match.group(1)
+            result['from_player'] = from_match.group(1).strip()
             result['from_id'] = int(from_match.group(2))
         
+        # Determine action type and extract "to" player
         if 'dat lui' in text or 'a dat lui' in text or 'ia dat lui' in text:
             result['action_type'] = 'gave'
-            to_match = re.search(r'lui\s+(\w+)\((\d+)\)', text)
+            to_match = re.search(r'lui\s+([^\(]+)\((\d+)\)', text)
             if to_match:
-                result['to_player'] = to_match.group(1)
+                result['to_player'] = to_match.group(1).strip()
                 result['to_id'] = int(to_match.group(2))
         elif 'retras din' in text or 'a retras din' in text:
             result['action_type'] = 'withdrew'
         elif 'depus' in text or 'a pus' in text:
             result['action_type'] = 'deposited'
+        elif 'livrat' in text or 'a livrat' in text:
+            result['action_type'] = 'delivered'
+        elif 'primit' in text or 'a primit' in text:
+            result['action_type'] = 'received'
         
-        item_match = re.search(r'(\d+)x?\s+(.+?)(?:\.|$)', text)
+        # Extract quantity and item: 1316180x Bani Murdari or 1x Ketamina
+        item_match = re.search(r'(\d+)x?\s+([^\.]+)', text)
         if item_match:
-            result['quantity'] = int(item_match.group(1))
+            result['quantity'] = int(item_match.group(1).replace('x', ''))
             result['item'] = item_match.group(2).strip()
         
         return result
     
     async def get_online_players(self):
-        """Scrape the online players page"""
+        """Scrape ALL pages of online players with pagination"""
+        all_players = []
+        page = 1
+        
         async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(self.online_url, timeout=15) as response:
-                    if response.status != 200:
-                        print(f"Error: Status {response.status}")
-                        return []
-                    
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
-                    
-                    players = []
-                    player_elements = soup.select('table tbody tr')
-                    
-                    for elem in player_elements:
-                        name_elem = elem.select_one('td:first-child')
+            while True:
+                try:
+                    url = f"{self.online_url}?pageOnline={page}"
+                    async with session.get(url, timeout=15) as response:
+                        if response.status != 200:
+                            print(f"Error fetching page {page}: Status {response.status}")
+                            break
                         
-                        if name_elem:
-                            player_name = name_elem.get_text(strip=True)
-                            player_id = None
-                            
-                            link = elem.find('a', href=True)
-                            if link and '/profile/' in link['href']:
-                                try:
-                                    player_id = int(link['href'].split('/profile/')[-1])
-                                except:
-                                    pass
-                            
-                            if not player_id:
-                                id_match = re.search(r'\((\d+)\)', player_name)
-                                if id_match:
-                                    player_id = int(id_match.group(1))
-                                    player_name = re.sub(r'\(\d+\)', '', player_name).strip()
-                            
-                            if player_id:
-                                players.append({
-                                    'player_name': player_name,
-                                    'player_id': player_id
-                                })
-                    
-                    return players
-            except Exception as e:
-                print(f"Error scraping online players: {e}")
-                return []
+                        html = await response.text()
+                        soup = BeautifulSoup(html, 'html.parser')
+                        
+                        # Find player table
+                        player_elements = soup.select('table tbody tr')
+                        
+                        # If no players found on this page, we've reached the end
+                        if not player_elements:
+                            break
+                        
+                        page_players = []
+                        for elem in player_elements:
+                            try:
+                                # Get ID from first column
+                                id_elem = elem.select_one('td:first-child')
+                                if not id_elem:
+                                    continue
+                                
+                                # Get name from link in second column
+                                name_elem = elem.select_one('td:nth-child(2) a')
+                                if not name_elem:
+                                    continue
+                                
+                                player_name = name_elem.get_text(strip=True)
+                                
+                                # Extract ID from href (profile/ID)
+                                player_id = None
+                                if name_elem.get('href') and '/profile/' in name_elem['href']:
+                                    try:
+                                        player_id = int(name_elem['href'].split('/profile/')[-1])
+                                    except:
+                                        pass
+                                
+                                # Fallback: try to get ID from first column
+                                if not player_id:
+                                    try:
+                                        player_id = int(id_elem.get_text(strip=True))
+                                    except:
+                                        continue
+                                
+                                if player_id and player_name:
+                                    page_players.append({
+                                        'player_name': player_name,
+                                        'player_id': player_id
+                                    })
+                            except Exception as e:
+                                continue
+                        
+                        # If no players extracted, stop
+                        if not page_players:
+                            break
+                        
+                        all_players.extend(page_players)
+                        print(f"✓ Scraped page {page}: {len(page_players)} players (Total: {len(all_players)})")
+                        
+                        page += 1
+                        
+                        # Rate limiting - don't hammer the server
+                        await asyncio.sleep(0.5)
+                        
+                except Exception as e:
+                    print(f"Error on page {page}: {e}")
+                    break
+        
+        print(f"🎯 Total online players scraped: {len(all_players)} across {page-1} pages")
+        return all_players
     
     async def get_player_profile(self, player_id):
         """Scrape individual player profile with all fields"""
@@ -159,22 +233,27 @@ class Pro4KingsScraper:
                     html = await response.text()
                     soup = BeautifulSoup(html, 'html.parser')
                     
+                    # Get player name from header
                     name_elem = soup.select_one('h4.card-title')
                     if not name_elem:
                         return None
                     
                     player_name = name_elem.get_text(strip=True)
+                    # Clean up name
                     player_name = re.sub(r'^\s*[•●]\s*', '', player_name)
                     player_name = re.sub(r'\s*\(Online\)|\(Offline\)', '', player_name, flags=re.IGNORECASE)
                     
+                    # Check online status
                     is_online = False
-                    if name_elem.find('i', class_='text-success'):
+                    if name_elem.find('i', class_='text-success') or soup.find(text=re.compile(r'Online', re.IGNORECASE)):
                         is_online = True
                     
+                    # Get profile table
                     table = soup.find('table', class_='table')
                     if not table:
                         return None
                     
+                    # Initialize fields
                     last_connection = None
                     faction = None
                     faction_rank = None
@@ -183,6 +262,7 @@ class Pro4KingsScraper:
                     played_hours = None
                     age_ic = None
                     
+                    # Parse table rows
                     for row in table.find_all('tr'):
                         header = row.find('th')
                         data_cell = row.find('td')
@@ -201,7 +281,7 @@ class Pro4KingsScraper:
                         
                         elif 'Facțiune' in header_text or 'Factiune' in header_text:
                             if 'Rank' not in header_text:
-                                faction = data_text
+                                faction = data_text if data_text else 'Civil'
                         
                         elif 'Rank Facțiune' in header_text or 'Rank Factiune' in header_text:
                             rank_link = data_cell.find('a')
@@ -219,11 +299,14 @@ class Pro4KingsScraper:
                                 warns = 0
                         
                         elif 'Job' in header_text:
-                            job = data_text
+                            job = data_text if data_text else 'Fără job'
                         
                         elif 'Ore jucate' in header_text:
                             try:
-                                played_hours = int(re.search(r'\d+', data_text).group())
+                                # Extract number (could be float like 21932.2)
+                                hours_match = re.search(r'[\d\.]+', data_text)
+                                if hours_match:
+                                    played_hours = float(hours_match.group())
                             except:
                                 played_hours = 0
                         
