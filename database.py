@@ -79,7 +79,7 @@ class Database:
                     faction_rank TEXT,
                     warns INTEGER DEFAULT 0,
                     job TEXT,
-                    played_hours INTEGER DEFAULT 0,
+                    played_hours REAL DEFAULT 0,
                     age_ic INTEGER,
                     last_checked DATETIME DEFAULT CURRENT_TIMESTAMP,
                     check_priority INTEGER DEFAULT 1
@@ -175,7 +175,7 @@ class Database:
     def get_current_online_players(self):
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT player_id, player_name FROM online_players')
+            cursor.execute('SELECT player_id, player_name FROM online_players ORDER BY player_name')
             return [dict(row) for row in cursor.fetchall()]
     
     def save_player_profile(self, profile_data):
@@ -272,48 +272,96 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('UPDATE player_profiles SET check_priority = 1 WHERE player_id = ?', (player_id,))
     
-    def get_player_actions(self, player_name, days=7):
+    # ============================================================================
+    # NEW: UNIFIED QUERIES THAT SUPPORT BOTH ID AND NAME
+    # ============================================================================
+    
+    def get_player_actions(self, identifier, days=7):
+        """Get player actions by ID or name"""
         cutoff = datetime.now() - timedelta(days=days)
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM actions 
-                WHERE (from_player LIKE ? OR to_player LIKE ?) AND timestamp >= ?
-                ORDER BY timestamp DESC
-            ''', (f'%{player_name}%', f'%{player_name}%', cutoff))
+            
+            # Check if identifier is numeric (ID) or string (name)
+            if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
+                player_id = int(identifier)
+                cursor.execute('''
+                    SELECT * FROM actions 
+                    WHERE (from_id = ? OR to_id = ?) AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                ''', (player_id, player_id, cutoff))
+            else:
+                cursor.execute('''
+                    SELECT * FROM actions 
+                    WHERE (from_player LIKE ? OR to_player LIKE ?) AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                ''', (f'%{identifier}%', f'%{identifier}%', cutoff))
+            
             return [dict(row) for row in cursor.fetchall()]
     
-    def get_player_gave(self, player_name, days=7):
+    def get_player_gave(self, identifier, days=7):
+        """Get what a player gave to others by ID or name"""
         cutoff = datetime.now() - timedelta(days=days)
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM actions 
-                WHERE from_player LIKE ? AND action_type = 'gave' AND timestamp >= ?
-                ORDER BY timestamp DESC
-            ''', (f'%{player_name}%', cutoff))
+            
+            if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
+                player_id = int(identifier)
+                cursor.execute('''
+                    SELECT * FROM actions 
+                    WHERE from_id = ? AND action_type = 'gave' AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                ''', (player_id, cutoff))
+            else:
+                cursor.execute('''
+                    SELECT * FROM actions 
+                    WHERE from_player LIKE ? AND action_type = 'gave' AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                ''', (f'%{identifier}%', cutoff))
+            
             return [dict(row) for row in cursor.fetchall()]
     
-    def get_player_received(self, player_name, days=7):
+    def get_player_received(self, identifier, days=7):
+        """Get what a player received from others by ID or name"""
         cutoff = datetime.now() - timedelta(days=days)
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM actions 
-                WHERE to_player LIKE ? AND action_type = 'gave' AND timestamp >= ?
-                ORDER BY timestamp DESC
-            ''', (f'%{player_name}%', cutoff))
+            
+            if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
+                player_id = int(identifier)
+                cursor.execute('''
+                    SELECT * FROM actions 
+                    WHERE to_id = ? AND action_type = 'gave' AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                ''', (player_id, cutoff))
+            else:
+                cursor.execute('''
+                    SELECT * FROM actions 
+                    WHERE to_player LIKE ? AND action_type = 'gave' AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                ''', (f'%{identifier}%', cutoff))
+            
             return [dict(row) for row in cursor.fetchall()]
     
-    def get_player_sessions(self, player_name, days=7):
+    def get_player_sessions(self, identifier, days=7):
+        """Get player sessions by ID or name"""
         cutoff = datetime.now() - timedelta(days=days)
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM player_sessions 
-                WHERE player_name LIKE ? AND login_time >= ?
-                ORDER BY login_time DESC
-            ''', (f'%{player_name}%', cutoff))
+            
+            if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
+                player_id = int(identifier)
+                cursor.execute('''
+                    SELECT * FROM player_sessions 
+                    WHERE player_id = ? AND login_time >= ?
+                    ORDER BY login_time DESC
+                ''', (player_id, cutoff))
+            else:
+                cursor.execute('''
+                    SELECT * FROM player_sessions 
+                    WHERE player_name LIKE ? AND login_time >= ?
+                    ORDER BY login_time DESC
+                ''', (f'%{identifier}%', cutoff))
             
             sessions = []
             for row in cursor.fetchall():
@@ -328,19 +376,95 @@ class Database:
             
             return sessions
     
-    def get_interactions_between(self, player1, player2, days=7):
+    def get_all_player_interactions(self, identifier, days=7):
+        """Get ALL players that this player interacted with (gave to or received from)"""
         cutoff = datetime.now() - timedelta(days=days)
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM actions 
-                WHERE action_type = 'gave'
-                AND ((from_player LIKE ? AND to_player LIKE ?)
-                     OR (from_player LIKE ? AND to_player LIKE ?))
-                AND timestamp >= ?
-                ORDER BY timestamp DESC
-            ''', (f'%{player1}%', f'%{player2}%', f'%{player2}%', f'%{player1}%', cutoff))
+            
+            if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
+                player_id = int(identifier)
+                cursor.execute('''
+                    SELECT 
+                        CASE 
+                            WHEN from_id = ? THEN to_player 
+                            ELSE from_player 
+                        END as other_player,
+                        CASE 
+                            WHEN from_id = ? THEN to_id 
+                            ELSE from_id 
+                        END as other_player_id,
+                        COUNT(*) as interaction_count,
+                        SUM(CASE WHEN from_id = ? THEN 1 ELSE 0 END) as gave_count,
+                        SUM(CASE WHEN to_id = ? THEN 1 ELSE 0 END) as received_count
+                    FROM actions 
+                    WHERE (from_id = ? OR to_id = ?) 
+                        AND action_type = 'gave' 
+                        AND timestamp >= ?
+                    GROUP BY other_player, other_player_id
+                    ORDER BY interaction_count DESC
+                ''', (player_id, player_id, player_id, player_id, player_id, player_id, cutoff))
+            else:
+                cursor.execute('''
+                    SELECT 
+                        CASE 
+                            WHEN from_player LIKE ? THEN to_player 
+                            ELSE from_player 
+                        END as other_player,
+                        CASE 
+                            WHEN from_player LIKE ? THEN to_id 
+                            ELSE from_id 
+                        END as other_player_id,
+                        COUNT(*) as interaction_count,
+                        SUM(CASE WHEN from_player LIKE ? THEN 1 ELSE 0 END) as gave_count,
+                        SUM(CASE WHEN to_player LIKE ? THEN 1 ELSE 0 END) as received_count
+                    FROM actions 
+                    WHERE (from_player LIKE ? OR to_player LIKE ?) 
+                        AND action_type = 'gave' 
+                        AND timestamp >= ?
+                    GROUP BY other_player, other_player_id
+                    ORDER BY interaction_count DESC
+                ''', (f'%{identifier}%', f'%{identifier}%', f'%{identifier}%', f'%{identifier}%', 
+                      f'%{identifier}%', f'%{identifier}%', cutoff))
+            
             return [dict(row) for row in cursor.fetchall()]
+    
+    def get_interactions_between(self, player1, player2, days=7):
+        """Get interactions between two players (supports both ID and name)"""
+        cutoff = datetime.now() - timedelta(days=days)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Determine if identifiers are IDs or names
+            p1_is_id = isinstance(player1, int) or (isinstance(player1, str) and player1.isdigit())
+            p2_is_id = isinstance(player2, int) or (isinstance(player2, str) and player2.isdigit())
+            
+            if p1_is_id and p2_is_id:
+                player1_id = int(player1)
+                player2_id = int(player2)
+                cursor.execute('''
+                    SELECT * FROM actions 
+                    WHERE action_type = 'gave'
+                    AND ((from_id = ? AND to_id = ?)
+                         OR (from_id = ? AND to_id = ?))
+                    AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                ''', (player1_id, player2_id, player2_id, player1_id, cutoff))
+            else:
+                cursor.execute('''
+                    SELECT * FROM actions 
+                    WHERE action_type = 'gave'
+                    AND ((from_player LIKE ? AND to_player LIKE ?)
+                         OR (from_player LIKE ? AND to_player LIKE ?))
+                    AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                ''', (f'%{player1}%', f'%{player2}%', f'%{player2}%', f'%{player1}%', cutoff))
+            
+            return [dict(row) for row in cursor.fetchall()]
+    
+    # ============================================================================
+    # EXISTING METHODS (unchanged)
+    # ============================================================================
     
     def get_player_last_connection(self, player_id):
         with self.get_connection() as conn:
