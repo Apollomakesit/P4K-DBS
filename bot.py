@@ -26,10 +26,9 @@ async def on_ready():
 # BACKGROUND MONITORING TASKS
 # ============================================================================
 
-@tasks.loop(minutes=2)
+@tasks.loop(seconds=30)
 async def scrape_actions():
-    """Scrape latest actions every 2 minutes"""
-    try:
+    """Scrape latest actions every 30 seconds"""    try:
         actions = await scraper.get_latest_actions()
         new_player_ids = set()
         
@@ -56,7 +55,7 @@ async def scrape_actions():
         import traceback
         traceback.print_exc()
 
-@tasks.loop(minutes=2)
+@tasks.loop(seconds=30)
 async def scrape_online_players():
     """Scrape ALL online players across all pages every 2 minutes"""
     try:
@@ -899,3 +898,4 @@ if __name__ == '__main__':
         print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
         exit(1)
     bot.run(TOKEN)
+
