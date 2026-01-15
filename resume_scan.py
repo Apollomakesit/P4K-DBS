@@ -1,6 +1,7 @@
 import asyncio
 from scraper import Pro4KingsScraper
 from database import Database
+from initial_scan import main as scan_main
 import os
 
 async def resume_scan():
@@ -31,4 +32,7 @@ async def resume_scan():
     )
 
 if __name__ == '__main__':
-    asyncio.run(resume_scan())
+    print("🔄 Resuming initial scan from last saved progress...")
+    print("💡 The scan will automatically continue from where it left off\n")
+    asyncio.run(scan_main())
+
