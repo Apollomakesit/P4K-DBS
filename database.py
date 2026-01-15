@@ -596,3 +596,31 @@ class Database:
             ranks_deleted = cursor.rowcount
             
             return actions_deleted + sessions_deleted + ranks_deleted
+    def get_scan_status(self):
+       """Get detailed scan status"""
+         with self.get_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Get total profiles
+        cursor.execute('SELECT COUNT(*) as count FROM player_profiles')
+        total_scanned = cursor.fetchone()['count']
+        
+        # Get last scanned ID
+        cursor.execute('SELECT MAX(player_id) as last_id FROM player_profiles')
+        last_id = cursor.fetchone()['last_id'] or 0
+        
+        # Get scan complete status
+        cursor.execute('SELECT value FROM system_status WHERE key = "initial_scan_complete"')
+        row = cursor.fetchone()
+        is_complete = row and row['value'] == 'true'
+        
+        return {
+            'total_scanned': total_scanned,
+            'last_id': last_id,
+            'total_target': 223797,
+            'percentage': (total_scanned / 223797) * 100,
+            'is_complete': is_complete,
+            'remaining': 223797 - last_id
+        }
+  
+
