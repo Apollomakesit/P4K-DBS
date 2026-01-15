@@ -1,67 +1,83 @@
 import asyncio
-from scraper import Pro4KingsScraper
-from database import Database
 import os
+from database import Database
+from scraper import Pro4KingsScraper
+from datetime import datetime
 
-async def fast_initial_scan(start_id=1, end_id=223797, batch_size=50, concurrent=20):
-    """
-    Fast initial scan using concurrent workers
-    
-    Args:
-        start_id: Starting player ID
-        end_id: Ending player ID
-        batch_size: Number of profiles to fetch before saving
-        concurrent: Number of concurrent requests
-    """
+async def main():
     db = Database(os.getenv('DATABASE_URL', 'sqlite:///pro4kings.db'))
     scraper = Pro4KingsScraper()
     
-    print(f"🚀 Starting fast initial scan from ID {start_id} to {end_id}")
-    print(f"⚙️ Settings: batch_size={batch_size}, concurrent={concurrent}")
+    # Configuration for fast scanning
+    MAX_PLAYER_ID = 223797
+    CONCURRENT_WORKERS = 20  # 20 concurrent requests
+    BATCH_SIZE = 100  # Process 100 IDs per batch
+    DELAY_BETWEEN_BATCHES = 0.1  # Minimal delay
+    SAVE_INTERVAL = 1000  # Save progress every 1000 profiles
+    
+    # Get last scanned ID to resume from
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT MAX(player_id) as last_id FROM player_profiles')
+        result = cursor.fetchone()
+        start_id = result['last_id'] + 1 if result['last_id'] else 1
+    
+    print(f"🚀 Starting fast scan from ID {start_id} to {MAX_PLAYER_ID}")
+    print(f"⚙️ Using {CONCURRENT_WORKERS} concurrent workers")
+    print(f"📊 Expected rate: ~1000 players/minute\n")
     
     total_scanned = 0
     total_found = 0
+    start_time = datetime.now()
     
-    # Process in large batches
-    for batch_start in range(start_id, end_id + 1, batch_size):
-        batch_end = min(batch_start + batch_size, end_id + 1)
+    for batch_start in range(start_id, MAX_PLAYER_ID + 1, BATCH_SIZE):
+        batch_end = min(batch_start + BATCH_SIZE, MAX_PLAYER_ID + 1)
         player_ids = list(range(batch_start, batch_end))
         
-        print(f"\n📦 Processing batch: {batch_start} to {batch_end-1}")
+        # Fetch profiles with high concurrency
+        profiles = await scraper.batch_get_profiles(
+            player_ids, 
+            delay=0.05,  # Very short delay between batches
+            concurrent=CONCURRENT_WORKERS
+        )
         
-        # Fetch profiles with concurrent workers
-        results = await scraper.batch_get_profiles(player_ids, delay=0.1, concurrent=concurrent)
-        
-        # Save to database
-        for profile in results:
-            if profile:
-                db.save_player_profile(profile)
-                total_found += 1
+        # Save valid profiles
+        valid_profiles = [p for p in profiles if p]
+        for profile in valid_profiles:
+            db.save_player_profile(profile)
+            total_found += 1
         
         total_scanned += len(player_ids)
         
-        progress = (total_scanned / (end_id - start_id + 1)) * 100
-        print(f"✅ Batch complete: Found {len(results)}/{len(player_ids)} profiles")
-        print(f"📊 Progress: {total_scanned:,}/{end_id-start_id+1:,} ({progress:.2f}%) | Found: {total_found:,} profiles")
+        # Progress reporting
+        if total_scanned % SAVE_INTERVAL == 0 or batch_end >= MAX_PLAYER_ID:
+            elapsed = (datetime.now() - start_time).total_seconds()
+            rate = total_scanned / elapsed * 60 if elapsed > 0 else 0
+            progress_pct = (total_scanned / MAX_PLAYER_ID) * 100
+            
+            print(f"📊 Progress: {total_scanned:,}/{MAX_PLAYER_ID:,} ({progress_pct:.2f}%)")
+            print(f"✓ Valid profiles found: {total_found:,}")
+            print(f"⚡ Scan rate: {rate:.0f} players/minute")
+            print(f"⏱️ Elapsed: {elapsed/60:.1f} minutes")
+            
+            # Estimate time remaining
+            if rate > 0:
+                remaining = MAX_PLAYER_ID - total_scanned
+                eta_minutes = remaining / rate
+                print(f"🕐 ETA: {eta_minutes:.1f} minutes\n")
         
-        # Short delay between batches
-        await asyncio.sleep(0.5)
+        # Small delay between batches
+        await asyncio.sleep(DELAY_BETWEEN_BATCHES)
     
     # Mark scan as complete
     db.mark_scan_complete()
-    print(f"\n🎉 Initial scan complete!")
-    print(f"📈 Total scanned: {total_scanned:,} IDs")
-    print(f"✅ Total found: {total_found:,} profiles")
-    print(f"📊 Success rate: {(total_found/total_scanned)*100:.2f}%")
+    
+    elapsed = (datetime.now() - start_time).total_seconds()
+    print(f"\n✅ Initial scan complete!")
+    print(f"📊 Total scanned: {total_scanned:,} IDs")
+    print(f"✓ Valid profiles: {total_found:,}")
+    print(f"⏱️ Total time: {elapsed/60:.1f} minutes")
+    print(f"⚡ Average rate: {total_scanned / elapsed * 60:.0f} players/minute")
 
 if __name__ == '__main__':
-    # Run the scan
-    # Adjust parameters based on your needs:
-    # - Higher concurrent = faster but more server load
-    # - Lower delay = faster but might hit rate limits
-    asyncio.run(fast_initial_scan(
-        start_id=1,
-        end_id=223797,
-        batch_size=100,     # Fetch 100 profiles per batch
-        concurrent=20       # 20 concurrent requests
-    ))
+    asyncio.run(main())
