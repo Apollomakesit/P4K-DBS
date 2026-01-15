@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  api:
+    build: .
+    depends_on: [db, redis]
+    ports: ["8000:8000"]
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: p4k
+      POSTGRES_PASSWORD: p4k
+      POSTGRES_DB: p4k
+
+  redis:
+    image: redis:7
