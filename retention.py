@@ -1,12 +1,9 @@
 from datetime import datetime, timedelta
-from database import get_db
+from sqlalchemy import delete
+from models import History
 from config import DATA_RETENTION_DAYS
 
-def cleanup():
+async def cleanup(db):
     cutoff = datetime.utcnow() - timedelta(days=DATA_RETENTION_DAYS)
-    db = get_db()
-    db.execute(
-        "DELETE FROM history WHERE recorded_at < ?",
-        (cutoff,)
-    )
-    db.commit()
+    await db.execute(delete(History).where(History.recorded_at < cutoff))
+    await db.commit()
