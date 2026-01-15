@@ -22,21 +22,26 @@ async def on_ready():
     cleanup_old_data.start()
     print('🚀 All monitoring tasks started!')
 
+@bot.event
+async def on_close():
+    """Cleanup when bot shuts down"""
+    await scraper.close()
+    print('👋 Bot shutting down, connections closed')
+
 # ============================================================================
-# BACKGROUND MONITORING TASKS
+# BACKGROUND MONITORING TASKS (IMPROVED)
 # ============================================================================
 
 @tasks.loop(seconds=30)
 async def scrape_actions():
     """Scrape latest actions every 30 seconds"""
-    try:  # This should be on a new line with proper indentation
+    try:
         actions = await scraper.get_latest_actions()
         new_player_ids = set()
         
         for action in actions:
             if not db.action_exists(action['timestamp'], action['text']):
                 db.save_action(action)
-                print(f"✓ New action: {action['text'][:60]}...")
                 
                 # Mark players for profile update
                 if action.get('from_id'):
@@ -48,17 +53,15 @@ async def scrape_actions():
         for player_id, player_name in new_player_ids:
             db.mark_player_for_update(player_id, player_name)
         
-        if new_player_ids:
-            print(f"📝 Marked {len(new_player_ids)} players for profile update")
+        if actions:
+            print(f"✓ Actions: {len(actions)} total, {len(new_player_ids)} players marked for update")
             
     except Exception as e:
         print(f"✗ Error scraping actions: {e}")
-        import traceback
-        traceback.print_exc()
 
-@tasks.loop(seconds=30)
+@tasks.loop(seconds=60)  # IMPROVED: Every 60 seconds (was 30)
 async def scrape_online_players():
-    """Scrape ALL online players across all pages every 2 minutes"""
+    """Scrape online players and detect login/logout events"""
     try:
         online_players = await scraper.get_online_players()
         current_time = datetime.now()
@@ -73,62 +76,58 @@ async def scrape_online_players():
             if player['player_id'] in new_logins:
                 db.save_login(player['player_id'], player['player_name'], current_time)
                 db.mark_player_for_update(player['player_id'], player['player_name'])
-                print(f"✓ Login: {player['player_name']} (ID: {player['player_id']})")
         
         # Detect logouts
         logouts = previous_ids - current_ids
         for player_id in logouts:
             db.save_logout(player_id, current_time)
-            player_name = next((p['player_name'] for p in previous_online if p['player_id'] == player_id), 'Unknown')
-            print(f"✓ Logout: {player_name} (ID: {player_id})")
         
+        # IMPROVED: Update online players with upsert (no table clearing)
         db.update_online_players(online_players)
         
         # Mark currently online players for profile update
         for player in online_players:
             db.mark_player_for_update(player['player_id'], player['player_name'])
         
-        print(f"👥 Online: {len(online_players)} players | New: {len(new_logins)} | Left: {len(logouts)}")
+        if new_logins or logouts:
+            print(f"👥 Online: {len(online_players)} | New: {len(new_logins)} | Left: {len(logouts)}")
         
     except Exception as e:
         print(f"✗ Error scraping online players: {e}")
-        import traceback
-        traceback.print_exc()
 
-@tasks.loop(minutes=3)
+@tasks.loop(minutes=2)  # IMPROVED: Every 2 minutes (was 3)
 async def update_pending_profiles():
-    """Update profiles for detected players (100 profiles per run = ~33 profiles/minute)"""
+    """Update profiles for detected players - IMPROVED: 200 profiles per run"""
     try:
-        pending_ids = db.get_players_pending_update(limit=100)
+        pending_ids = db.get_players_pending_update(limit=200)  # IMPROVED: 200 (was 100)
         
         if not pending_ids:
             return
         
         print(f"🔄 Updating {len(pending_ids)} pending profiles...")
-        results = await scraper.batch_get_profiles(pending_ids, delay=0.5)
+        results = await scraper.batch_get_profiles(pending_ids, delay=0.1, concurrent=25)  # IMPROVED: delay 0.1, concurrent 25
         
         for result in results:
             db.save_player_profile(result)
             db.reset_player_priority(result['player_id'])
         
-        print(f"✓ Updated {len(results)} profiles with full data")
+        print(f"✓ Updated {len(results)}/{len(pending_ids)} profiles")
         
     except Exception as e:
         print(f"✗ Error updating pending profiles: {e}")
-        import traceback
-        traceback.print_exc()
 
 @tasks.loop(hours=6)
 async def cleanup_old_data():
-    """Delete data older than 30 days"""
+    """Delete data older than 30 days (with safety buffer)"""
     try:
         deleted = db.cleanup_old_data(days=30)
-        print(f"🗑️ Cleaned up {deleted} old records")
+        if deleted > 0:
+            print(f"🗑️ Cleaned up {deleted} old records (30+ days old)")
     except Exception as e:
         print(f"✗ Error cleaning data: {e}")
 
 # ============================================================================
-# HELPER FUNCTION TO RESOLVE PLAYER IDENTIFIER
+# HELPER FUNCTION
 # ============================================================================
 
 async def resolve_player_info(identifier):
@@ -142,10 +141,9 @@ async def resolve_player_info(identifier):
                 db.save_player_profile(profile)
         return profile
     else:
-        # Search by name
         players = db.search_player_by_name(identifier)
         if players:
-            return players[0]  # Return first match
+            return players[0]
         return None
 
 # ============================================================================
@@ -290,7 +288,7 @@ async def find_player(interaction: discord.Interaction, name: str):
     await interaction.followup.send(embed=embed)
 
 # ============================================================================
-# DISCORD COMMANDS - PLAYER ACTIONS (UPDATED WITH ID SUPPORT)
+# DISCORD COMMANDS - PLAYER ACTIONS
 # ============================================================================
 
 @bot.tree.command(name="player_actions", description="Vezi toate acțiunile unui jucător (ID sau nume)")
@@ -303,7 +301,6 @@ async def player_actions(interaction: discord.Interaction, identifier: str, days
         await interaction.followup.send(f"❌ Nu am găsit acțiuni pentru **{identifier}** în ultimele {days} zile.")
         return
     
-    # Get player name for display
     player_name = identifier
     if actions and actions[0].get('from_player'):
         player_name = actions[0]['from_player']
@@ -342,7 +339,6 @@ async def player_gave(interaction: discord.Interaction, identifier: str, days: i
         await interaction.followup.send(f"❌ **{identifier}** nu a dat nimic în ultimele {days} zile.")
         return
     
-    # Get player name for display
     player_name = identifier
     if interactions and interactions[0].get('from_player'):
         player_name = interactions[0]['from_player']
@@ -381,7 +377,6 @@ async def player_received(interaction: discord.Interaction, identifier: str, day
         await interaction.followup.send(f"❌ **{identifier}** nu a primit nimic în ultimele {days} zile.")
         return
     
-    # Get player name for display
     player_name = identifier
     if interactions and interactions[0].get('to_player'):
         player_name = interactions[0]['to_player']
@@ -420,7 +415,6 @@ async def player_interactions(interaction: discord.Interaction, identifier: str,
         await interaction.followup.send(f"❌ **{identifier}** nu a avut interacțiuni în ultimele {days} zile.")
         return
     
-    # Get player info
     profile = await resolve_player_info(identifier)
     player_name = profile['player_name'] if profile else identifier
     
@@ -485,7 +479,7 @@ async def player_interactions_with(interaction: discord.Interaction, player1: st
     await interaction.followup.send(embed=embed)
 
 # ============================================================================
-# DISCORD COMMANDS - SESSIONS (UPDATED WITH ID SUPPORT)
+# DISCORD COMMANDS - SESSIONS
 # ============================================================================
 
 @bot.tree.command(name="player_sessions", description="Vezi sesiunile de joc (ID sau nume)")
@@ -498,7 +492,6 @@ async def player_sessions(interaction: discord.Interaction, identifier: str, day
         await interaction.followup.send(f"❌ Nu am date despre sesiunile lui **{identifier}**.")
         return
     
-    # Get player name for display
     player_name = identifier
     if sessions and sessions[0].get('player_name'):
         player_name = sessions[0]['player_name']
@@ -556,11 +549,10 @@ async def online_players(interaction: discord.Interaction):
         timestamp=datetime.now()
     )
     
-    # Split players into chunks for better display
     chunk_size = 50
     player_chunks = [players[i:i + chunk_size] for i in range(0, len(players), chunk_size)]
     
-    for i, chunk in enumerate(player_chunks[:3]):  # Max 3 chunks (150 players)
+    for i, chunk in enumerate(player_chunks[:3]):
         player_list = "\n".join([f"• **{p['player_name']}** (ID: {p['player_id']})" for p in chunk])
         embed.add_field(
             name=f"Jucători (Partea {i+1})" if len(player_chunks) > 1 else "Jucători",
@@ -853,7 +845,6 @@ async def scan_progress(interaction: discord.Interaction):
 async def update_player_now(interaction: discord.Interaction, identifier: str):
     await interaction.response.defer()
     
-    # Resolve to player ID
     profile = await resolve_player_info(identifier)
     if not profile:
         await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**.")
@@ -861,7 +852,6 @@ async def update_player_now(interaction: discord.Interaction, identifier: str):
     
     player_id = profile['player_id']
     
-    # Fetch fresh profile
     fresh_profile = await scraper.get_player_profile(player_id)
     
     if not fresh_profile:
@@ -899,5 +889,3 @@ if __name__ == '__main__':
         print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
         exit(1)
     bot.run(TOKEN)
-
-
