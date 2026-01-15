@@ -28,7 +28,8 @@ async def on_ready():
 
 @tasks.loop(seconds=30)
 async def scrape_actions():
-    """Scrape latest actions every 30 seconds"""    try:
+    """Scrape latest actions every 30 seconds"""
+    try:  # This should be on a new line with proper indentation
         actions = await scraper.get_latest_actions()
         new_player_ids = set()
         
@@ -898,4 +899,5 @@ if __name__ == '__main__':
         print("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
         exit(1)
     bot.run(TOKEN)
+
 
