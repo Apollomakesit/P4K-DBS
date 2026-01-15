@@ -29,7 +29,7 @@ class Database:
             conn.close()
     
     def _init_db(self):
-        """Initialize database tables"""
+        """Initialize database tables with improved schema"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
@@ -61,11 +61,13 @@ class Database:
                 )
             ''')
             
+            # IMPROVED: Better online players tracking with timestamps
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS online_players (
                     player_id INTEGER PRIMARY KEY,
                     player_name TEXT NOT NULL,
-                    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+                    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    first_seen DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
@@ -115,14 +117,17 @@ class Database:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_actions_to_player ON actions(to_player)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_actions_from_id ON actions(from_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_actions_to_id ON actions(to_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_actions_created ON actions(created_at)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_player_id ON player_sessions(player_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_login ON player_sessions(login_time)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_created ON player_sessions(created_at)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_profiles_last_checked ON player_profiles(last_checked)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_profiles_faction ON player_profiles(faction)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_profiles_name ON player_profiles(player_name)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_profiles_rank ON player_profiles(faction_rank)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_rank_history_player ON rank_history(player_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_rank_history_current ON rank_history(is_current)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_rank_history_obtained ON rank_history(rank_obtained)')
     
     def action_exists(self, timestamp, text):
         with self.get_connection() as conn:
@@ -163,14 +168,32 @@ class Database:
             ''', (logout_time, player_id))
     
     def update_online_players(self, players):
+        """IMPROVED: Use UPSERT instead of DELETE to maintain timestamps"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('DELETE FROM online_players')
+            current_time = datetime.now()
+            
+            # Get current online player IDs
+            cursor.execute('SELECT player_id FROM online_players')
+            current_ids = {row['player_id'] for row in cursor.fetchall()}
+            
+            new_ids = {p['player_id'] for p in players}
+            
+            # Remove players who went offline
+            offline_ids = current_ids - new_ids
+            if offline_ids:
+                placeholders = ','.join('?' * len(offline_ids))
+                cursor.execute(f'DELETE FROM online_players WHERE player_id IN ({placeholders})', tuple(offline_ids))
+            
+            # Update or insert online players
             for player in players:
                 cursor.execute('''
-                    INSERT INTO online_players (player_id, player_name, last_seen)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                ''', (player['player_id'], player['player_name']))
+                    INSERT INTO online_players (player_id, player_name, last_seen, first_seen)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(player_id) DO UPDATE SET
+                        player_name = excluded.player_name,
+                        last_seen = excluded.last_seen
+                ''', (player['player_id'], player['player_name'], current_time, current_time))
     
     def get_current_online_players(self):
         with self.get_connection() as conn:
@@ -212,7 +235,7 @@ class Database:
                         
                         if old_rank_data:
                             duration = current_time - datetime.fromisoformat(old_rank_data['rank_obtained'])
-                            print(f"📊 Rank change for {profile_data['player_name']}: {old_rank} → {new_rank or 'None'} (held {duration.days}d)")
+                            print(f"📊 Rank change: {profile_data['player_name']}: {old_rank} → {new_rank or 'None'} (held {duration.days}d)")
                     
                     if new_rank and new_faction and new_faction != 'Civil':
                         cursor.execute('''
@@ -220,7 +243,7 @@ class Database:
                             (player_id, player_name, faction, rank_name, rank_obtained, is_current)
                             VALUES (?, ?, ?, ?, ?, 1)
                         ''', (player_id, profile_data['player_name'], new_faction, new_rank, current_time))
-                        print(f"🎖️ New rank for {profile_data['player_name']}: {new_rank} in {new_faction}")
+                        print(f"🎖️ New rank: {profile_data['player_name']}: {new_rank} in {new_faction}")
             else:
                 if new_rank and new_faction and new_faction != 'Civil':
                     cursor.execute('''
@@ -252,7 +275,7 @@ class Database:
             
             cursor.execute('''
                 UPDATE player_profiles 
-                SET check_priority = check_priority + 5
+                SET check_priority = MIN(check_priority + 5, 50)
                 WHERE player_id = ?
             ''', (player_id,))
     
@@ -273,7 +296,7 @@ class Database:
             cursor.execute('UPDATE player_profiles SET check_priority = 1 WHERE player_id = ?', (player_id,))
     
     # ============================================================================
-    # NEW: UNIFIED QUERIES THAT SUPPORT BOTH ID AND NAME
+    # UNIFIED QUERIES - SUPPORT BOTH ID AND NAME
     # ============================================================================
     
     def get_player_actions(self, identifier, days=7):
@@ -282,7 +305,6 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Check if identifier is numeric (ID) or string (name)
             if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
                 player_id = int(identifier)
                 cursor.execute('''
@@ -300,7 +322,7 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
     
     def get_player_gave(self, identifier, days=7):
-        """Get what a player gave to others by ID or name"""
+        """Get what a player gave to others"""
         cutoff = datetime.now() - timedelta(days=days)
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -322,7 +344,7 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
     
     def get_player_received(self, identifier, days=7):
-        """Get what a player received from others by ID or name"""
+        """Get what a player received from others"""
         cutoff = datetime.now() - timedelta(days=days)
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -344,7 +366,7 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
     
     def get_player_sessions(self, identifier, days=7):
-        """Get player sessions by ID or name"""
+        """Get player sessions"""
         cutoff = datetime.now() - timedelta(days=days)
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -377,7 +399,7 @@ class Database:
             return sessions
     
     def get_all_player_interactions(self, identifier, days=7):
-        """Get ALL players that this player interacted with (gave to or received from)"""
+        """Get all players that this player interacted with"""
         cutoff = datetime.now() - timedelta(days=days)
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -430,12 +452,11 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
     
     def get_interactions_between(self, player1, player2, days=7):
-        """Get interactions between two players (supports both ID and name)"""
+        """Get interactions between two players"""
         cutoff = datetime.now() - timedelta(days=days)
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Determine if identifiers are IDs or names
             p1_is_id = isinstance(player1, int) or (isinstance(player1, str) and player1.isdigit())
             p2_is_id = isinstance(player2, int) or (isinstance(player2, str) and player2.isdigit())
             
@@ -463,7 +484,7 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
     
     # ============================================================================
-    # EXISTING METHODS (unchanged)
+    # OTHER METHODS
     # ============================================================================
     
     def get_player_last_connection(self, player_id):
@@ -582,37 +603,45 @@ class Database:
             ''')
     
     def cleanup_old_data(self, days=30):
-        cutoff = datetime.now() - timedelta(days=days)
+        """IMPROVED: Safe cleanup with buffer period to prevent premature deletion"""
+        # Add 1-hour safety buffer to ensure we don't delete at exactly 30 days
+        cutoff = datetime.now() - timedelta(days=days, hours=1)
+        
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            cursor.execute('DELETE FROM actions WHERE timestamp < ?', (cutoff,))
+            # Delete old actions
+            cursor.execute('DELETE FROM actions WHERE created_at < ?', (cutoff,))
             actions_deleted = cursor.rowcount
             
-            cursor.execute('DELETE FROM player_sessions WHERE login_time < ?', (cutoff,))
+            # Delete old sessions
+            cursor.execute('DELETE FROM player_sessions WHERE created_at < ?', (cutoff,))
             sessions_deleted = cursor.rowcount
             
-            cursor.execute('DELETE FROM rank_history WHERE rank_obtained < ? AND is_current = 0', (cutoff,))
+            # Delete old rank history (only non-current)
+            cursor.execute('DELETE FROM rank_history WHERE created_at < ? AND is_current = 0', (cutoff,))
             ranks_deleted = cursor.rowcount
             
-            return actions_deleted + sessions_deleted + ranks_deleted
-
+            total_deleted = actions_deleted + sessions_deleted + ranks_deleted
+            
+            if total_deleted > 0:
+                print(f"🗑️ Cleanup: {actions_deleted} actions, {sessions_deleted} sessions, {ranks_deleted} ranks")
+            
+            return total_deleted
+    
     def get_scan_status(self):
-        """Get detailed scan status with resume support"""
+        """Get detailed scan status"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Get total profiles
             cursor.execute('SELECT COUNT(*) as count FROM player_profiles')
             result = cursor.fetchone()
             total_scanned = result['count'] if result else 0
             
-            # Get last scanned ID
             cursor.execute('SELECT MAX(player_id) as last_id FROM player_profiles')
             result = cursor.fetchone()
             last_id = result['last_id'] if result and result['last_id'] else 0
             
-            # Get scan complete status
             cursor.execute('SELECT value FROM system_status WHERE key = "initial_scan_complete"')
             row = cursor.fetchone()
             is_complete = row and row['value'] == 'true'
@@ -627,6 +656,3 @@ class Database:
                 'is_complete': is_complete,
                 'remaining': total_target - last_id
             }
-
-
-
