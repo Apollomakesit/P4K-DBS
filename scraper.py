@@ -108,9 +108,16 @@ class Pro4KingsScraper:
         async with self.semaphore:
             for attempt in range(retries):
                 try:
-                    async with self.session.get(url, allow_redirects=True, ssl=False) as response:
+                    # Pass headers with each request, not at session level
+                    async with self.session.get(
+                        url,
+                        headers=self.headers,
+                        allow_redirects=True,
+                        ssl=False
+                    ) as response:
                         if response.status == 200:
-                            return await response.text(encoding='utf-8')
+                            # Use response.text() which handles encoding automatically
+                            return await response.text()
                         elif response.status == 429:  # Rate limited
                             wait_time = 2 ** attempt
                             logger.warning(f"Rate limited, waiting {wait_time}s")
@@ -119,12 +126,25 @@ class Pro4KingsScraper:
                         elif response.status == 404:
                             logger.warning(f"Page not found: {url}")
                             return None
+                        elif response.status == 400:
+                            # Log the actual error
+                            error_text = await response.text()
+                            logger.error(f"Status 400 for {url}: {error_text[:200]}")
+                            return None
                         else:
                             logger.warning(f"Status {response.status} for {url}")
                             if attempt < retries - 1:
                                 await asyncio.sleep(1)
                                 continue
                             return None
+                except aiohttp.ClientError as e:
+                        logger.error(f"Client error fetching {url}: {e}")
+                    if "brotli" in str(e).lower():
+                        logger.error("❌ BROTLI ERROR: Install with: pip install Brotli brotlicffi")
+                    if attempt < retries - 1:
+                       await asyncio.sleep(2)
+                        continue
+                    return None
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout on {url}, attempt {attempt + 1}/{retries}")
                     if attempt < retries - 1:
@@ -132,13 +152,13 @@ class Pro4KingsScraper:
                         continue
                     return None
                 except Exception as e:
-                    logger.error(f"Error fetching {url}: {e}")
+                    logger.error(f"Unexpected error fetching {url}: {type(e).__name__}: {e}")
                     if attempt < retries - 1:
                         await asyncio.sleep(1)
                         continue
                     return None
         return None
-    
+
     async def get_online_players(self) -> List[Dict]:
         """
         Get all online players from https://panel.pro4kings.ro/online
@@ -699,6 +719,7 @@ class Pro4KingsScraper:
                 logger.error(f"Error in batch: {profile}")
         
         return results
+
 
 
 
