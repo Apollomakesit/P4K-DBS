@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Set, Tuple
 import re
 import logging
+import random
+import time
 from dataclasses import dataclass, field
 
 logging.basicConfig(level=logging.INFO)
@@ -48,15 +50,56 @@ class PlayerProfile:
     properties_count: Optional[int] = None
     profile_data: Dict = field(default_factory=dict)
 
-class Pro4KingsScraper:
-    """Enhanced scraper optimized for fast scanning"""
+class TokenBucketRateLimiter:
+    """Rate limiter care permite burst-uri controlate"""
+    def __init__(self, rate: float = 10.0, capacity: int = 20):
+        """
+        rate: request-uri pe secundă permise
+        capacity: dimensiunea burst-ului maxim
+        """
+        self.rate = rate
+        self.capacity = capacity
+        self.tokens = capacity
+        self.last_update = time.time()
+        self.lock = asyncio.Lock()
     
-    def __init__(self, base_url: str = "https://panel.pro4kings.ro", max_concurrent: int = 20):
+    async def acquire(self):
+        """Așteaptă până când un token devine disponibil"""
+        async with self.lock:
+            now = time.time()
+            # Adaugă token-uri noi bazat pe timp trecut
+            elapsed = now - self.last_update
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+            self.last_update = now
+            
+            # Așteaptă dacă nu sunt token-uri disponibile
+            if self.tokens < 1.0:
+                wait_time = (1.0 - self.tokens) / self.rate
+                await asyncio.sleep(wait_time)
+                self.tokens = 0.0
+            else:
+                self.tokens -= 1.0
+
+class Pro4KingsScraper:
+    """Enhanced scraper optimized for fast scanning with intelligent rate limiting"""
+    
+    def __init__(self, base_url: str = "https://panel.pro4kings.ro", max_concurrent: int = 10):
         self.base_url = base_url
         self.max_concurrent = max_concurrent
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.client: Optional[httpx.AsyncClient] = None
-        self.request_delay = 0.2  # 200ms base delay (fast!)
+        
+        # 🔥 RATE LIMITER
+        self.rate_limiter = TokenBucketRateLimiter(
+            rate=8.0,        # 8 request-uri/secundă
+            capacity=15      # Permite burst de 15 request-uri
+        )
+        
+        # Track 503 errors pentru adaptive throttling
+        self.error_503_count = 0
+        self.success_count = 0
+        self.adaptive_delay = 0.1
+        
         self.last_request_time = {}  # Track per-worker
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -76,7 +119,7 @@ class Pro4KingsScraper:
             follow_redirects=True,
             verify=False
         )
-        logger.info(f"✓ HTTP client initialized ({self.max_concurrent} workers)")
+        logger.info(f"✓ HTTP client initialized ({self.max_concurrent} workers, rate: {self.rate_limiter.rate} req/s)")
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -84,33 +127,62 @@ class Pro4KingsScraper:
         if self.client:
             await self.client.aclose()
     
-    async def fetch_page(self, url: str, retries: int = 2) -> Optional[str]:
-        """Fetch page with minimal delay for speed"""
+    async def fetch_page(self, url: str, retries: int = 3) -> Optional[str]:
+        """Fetch cu rate limiting și adaptive throttling"""
+        
+        # 🔥 AȘTEAPTĂ RATE LIMITER
+        await self.rate_limiter.acquire()
+        
+        # Adaugă jitter (randomizare) pentru a evita sincronizarea
+        jitter = random.uniform(0, 0.05)  # 0-50ms jitter
+        await asyncio.sleep(self.adaptive_delay + jitter)
+        
         async with self.semaphore:
             for attempt in range(retries):
                 try:
                     response = await self.client.get(url)
                     
                     if response.status_code == 200:
+                        # Success - reduce delay
+                        self.success_count += 1
+                        if self.success_count >= 50 and self.adaptive_delay > 0.05:
+                            self.adaptive_delay *= 0.95  # Reduce delay cu 5%
+                            self.success_count = 0
                         return response.text
+                        
                     elif response.status_code == 404:
                         return None
+                        
                     elif response.status_code == 503:
-                        wait_time = 3 * (2 ** attempt)
-                        logger.warning(f"503 Service Unavailable - backing off {wait_time}s")
+                        # 🔥 ADAPTIVE THROTTLING
+                        self.error_503_count += 1
+                        self.adaptive_delay = min(1.0, self.adaptive_delay * 1.5)
+                        
+                        wait_time = min(10, 2 ** attempt)
+                        logger.warning(f"503 - backing off {wait_time}s (delay now: {self.adaptive_delay:.2f}s)")
                         await asyncio.sleep(wait_time)
+                        
+                        # Dacă prea multe 503, reduce drastic viteza
+                        if self.error_503_count >= 10:
+                            logger.error(f"❌ Prea multe 503! Reducem viteza...")
+                            await asyncio.sleep(5)
+                            self.error_503_count = 0
+                        
+                        if attempt < retries - 1:
+                            continue
                         raise Exception("503 Service Unavailable")
+                        
                     elif response.status_code == 429:
-                        wait_time = 5 * (2 ** attempt)
+                        wait_time = min(15, 5 * (2 ** attempt))
                         logger.warning(f"429 Rate Limited - waiting {wait_time}s")
                         await asyncio.sleep(wait_time)
                         continue
                     else:
                         if attempt < retries - 1:
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(1)
                             continue
                         return None
-                        
+                            
                 except httpx.TimeoutException:
                     if attempt < retries - 1:
                         await asyncio.sleep(0.5)
@@ -691,29 +763,29 @@ class Pro4KingsScraper:
         
         return banned
     
-    async def batch_get_profiles(self, player_ids: List[str], delay: float = 0.05) -> List[PlayerProfile]:
-        """🔧 FIX: TRUE CONCURRENT fetching with asyncio.gather"""
+    async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
+        """Batch fetch cu wave pattern pentru a evita burst-uri"""
         results = []
         
-        # Process in chunks to avoid overwhelming the server
-        chunk_size = self.max_concurrent
+        # 🔥 WAVE PATTERN: lansează request-uri în valuri mici
+        wave_size = 5  # Câți jucători pe val
+        wave_delay = 0.5  # Delay între valuri
         
-        for i in range(0, len(player_ids), chunk_size):
-            chunk = player_ids[i:i + chunk_size]
+        for i in range(0, len(player_ids), wave_size):
+            wave = player_ids[i:i + wave_size]
             
-            # 🚀 PARALLEL execution using gather
-            tasks = [self.get_player_profile(player_id) for player_id in chunk]
-            chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Lansează valul în paralel
+            tasks = [self.get_player_profile(pid) for pid in wave]
+            wave_results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            # Filter out None and exceptions
-            for result in chunk_results:
+            for result in wave_results:
                 if isinstance(result, PlayerProfile):
                     results.append(result)
                 elif isinstance(result, Exception):
-                    logger.error(f"Error in batch fetch: {result}")
+                    logger.error(f"Error: {result}")
             
-            # Small delay between chunks to be respectful to server
-            if i + chunk_size < len(player_ids):
-                await asyncio.sleep(delay * 5)  # 250ms between chunks
+            # Delay între valuri pentru a nu overwhelm serverul
+            if i + wave_size < len(player_ids):
+                await asyncio.sleep(wave_delay)
         
         return results
