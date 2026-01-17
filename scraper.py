@@ -447,7 +447,7 @@ class Pro4KingsScraper:
             return None
     
     async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
-        """Get complete player profile with improved faction rank detection"""
+        """Get complete player profile with FIXED last_seen parsing"""
         profile_url = f"{self.base_url}/profile/{player_id}"
         html = await self.fetch_page(profile_url)
         
@@ -462,17 +462,61 @@ class Pro4KingsScraper:
             
             is_online = bool(soup.select_one('.online-indicator, .status-online, .badge-success, .text-success'))
             
-            last_seen = datetime.now()
-            last_conn_text = soup.find(text=re.compile(r'Ultima.*conectare|Last.*connection', re.IGNORECASE))
-            if last_conn_text:
-                parent = last_conn_text.find_parent(['div', 'span', 'td', 'dd'])
-                if parent:
-                    time_match = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', parent.get_text())
-                    if time_match:
-                        try:
-                            last_seen = datetime.strptime(time_match.group(1), '%Y-%m-%d %H:%M:%S')
-                        except:
-                            pass
+            # 🔧 FIX: Parse actual "Ultima conectare" field BEFORE defaulting to now()
+            last_seen = None
+            
+            # Method 1: Search for "Ultima conectare" label
+            last_conn_patterns = [
+                r'Ultima.*conectare[:\s]*(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})',
+                r'Ultima.*conectare[:\s]*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})',
+                r'Last.*connection[:\s]*(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})',
+                r'Last.*connection[:\s]*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})'
+            ]
+            
+            page_text = soup.get_text()
+            for pattern in last_conn_patterns:
+                match = re.search(pattern, page_text, re.IGNORECASE)
+                if match:
+                    time_str = match.group(1)
+                    try:
+                        # Try DD/MM/YYYY format
+                        if '/' in time_str:
+                            last_seen = datetime.strptime(time_str, '%d/%m/%Y %H:%M:%S')
+                        # Try YYYY-MM-DD format
+                        else:
+                            last_seen = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
+                        logger.info(f"✓ Parsed last_seen for {player_id}: {last_seen}")
+                        break
+                    except Exception as e:
+                        logger.warning(f"Failed to parse time '{time_str}': {e}")
+                        continue
+            
+            # Method 2: Search in table rows
+            if not last_seen:
+                info_rows = soup.select('tr')
+                for row in info_rows:
+                    cells = row.select('td, th')
+                    if len(cells) == 2:
+                        key = cells[0].get_text(strip=True).lower()
+                        if any(x in key for x in ['ultima', 'last', 'conectare', 'connection']):
+                            val = cells[1].get_text(strip=True)
+                            time_match = re.search(r'(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', val)
+                            if time_match:
+                                try:
+                                    time_str = time_match.group(1)
+                                    if '/' in time_str:
+                                        last_seen = datetime.strptime(time_str, '%d/%m/%Y %H:%M:%S')
+                                    else:
+                                        last_seen = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
+                                    logger.info(f"✓ Parsed last_seen from table for {player_id}: {last_seen}")
+                                    break
+                                except:
+                                    continue
+            
+            # Default to now ONLY if parsing completely failed
+            if not last_seen:
+                last_seen = datetime.now()
+                logger.warning(f"⚠️ Could not parse last_seen for {player_id}, defaulting to now()")
             
             profile_data = {}
             
@@ -647,21 +691,29 @@ class Pro4KingsScraper:
         
         return banned
     
-    async def batch_get_profiles(self, player_ids: List[str], delay: float = 0.5) -> List[PlayerProfile]:
-        """Batch fetch with STRICT rate limiting"""
+    async def batch_get_profiles(self, player_ids: List[str], delay: float = 0.05) -> List[PlayerProfile]:
+        """🔧 FIX: TRUE CONCURRENT fetching with asyncio.gather"""
         results = []
         
-        batch_size = 5
-        for i in range(0, len(player_ids), batch_size):
-            batch = player_ids[i:i + batch_size]
+        # Process in chunks to avoid overwhelming the server
+        chunk_size = self.max_concurrent
+        
+        for i in range(0, len(player_ids), chunk_size):
+            chunk = player_ids[i:i + chunk_size]
             
-            for player_id in batch:
-                profile = await self.get_player_profile(player_id)
-                if profile:
-                    results.append(profile)
-                await asyncio.sleep(delay)
+            # 🚀 PARALLEL execution using gather
+            tasks = [self.get_player_profile(player_id) for player_id in chunk]
+            chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            if i + batch_size < len(player_ids):
-                await asyncio.sleep(2)
+            # Filter out None and exceptions
+            for result in chunk_results:
+                if isinstance(result, PlayerProfile):
+                    results.append(result)
+                elif isinstance(result, Exception):
+                    logger.error(f"Error in batch fetch: {result}")
+            
+            # Small delay between chunks to be respectful to server
+            if i + chunk_size < len(player_ids):
+                await asyncio.sleep(delay * 5)  # 250ms between chunks
         
         return results
