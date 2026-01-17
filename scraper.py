@@ -52,9 +52,9 @@ class PlayerProfile:
 
 class TokenBucketRateLimiter:
     """Rate limiter care permite burst-uri controlate"""
-    def __init__(self, rate: float = 15.0, capacity: int = 30):
+    def __init__(self, rate: float = 25.0, capacity: int = 50):
         """
-        🔥 OPTIMIZED: Crescut de la 8 la 15 req/s, capacity de la 15 la 30
+        🔥 OPTIMIZED: Crescut la 25 req/s, capacity 50
         rate: request-uri pe secundă permise
         capacity: dimensiunea burst-ului maxim
         """
@@ -92,14 +92,14 @@ class Pro4KingsScraper:
         
         # 🔥 OPTIMIZED RATE LIMITER
         self.rate_limiter = TokenBucketRateLimiter(
-            rate=15.0,       # 🔥 Crescut de la 8 la 15 request-uri/secundă
-            capacity=30      # 🔥 Crescut de la 15 la 30 pentru burst mai mare
+            rate=25.0,       # 🔥 Crescut la 25 request-uri/secundă
+            capacity=50      # 🔥 Crescut la 50 pentru burst mai mare
         )
         
         # Track 503 errors pentru adaptive throttling
         self.error_503_count = 0
         self.success_count = 0
-        self.adaptive_delay = 0.05  # 🔥 Redus de la 0.1 la 0.05
+        self.adaptive_delay = 0.02  # 🔥 Redus la 20ms
         
         self.last_request_time = {}  # Track per-worker
         self.headers = {
@@ -267,9 +267,7 @@ class Pro4KingsScraper:
         return all_players
     
     async def get_latest_actions(self, limit: int = 200) -> List[PlayerAction]:
-        """
-        🔥 CRITICAL FIX: Get latest actions - STRICT filtering to avoid homepage stats
-        """
+        """🔥 FIXED: Get latest actions - Direct targeting of actions section"""
         url = f"{self.base_url}/"
         html = await self.fetch_page(url)
         
@@ -280,95 +278,81 @@ class Pro4KingsScraper:
         soup = BeautifulSoup(html, 'lxml')
         actions = []
         
-        # STRATEGY 1: Find by common Romanian text patterns
-        activity_keywords = ['Activitate', 'Ultimele', 'acțiuni', 'actiuni', 'Recent']
-        possible_sections = []
+        # 🔥 SPECIFIC TARGETING: Look for the exact "Ultimele acțiuni" section
+        # Method 1: Find by specific heading
+        actions_section = None
+        headings = soup.find_all(['h2', 'h3', 'h4', 'h5'], text=re.compile(r'Ultimele.*ac[țt]iuni', re.IGNORECASE))
         
-        for keyword in activity_keywords:
-            headings = soup.find_all(text=re.compile(keyword, re.IGNORECASE))
+        if headings:
+            # Get the parent container of the heading
             for heading in headings:
-                parent = heading.find_parent(['div', 'section', 'article', 'main'])
+                parent = heading.find_parent(['div', 'section', 'article'])
                 if parent:
-                    possible_sections.append(parent)
+                    actions_section = parent
+                    break
         
-        # STRATEGY 2: Find lists with player action patterns
-        all_lists = soup.find_all(['ul', 'ol', 'div'], class_=re.compile(r'activity|actions|feed|timeline', re.IGNORECASE))
-        possible_sections.extend(all_lists)
+        # Method 2: If not found, look for div with specific ID/class
+        if not actions_section:
+            actions_section = soup.find('div', {'id': re.compile(r'actions|activity', re.IGNORECASE)})
         
-        # STRATEGY 3: Find by common class/id patterns
-        direct_selectors = [
-            '#activity', '#actions', '#latest-actions', '#recent-activity',
-            '.activity', '.actions', '.recent-actions', '.latest-actions',
-            '.activity-feed', '.action-log', '.player-actions'
-        ]
-        for selector in direct_selectors:
-            elem = soup.select_one(selector)
-            if elem:
-                possible_sections.append(elem)
+        if not actions_section:
+            actions_section = soup.find('div', {'class': re.compile(r'latest.*actions|recent.*activity', re.IGNORECASE)})
         
-        # STRATEGY 4: Find any list containing "Jucatorul" text (player actions)
-        all_text_containers = soup.find_all(['ul', 'ol', 'div', 'table'])
-        for container in all_text_containers:
-            text = container.get_text()
-            if text.count('Jucatorul') >= 3 or text.count('jucatorul') >= 3:
-                possible_sections.append(container)
+        # Method 3: Find the list that contains ONLY action entries (not stats)
+        if not actions_section:
+            all_lists = soup.find_all(['ul', 'ol'])
+            for lst in all_lists:
+                items = lst.find_all('li', recursive=False)
+                # Check if this list has action patterns
+                action_count = 0
+                stat_count = 0
+                for item in items[:5]:  # Check first 5 items
+                    text = item.get_text()
+                    if any(verb in text for verb in ['a primit', 'a dat', 'a pus', 'a retras']):
+                        action_count += 1
+                    if any(stat in text for stat in ['Conectați', 'Banați', 'Înregistrări']):
+                        stat_count += 1
+                
+                # If mostly actions and no stats, this is our list
+                if action_count >= 3 and stat_count == 0:
+                    actions_section = lst
+                    break
         
-        # Try each potential section
-        for section in possible_sections:
-            if not section:
+        if not actions_section:
+            logger.error("❌ Could not find 'Ultimele acțiuni' section!")
+            return []
+        
+        # Parse entries from the found section
+        entries = actions_section.find_all(['li', 'div'], recursive=True, limit=limit * 2)
+        
+        for entry in entries:
+            text = entry.get_text(strip=True)
+            
+            # Must contain player reference
+            if 'Jucatorul' not in text and 'jucatorul' not in text:
                 continue
             
-            entries = section.find_all(['li', 'tr', 'div'], recursive=True)
+            # Must be long enough for real action
+            if len(text) < 40:
+                continue
             
-            for entry in entries:
-                text = entry.get_text(strip=True)
-                
-                # 🔥 STRICT FILTERING: Must meet ALL criteria
-                if len(text) < 50:  # 🔥 Minimum 50 chars for real actions
-                    continue
-                
-                if 'Jucatorul' not in text and 'jucatorul' not in text:
-                    continue
-                
-                # 🔥 EXCLUDE homepage statistics patterns
-                if any(pattern in text for pattern in [
-                    'Jucători Conectați',
-                    'Jucători Banați',
-                    'Înregistrări Server',
-                    'Facțiuni',
-                    'ORE JUCATE',
-                    'ROMANIA e mai mult',
-                    'PRO4KINGS',
-                    'Informații',
-                    'Anunțuri',
-                    'Updates'
-                ]):
-                    continue
-                
-                # 🔥 MUST contain action verbs
-                action_verbs = ['a primit', 'a dat', 'a pus', 'a scos', 'a cumparat', 'a vandut', 'a retras']
-                if not any(verb in text for verb in action_verbs):
-                    continue
-                
-                action = self.parse_action_entry(entry)
-                if action:
-                    actions.append(action)
-                    
-                    if len(actions) >= limit:
-                        break
+            # Must contain action verb
+            if not any(verb in text for verb in ['a primit', 'a dat', 'a pus', 'a scos', 'a retras']):
+                continue
             
-            if len(actions) > 0:
-                logger.info(f"✓ Found {len(actions)} valid actions in section: {section.name}")
-                break
+            # Must NOT contain homepage stats keywords
+            if any(kw in text for kw in ['Conectați', 'Banați', 'Server', 'JUCATE ÎN TOTAL']):
+                continue
+            
+            action = self.parse_action_entry(entry)
+            if action:
+                actions.append(action)
+                
+                if len(actions) >= limit:
+                    break
         
-        if len(actions) == 0:
-            logger.error("❌ NO VALID ACTIONS FOUND after strict filtering!")
-            logger.error(f"Total 'Jucatorul' mentions: {soup.get_text().count('Jucatorul')}")
-            logger.error(f"Possible sections found: {len(possible_sections)}")
-        else:
-            logger.info(f"✅ Parsed {len(actions)} valid player actions from homepage")
-        
-        return actions[:limit]
+        logger.info(f"✅ Extracted {len(actions)} actions from 'Ultimele acțiuni'")
+        return actions
     
     def parse_action_entry(self, entry) -> Optional[PlayerAction]:
         """Enhanced action parser with MORE patterns"""
