@@ -6,6 +6,8 @@ from database import Database
 from scraper import Pro4KingsScraper
 import asyncio
 import logging
+import re
+
 # Discord command sync tracking
 COMMANDS_SYNCED = False
 SYNC_LOCK = asyncio.Lock()
@@ -82,7 +84,7 @@ async def scrape_actions():
     try:
         global scraper
         if not scraper:
-            scraper = Pro4KingsScraper(max_concurrent=5)  # Lower concurrency
+            scraper = Pro4KingsScraper(max_concurrent=5)
             await scraper.__aenter__()
         
         logger.info("🔍 Fetching latest actions...")
@@ -239,7 +241,7 @@ async def update_pending_profiles():
 
 @tasks.loop(hours=1)
 async def check_banned_players():
-    """Check banned players list hourly"""
+    """Check banned players list hourly and mark expired bans"""
     try:
         global scraper
         if not scraper:
@@ -247,11 +249,16 @@ async def check_banned_players():
             await scraper.__aenter__()
         
         banned = await scraper.get_banned_players()
+        current_ban_ids = {ban['player_id'] for ban in banned if ban.get('player_id')}
         
+        # Save current bans
         for ban_data in banned:
             db.save_banned_player(ban_data)
         
-        logger.info(f"✓ Updated {len(banned)} banned players")
+        # Mark bans as expired if they're no longer on the list
+        db.mark_expired_bans(current_ban_ids)
+        
+        logger.info(f"✓ Updated {len(banned)} banned players, marked expired bans")
         
     except Exception as e:
         logger.error(f"✗ Error checking banned players: {e}", exc_info=True)
@@ -261,15 +268,16 @@ async def check_banned_players():
 # ============================================================================
 
 async def resolve_player_info(identifier):
-    """Helper to get player info from ID or name"""
+    """Helper to get player info - FIXED to prioritize ID lookup"""
     global scraper
     if not scraper:
         scraper = Pro4KingsScraper()
         await scraper.__aenter__()
     
+    # PRIORITY 1: Try as exact player ID
     if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
         player_id = str(identifier)
-        profile = db.get_player_last_connection(player_id)
+        profile = db.get_player_by_exact_id(player_id)
         
         if not profile:
             # Fetch from website
@@ -295,9 +303,16 @@ async def resolve_player_info(identifier):
                 db.save_player_profile(profile)
         
         return profile
-    else:
-        players = db.search_player_by_name(identifier)
-        return players[0] if players else None
+    
+    # PRIORITY 2: Extract ID from "Name(ID)" format
+    id_match = re.search(r'\((\d+)\)', str(identifier))
+    if id_match:
+        player_id = id_match.group(1)
+        return await resolve_player_info(player_id)
+    
+    # PRIORITY 3: Search by name as last resort
+    players = db.search_player_by_name(identifier)
+    return players[0] if players else None
 
 # ============================================================================
 # DISCORD SLASH COMMANDS - PLAYER INFO
@@ -310,7 +325,7 @@ async def player_info(interaction: discord.Interaction, identifier: str):
     profile = await resolve_player_info(identifier)
     
     if not profile:
-        await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**.")
+        await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**. Folosește ID-ul pentru rezultate mai precise (ex: /player 12345).")
         return
     
     embed = discord.Embed(
@@ -367,6 +382,8 @@ async def player_info(interaction: discord.Interaction, identifier: str):
             inline=False
         )
     
+    embed.set_footer(text=f"Tip: Folosește /rank_history {profile['player_id']} pentru istoric rang")
+    
     await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="actions", description="Vezi acțiunile unui jucător")
@@ -408,6 +425,129 @@ async def player_actions(interaction: discord.Interaction, identifier: str, days
     
     if len(actions) > 25:
         embed.set_footer(text=f"Afișate primele 25 din {len(actions)} acțiuni")
+    
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="rank_history", description="Vezi istoricul de rang al unui jucător")
+async def rank_history(interaction: discord.Interaction, identifier: str):
+    """NEW COMMAND: View player's faction rank history"""
+    await interaction.response.defer()
+    
+    # Resolve player first
+    profile = await resolve_player_info(identifier)
+    if not profile:
+        await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**.")
+        return
+    
+    player_id = profile['player_id']
+    rank_history = db.get_player_rank_history(player_id)
+    
+    if not rank_history:
+        await interaction.followup.send(f"❌ Nu am istoric de rang pentru **{profile['player_name']}**.")
+        return
+    
+    embed = discord.Embed(
+        title=f"🎖️ Istoric Rang - {profile['player_name']}",
+        description=f"ID: {player_id} • **{len(rank_history)}** schimbări de rang",
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
+    )
+    
+    for rank in rank_history[:15]:
+        obtained = rank['rank_obtained']
+        if isinstance(obtained, str):
+            obtained = datetime.fromisoformat(obtained)
+        
+        lost = rank.get('rank_lost')
+        status = "🟢 Curent" if rank['is_current'] else "🔴 Pierdut"
+        
+        duration = ""
+        if lost:
+            if isinstance(lost, str):
+                lost = datetime.fromisoformat(lost)
+            duration = f" (Durata: {(lost - obtained).days} zile)"
+        elif rank['is_current']:
+            duration = f" (De {(datetime.now() - obtained).days} zile)"
+        
+        embed.add_field(
+            name=f"{rank['faction']} - {rank['rank_name']}",
+            value=f"{status} • Obținut: {obtained.strftime('%d.%m.%Y')}{duration}",
+            inline=False
+        )
+    
+    if len(rank_history) > 15:
+        embed.set_footer(text=f"Afișate primele 15 din {len(rank_history)} ranguri")
+    
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="bans", description="Vezi jucătorii banați (activi sau toți)")
+async def view_bans(interaction: discord.Interaction, show_expired: bool = False):
+    """NEW COMMAND: View banned players"""
+    await interaction.response.defer()
+    
+    banned = db.get_banned_players(include_expired=show_expired)
+    
+    if not banned:
+        await interaction.followup.send("✅ Nu sunt jucători banați momentan.")
+        return
+    
+    embed = discord.Embed(
+        title="🚫 Jucători Banați",
+        description=f"Total: **{len(banned)}** jucători" + (" (inclusiv expirați)" if show_expired else " (doar activi)"),
+        color=discord.Color.red(),
+        timestamp=datetime.now()
+    )
+    
+    for ban in banned[:25]:
+        status = "🔴 Activ" if ban['is_active'] else "🟢 Expirat"
+        duration = ban.get('duration', 'Permanent')
+        reason = ban.get('reason', 'Necunoscut')[:100]
+        
+        embed.add_field(
+            name=f"{status} • {ban['player_name']} (ID: {ban['player_id']})",
+            value=f"Admin: {ban.get('admin', 'N/A')}\nMotiv: {reason}\nDurata: {duration}\nData: {ban.get('ban_date', 'N/A')}",
+            inline=False
+        )
+    
+    if len(banned) > 25:
+        embed.set_footer(text=f"Afișate primele 25 din {len(banned)} banuri")
+    
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="promotions", description="Vezi promovările recente în facțiuni")
+async def recent_promotions(interaction: discord.Interaction, days: int = 7):
+    """NEW COMMAND: View recent faction promotions"""
+    await interaction.response.defer()
+    
+    promotions = db.get_recent_promotions(days=days)
+    
+    if not promotions:
+        await interaction.followup.send(f"❌ Nu sunt promovări în ultimele {days} zile.")
+        return
+    
+    embed = discord.Embed(
+        title="🎖️ Promovări Recente",
+        description=f"Ultimele {days} zile • **{len(promotions)}** promovări",
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
+    )
+    
+    for promo in promotions[:20]:
+        obtained = promo['rank_obtained']
+        if isinstance(obtained, str):
+            obtained = datetime.fromisoformat(obtained)
+        
+        time_ago = (datetime.now() - obtained).days
+        time_str = f"{time_ago} zile" if time_ago > 0 else "Astăzi"
+        
+        embed.add_field(
+            name=f"{promo['player_name']} (ID: {promo['player_id']})",
+            value=f"**{promo['rank_name']}** în {promo['faction']}\nPrimit: {time_str}",
+            inline=True
+        )
+    
+    if len(promotions) > 20:
+        embed.set_footer(text=f"Afișate primele 20 din {len(promotions)} promovări")
     
     await interaction.followup.send(embed=embed)
 
@@ -540,7 +680,7 @@ async def find_player(interaction: discord.Interaction, name: str):
     players = db.search_player_by_name(name)
     
     if not players:
-        await interaction.followup.send(f"❌ Nu am găsit jucători cu numele **{name}**.")
+        await interaction.followup.send(f"❌ Nu am găsit jucători cu numele **{name}**. Tip: Folosește ID-ul pentru rezultate precise.")
         return
     
     embed = discord.Embed(
@@ -603,7 +743,7 @@ async def bot_stats(interaction: discord.Interaction):
         inline=True
     )
     
-    embed.set_footer(text=f"Bot versiune 2.0 • Stocare indefinită activată")
+    embed.set_footer(text=f"Bot versiune 2.1 • Îmbunătățiri Ianuarie 2026")
     
     await interaction.followup.send(embed=embed)
 
@@ -618,5 +758,3 @@ if __name__ == '__main__':
         exit(1)
     
     bot.run(TOKEN)
-
-
