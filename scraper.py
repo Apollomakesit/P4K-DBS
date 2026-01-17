@@ -49,45 +49,38 @@ class PlayerProfile:
     profile_data: Dict = None
 
 class Pro4KingsScraper:
-    """Enhanced scraper for panel.pro4kings.ro using httpx with Brotli support"""
+    """Enhanced scraper optimized for fast scanning"""
     
-    def __init__(self, base_url: str = "https://panel.pro4kings.ro", max_concurrent: int = 50):
+    def __init__(self, base_url: str = "https://panel.pro4kings.ro", max_concurrent: int = 20):
         self.base_url = base_url
         self.max_concurrent = max_concurrent
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.client: Optional[httpx.AsyncClient] = None
+        self.request_delay = 0.2  # 200ms base delay (fast!)
+        self.last_request_time = {}  # Track per-worker
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'ro-RO,ro;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'ro-RO,ro;q=0.9,en;q=0.8',
         }
     
     async def __aenter__(self):
         """Async context manager entry"""
-        # httpx automatically handles Brotli decompression
         self.client = httpx.AsyncClient(
             headers=self.headers,
-            timeout=60.0,
+            timeout=15.0,  # Faster timeout
             limits=httpx.Limits(
-                max_connections=100,
-                max_keepalive_connections=50
+                max_connections=self.max_concurrent * 2,
+                max_keepalive_connections=self.max_concurrent
             ),
             follow_redirects=True,
-            verify=False  # Disable SSL verification
+            verify=False
         )
-        logger.info("✓ HTTP client initialized with native Brotli support")
+        logger.info(f"✓ HTTP client initialized ({self.max_concurrent} workers)")
         return self
     
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit"""
-        if self.client:
-            await self.client.aclose()
-    
-    async def fetch_page(self, url: str, retries: int = 3) -> Optional[str]:
-        """Fetch page with retry logic and rate limiting"""
+    async def fetch_page(self, url: str, retries: int = 2) -> Optional[str]:  # Only 2 retries
+        """Fetch page with minimal delay for speed"""
         async with self.semaphore:
             for attempt in range(retries):
                 try:
@@ -95,37 +88,35 @@ class Pro4KingsScraper:
                     
                     if response.status_code == 200:
                         return response.text
-                    elif response.status_code == 429:  # Rate limited
-                        wait_time = 2 ** attempt
-                        logger.warning(f"Rate limited, waiting {wait_time}s")
+                    elif response.status_code == 404:
+                        return None  # Profile doesn't exist - fast skip
+                    elif response.status_code == 503:
+                        # Server overloaded - this is critical
+                        wait_time = 3 * (2 ** attempt)
+                        logger.warning(f"503 Service Unavailable - backing off {wait_time}s")
+                        await asyncio.sleep(wait_time)
+                        raise Exception("503 Service Unavailable")  # Propagate to trigger global backoff
+                    elif response.status_code == 429:
+                        wait_time = 5 * (2 ** attempt)
+                        logger.warning(f"429 Rate Limited - waiting {wait_time}s")
                         await asyncio.sleep(wait_time)
                         continue
-                    elif response.status_code == 404:
-                        logger.warning(f"Page not found: {url}")
-                        return None
                     else:
-                        logger.warning(f"Status {response.status_code} for {url}")
                         if attempt < retries - 1:
-                            await asyncio.sleep(1)
+                            await asyncio.sleep(0.5)
                             continue
                         return None
                         
                 except httpx.TimeoutException:
-                    logger.warning(f"Timeout on {url}, attempt {attempt + 1}/{retries}")
                     if attempt < retries - 1:
-                        await asyncio.sleep(2)
-                        continue
-                    return None
-                except httpx.HTTPError as e:
-                    logger.error(f"HTTP error fetching {url}: {e}")
-                    if attempt < retries - 1:
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(0.5)
                         continue
                     return None
                 except Exception as e:
-                    logger.error(f"Unexpected error fetching {url}: {type(e).__name__}: {e}")
+                    if '503' in str(e):
+                        raise  # Re-raise 503 to trigger backoff
                     if attempt < retries - 1:
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(0.5)
                         continue
                     return None
         return None
@@ -637,4 +628,5 @@ class Pro4KingsScraper:
                 logger.error(f"Error in batch: {profile}")
         
         return results
+
 
