@@ -84,6 +84,40 @@ async def on_ready():
     print(f'{"="*60}\n')
 
 # ============================================================================
+# PREFIX COMMAND FOR EMERGENCY COMMAND SYNC
+# ============================================================================
+
+@bot.command(name='sync')
+async def force_sync(ctx):
+    """EMERGENCY: Force sync slash commands if they don't appear"""
+    global COMMANDS_SYNCED
+    
+    try:
+        await ctx.send("🔄 **Sincronizare forțată comenzi slash...**")
+        
+        # Force resync
+        COMMANDS_SYNCED = False
+        synced = await bot.tree.sync()
+        COMMANDS_SYNCED = True
+        
+        cmd_list = "\n".join([f"• `/{cmd.name}`: {cmd.description}" for cmd in synced])
+        
+        await ctx.send(
+            f"✅ **Succes! Sincronizate {len(synced)} comenzi:**\n{cmd_list}\n\n"
+            f"**Notă**: Discord poate dura 1-5 minute să afișeze comenzile noi. Așteaptă și reîncearcă `/scan_all`.\n\n"
+            f"Dacă nu apar după 5 minute:\n"
+            f"1. Ieși complet din Discord (închide aplicația)\n"
+            f"2. Reintră în Discord\n"
+            f"3. Comenzile ar trebui să apară acum"
+        )
+        
+        logger.info(f"✅ Force sync completed by {ctx.author}: {len(synced)} commands")
+        
+    except Exception as e:
+        await ctx.send(f"❌ **Eroare la sincronizare**: {str(e)}")
+        logger.error(f"Force sync error: {e}", exc_info=True)
+
+# ============================================================================
 # BACKGROUND MONITORING TASKS
 # ============================================================================
 
