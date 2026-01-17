@@ -19,7 +19,8 @@ SCAN_STATS = {
     'scanned': 0,
     'found': 0,
     'errors': 0,
-    'current_id': 0
+    'current_id': 0,
+    'last_saved_id': 0  # 🔥 NEW: Track last saved checkpoint
 }
 
 logging.basicConfig(
@@ -253,7 +254,6 @@ async def update_pending_profiles():
         
         logger.info(f"🔄 Updating {len(pending_ids)} pending profiles...")
         
-        # 🔧 FIXED: Eliminat parametrul 'delay' invalid
         results = await scraper.batch_get_profiles(pending_ids)
         
         for profile in results:
@@ -307,11 +307,11 @@ async def check_banned_players():
         logger.error(f"✗ Error checking banned players: {e}", exc_info=True)
 
 # ============================================================================
-# INITIAL SCAN FUNCTION (Background)
+# INITIAL SCAN FUNCTION (Background) - WITH RESUME SUPPORT
 # ============================================================================
 
-async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, end_id: int = 230000, workers: int = 20):
-    """Run initial scan in background - Railway compatible!"""
+async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, end_id: int = 230000, workers: int = 30):
+    """🔥 NEW: Run initial scan with RESUME support and progress saving"""
     global SCAN_IN_PROGRESS, SCAN_STATS
     
     if SCAN_IN_PROGRESS:
@@ -324,15 +324,19 @@ async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, 
         'scanned': 0,
         'found': 0,
         'errors': 0,
-        'current_id': start_id
+        'current_id': start_id,
+        'last_saved_id': start_id
     }
     
     await interaction.followup.send(
         f"🚀 **Scan inițial pornit!**\n"
         f"📊 Range: {start_id:,} - {end_id:,} ({end_id - start_id + 1:,} ID-uri)\n"
         f"⚙️ Workers: {workers} concurenți\n"
-        f"⏱️ Estimare: ~2-3 ore\n\n"
-        f"Folosește `/scan_status` pentru a vedea progresul."
+        f"⚡ Viteză așteptată: 10-15 ID-uri/sec\n"
+        f"⏱️ Estimare: ~4-6 ore\n\n"
+        f"✅ **Progresul se salvează automat la fiecare 100 ID-uri!**\n"
+        f"Dacă se oprește, folosește `/scan_resume` pentru a continua.\n\n"
+        f"Folosește `/scan_status` pentru progres live!"
     )
     
     try:
@@ -340,8 +344,10 @@ async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, 
         scan_scraper = Pro4KingsScraper(max_concurrent=workers)
         await scan_scraper.__aenter__()
         
-        # Batch scan
-        batch_size = 100
+        # 🔥 Batch scan cu salvare de progres
+        batch_size = 200  # 🔥 Crescut de la 100 la 200
+        save_interval = 100  # Salvează după fiecare 100 ID-uri
+        
         for batch_start in range(start_id, end_id + 1, batch_size):
             if not SCAN_IN_PROGRESS:  # Allow cancellation
                 logger.info("🛑 Scan cancelled by user")
@@ -350,7 +356,6 @@ async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, 
             batch_end = min(batch_start + batch_size - 1, end_id)
             batch_ids = [str(i) for i in range(batch_start, batch_end + 1)]
             
-            # 🔧 FIXED: Eliminat parametrul 'delay' invalid
             profiles = await scan_scraper.batch_get_profiles(batch_ids)
             
             # Save to database
@@ -382,6 +387,16 @@ async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, 
             SCAN_STATS['scanned'] += len(batch_ids)
             SCAN_STATS['current_id'] = batch_end
             
+            # 🔥 SAVE PROGRESS CHECKPOINT every 100 IDs
+            if SCAN_STATS['scanned'] % save_interval == 0 or batch_end == end_id:
+                db.save_scan_progress(
+                    last_player_id=str(batch_end),
+                    total_scanned=SCAN_STATS['found'],
+                    completed=(batch_end >= end_id)
+                )
+                SCAN_STATS['last_saved_id'] = batch_end
+                logger.info(f"💾 Progress saved: ID {batch_end:,} | Found: {SCAN_STATS['found']:,}")
+            
             # Log progress every 1000 players
             if SCAN_STATS['scanned'] % 1000 == 0:
                 elapsed = (datetime.now() - SCAN_STATS['start_time']).total_seconds()
@@ -392,26 +407,35 @@ async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, 
                     f"📊 Scan progress: {SCAN_STATS['scanned']:,}/{end_id:,} "
                     f"({SCAN_STATS['scanned']/end_id*100:.1f}%) | "
                     f"Found: {SCAN_STATS['found']:,} | "
-                    f"Rate: {rate:.0f}/s | "
-                    f"ETA: {remaining/60:.0f}min"
+                    f"Rate: {rate:.1f}/s | "
+                    f"ETA: {remaining/60:.0f}min | "
+                    f"Last saved: {SCAN_STATS['last_saved_id']:,}"
                 )
             
             # Small delay between batches
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
         
         await scan_scraper.__aexit__(None, None, None)
         
         # Final report
         elapsed = (datetime.now() - SCAN_STATS['start_time']).total_seconds()
         
+        # Mark scan as complete
+        db.save_scan_progress(
+            last_player_id=str(end_id),
+            total_scanned=SCAN_STATS['found'],
+            completed=True
+        )
+        
         # Try to send completion message to original channel
         try:
             await interaction.channel.send(
                 f"✅ **Scan finalizat!**\n"
                 f"⏱️ Durată: {elapsed/60:.1f} minute\n"
-                f"📊 Scanați: {SCAN_STATS['scanned']:,}\n"
+                f"📊 Scanați: {SCAN_STATS['scanned']:,} ID-uri\n"
                 f"👥 Găsiți: {SCAN_STATS['found']:,} jucători\n"
-                f"❌ Erori: {SCAN_STATS['errors']}\n\n"
+                f"❌ Erori: {SCAN_STATS['errors']}\n"
+                f"⚡ Viteză medie: {SCAN_STATS['scanned']/elapsed:.1f} ID-uri/sec\n\n"
                 f"Folosește `/stats` pentru statistici complete!"
             )
         except:
@@ -421,8 +445,19 @@ async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, 
         
     except Exception as e:
         logger.error(f"❌ Scan error: {e}", exc_info=True)
+        # Save progress even on error
+        db.save_scan_progress(
+            last_player_id=str(SCAN_STATS['current_id']),
+            total_scanned=SCAN_STATS['found'],
+            completed=False
+        )
         try:
-            await interaction.channel.send(f"❌ **Eroare în scan**: {str(e)}")
+            await interaction.channel.send(
+                f"❌ **Eroare în scan la ID {SCAN_STATS['current_id']:,}**\n"
+                f"Ultimul ID salvat: **{SCAN_STATS['last_saved_id']:,}**\n"
+                f"Găsiți până acum: {SCAN_STATS['found']:,}\n\n"
+                f"Folosește `/scan_resume` pentru a relua!"
+            )
         except:
             pass
     
@@ -485,37 +520,131 @@ async def resolve_player_info(identifier):
 # ============================================================================
 
 @bot.tree.command(name="scan_all", description="[ADMIN] Pornește scanarea inițială a tuturor jucătorilor (1-230K)")
-async def scan_all_players(interaction: discord.Interaction, start_id: int = 1, end_id: int = 230000, workers: int = 20):
-    """NEW COMMAND: Trigger initial scan from Discord (Railway compatible)"""
+async def scan_all_players(interaction: discord.Interaction, start_id: int = 1, end_id: int = 230000, workers: int = 30):
+    """🔥 UPDATED: Trigger initial scan with resume support"""
     await interaction.response.defer()
     
     if SCAN_IN_PROGRESS:
         await interaction.followup.send(
             f"⚠️ **Un scan este deja activ!**\n"
             f"Progres: {SCAN_STATS['scanned']:,}/{end_id:,} ({SCAN_STATS['scanned']/end_id*100:.1f}%)\n"
-            f"Găsiți: {SCAN_STATS['found']:,} jucători\n\n"
-            f"Folosește `/scan_status` pentru detalii."
+            f"Găsiți: {SCAN_STATS['found']:,} jucători\n"
+            f"Ultimul ID salvat: {SCAN_STATS['last_saved_id']:,}\n\n"
+            f"Folosește `/scan_status` pentru detalii live."
         )
         return
+    
+    # 🔥 Check for saved progress
+    progress = db.get_scan_progress()
+    if progress.get('last_scan'):
+        last_id = int(progress.get('last_scanned_id', 0)) if progress.get('last_scanned_id') else 0
+        if last_id > 0 and last_id < end_id:
+            await interaction.followup.send(
+                f"📊 **Progress salvat găsit!**\n"
+                f"Ultimul ID scanat: **{last_id:,}**\n"
+                f"Jucători găsiți: {progress['total_scanned']:,}\n\n"
+                f"Vrei să continui de la ID {last_id + 1}?\n"
+                f"Folosește `/scan_resume` sau\n"
+                f"`/scan_all start_id:{last_id + 1}` pentru a continua."
+            )
+            return
     
     # Start scan in background
     asyncio.create_task(run_initial_scan(interaction, start_id, end_id, workers))
 
-@bot.tree.command(name="scan_status", description="Vezi progresul scanării în curs")
+@bot.tree.command(name="scan_resume", description="Reia scanarea întreruptă de la ultimul checkpoint")
+async def scan_resume(interaction: discord.Interaction, workers: int = 30):
+    """🔥 NEW: Resume interrupted scan from last checkpoint"""
+    await interaction.response.defer()
+    
+    if SCAN_IN_PROGRESS:
+        await interaction.followup.send("⚠️ Un scan este deja activ!")
+        return
+    
+    # Get last saved progress
+    progress = db.get_scan_progress()
+    last_id = int(progress.get('last_scanned_id', 0)) if progress.get('last_scanned_id') else 0
+    
+    if last_id == 0:
+        await interaction.followup.send(
+            "❌ **Nu există progress salvat!**\n"
+            "Folosește `/scan_all` pentru a porni un scan nou."
+        )
+        return
+    
+    if last_id >= 230000:
+        await interaction.followup.send(
+            "✅ **Scanarea este completă!**\n"
+            f"Total jucători: {progress['total_scanned']:,}"
+        )
+        return
+    
+    # Resume from last checkpoint
+    await interaction.followup.send(
+        f"🔄 **Reluare scan de la checkpoint!**\n"
+        f"📊 Ultimul ID salvat: **{last_id:,}**\n"
+        f"👥 Jucători găsiți până acum: {progress['total_scanned']:,}\n"
+        f"📈 Rămân: {230000 - last_id:,} ID-uri\n\n"
+        f"Pornire..."
+    )
+    
+    # Start from next ID after last saved
+    asyncio.create_task(run_initial_scan(interaction, last_id + 1, 230000, workers))
+
+@bot.tree.command(name="scan_status", description="Vezi progresul scanării (actualizare automată timp de 60s)")
 async def scan_status(interaction: discord.Interaction):
-    """Check scan progress"""
+    """🔥 NEW: Check scan progress with REAL-TIME auto-updates"""
     await interaction.response.defer()
     
     if not SCAN_IN_PROGRESS:
         total_players = db.get_scan_progress()['total_scanned']
+        progress = db.get_scan_progress()
+        last_id = progress.get('last_scanned_id', 'N/A')
+        
         await interaction.followup.send(
             f"ℹ️ **Nu este niciun scan activ**\n"
-            f"👥 Jucători în baza de date: **{total_players:,}**\n\n"
+            f"👥 Jucători în baza de date: **{total_players:,}**\n"
+            f"📊 Ultimul ID scanat: **{last_id}**\n\n"
             f"Pentru a începe un scan complet, folosește:\n"
-            f"`/scan_all`"
+            f"`/scan_all` sau `/scan_resume` dacă ai progres salvat"
         )
         return
     
+    # Create initial embed
+    embed = create_scan_status_embed()
+    message = await interaction.followup.send(embed=embed)
+    
+    # 🔥 AUTO-UPDATE: Update every 5 seconds for 60 seconds
+    update_count = 0
+    max_updates = 12  # 60 seconds / 5 seconds
+    
+    while SCAN_IN_PROGRESS and update_count < max_updates:
+        await asyncio.sleep(5)
+        
+        if not SCAN_IN_PROGRESS:
+            # Final update
+            embed = create_scan_status_embed()
+            embed.set_footer(text="✅ Scan finalizat!")
+            await message.edit(embed=embed)
+            break
+        
+        # Update embed
+        embed = create_scan_status_embed()
+        embed.set_footer(text=f"🔄 Actualizare automată... ({update_count + 1}/{max_updates})")
+        
+        try:
+            await message.edit(embed=embed)
+        except:
+            break
+        
+        update_count += 1
+    
+    if SCAN_IN_PROGRESS and update_count >= max_updates:
+        embed.set_footer(text="⏱️ Actualizare automată oprită după 60s. Rulează comanda din nou pentru progres actualizat.")
+        await message.edit(embed=embed)
+
+def create_scan_status_embed() -> discord.Embed:
+    """🔥 NEW: Helper to create scan status embed"""
     elapsed = (datetime.now() - SCAN_STATS['start_time']).total_seconds()
     rate = SCAN_STATS['scanned'] / elapsed if elapsed > 0 else 0
     total_target = 230000
@@ -526,7 +655,7 @@ async def scan_status(interaction: discord.Interaction):
     bar = "█" * filled + "░" * (progress_bar_length - filled)
     
     embed = discord.Embed(
-        title="📊 Status Scan Inițial",
+        title="📊 Status Scan Inițial (Live)",
         description=f"`{bar}` {SCAN_STATS['scanned']/total_target*100:.1f}%",
         color=discord.Color.blue(),
         timestamp=datetime.now()
@@ -546,7 +675,7 @@ async def scan_status(interaction: discord.Interaction):
     
     embed.add_field(
         name="⚡ Viteză",
-        value=f"**{rate:.0f}** ID-uri/sec",
+        value=f"**{rate:.1f}** ID-uri/sec",
         inline=True
     )
     
@@ -563,14 +692,30 @@ async def scan_status(interaction: discord.Interaction):
     )
     
     embed.add_field(
+        name="💾 Ultimul ID salvat",
+        value=f"**{SCAN_STATS['last_saved_id']:,}**",
+        inline=True
+    )
+    
+    embed.add_field(
         name="❌ Erori",
         value=f"**{SCAN_STATS['errors']}**",
         inline=True
     )
     
-    embed.set_footer(text=f"ID curent: {SCAN_STATS['current_id']:,}")
+    embed.add_field(
+        name="📍 ID curent",
+        value=f"**{SCAN_STATS['current_id']:,}**",
+        inline=True
+    )
     
-    await interaction.followup.send(embed=embed)
+    embed.add_field(
+        name="📊 Procent complet",
+        value=f"**{SCAN_STATS['found']/SCAN_STATS['scanned']*100 if SCAN_STATS['scanned'] > 0 else 0:.1f}%** profiluri valide",
+        inline=True
+    )
+    
+    return embed
 
 @bot.tree.command(name="scan_stop", description="[ADMIN] Oprește scanarea în curs")
 async def scan_stop(interaction: discord.Interaction):
@@ -588,12 +733,15 @@ async def scan_stop(interaction: discord.Interaction):
     await interaction.followup.send(
         f"🛑 **Scan oprit!**\n"
         f"Scanați: {SCAN_STATS['scanned']:,}\n"
-        f"Găsiți: {SCAN_STATS['found']:,} jucători\n\n"
-        f"Poți relua mai târziu cu `/scan_all start_id:{SCAN_STATS['current_id'] + 1}`"
+        f"Găsiți: {SCAN_STATS['found']:,} jucători\n"
+        f"Ultimul ID salvat: **{SCAN_STATS['last_saved_id']:,}**\n\n"
+        f"✅ Progresul a fost salvat automat!\n"
+        f"Poți relua cu `/scan_resume` sau\n"
+        f"`/scan_all start_id:{SCAN_STATS['last_saved_id'] + 1}`"
     )
 
 # ============================================================================
-# DISCORD SLASH COMMANDS - PLAYER INFO
+# DISCORD SLASH COMMANDS - PLAYER INFO  
 # ============================================================================
 
 @bot.tree.command(name="player", description="Vezi informații complete despre un jucător (ID sau nume)")
@@ -606,7 +754,6 @@ async def player_info(interaction: discord.Interaction, identifier: str):
         await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**. Folosește ID-ul pentru rezultate mai precise (ex: /player 12345).")
         return
     
-    # 🔧 FIX: Use 'player_name' key (from database) instead of 'username'
     player_name = profile.get('player_name') or profile.get('username', f"Player_{profile['player_id']}")
     
     embed = discord.Embed(
@@ -688,9 +835,8 @@ async def player_actions(interaction: discord.Interaction, identifier: str, days
         timestamp=datetime.now()
     )
     
-    # 🔧 FIX: Limit content to avoid 6000 character embed limit
     total_chars = 0
-    max_embed_chars = 5500  # Safe limit below 6000
+    max_embed_chars = 5500
     actions_added = 0
     
     for action in actions[:25]:
@@ -698,20 +844,16 @@ async def player_actions(interaction: discord.Interaction, identifier: str, days
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
         
-        # Format action text with LENGTH LIMIT
         action_text = action.get('raw_text', action.get('action_detail', 'N/A'))
         
-        # Truncate individual action to max 200 chars
         if len(action_text) > 200:
             action_text = action_text[:197] + "..."
         
         field_content = action_text
         field_name = timestamp.strftime('%d.%m.%Y %H:%M:%S')
         
-        # Calculate size of this field
         field_size = len(field_name) + len(field_content)
         
-        # Stop if adding this field would exceed limit
         if total_chars + field_size > max_embed_chars:
             break
         
@@ -733,10 +875,9 @@ async def player_actions(interaction: discord.Interaction, identifier: str, days
 
 @bot.tree.command(name="rank_history", description="Vezi istoricul de rang al unui jucător")
 async def rank_history(interaction: discord.Interaction, identifier: str):
-    """NEW COMMAND: View player's faction rank history"""
+    """View player's faction rank history"""
     await interaction.response.defer()
     
-    # Resolve player first
     profile = await resolve_player_info(identifier)
     if not profile:
         await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**.")
@@ -786,7 +927,7 @@ async def rank_history(interaction: discord.Interaction, identifier: str):
 
 @bot.tree.command(name="bans", description="Vezi jucătorii banați (activi sau toți)")
 async def view_bans(interaction: discord.Interaction, show_expired: bool = False):
-    """NEW COMMAND: View banned players"""
+    """View banned players"""
     await interaction.response.defer()
     
     banned = db.get_banned_players(include_expired=show_expired)
@@ -820,7 +961,7 @@ async def view_bans(interaction: discord.Interaction, show_expired: bool = False
 
 @bot.tree.command(name="promotions", description="Vezi promovările recente în facțiuni")
 async def recent_promotions(interaction: discord.Interaction, days: int = 7):
-    """NEW COMMAND: View recent faction promotions"""
+    """View recent faction promotions"""
     await interaction.response.defer()
     
     promotions = db.get_recent_promotions(days=days)
@@ -872,11 +1013,10 @@ async def online_players(interaction: discord.Interaction):
         timestamp=datetime.now()
     )
     
-    # Split into chunks of 50
     chunk_size = 50
     player_chunks = [players[i:i + chunk_size] for i in range(0, len(players), chunk_size)]
     
-    for i, chunk in enumerate(player_chunks[:3]):  # Max 3 chunks (150 players)
+    for i, chunk in enumerate(player_chunks[:3]):
         player_list = "\n".join([
             f"• **{p['player_name']}** (ID: {p['player_id']})" 
             for p in chunk
@@ -966,7 +1106,6 @@ async def faction_members(interaction: discord.Interaction, faction_name: str):
         rank_text = f" • {member.get('faction_rank')}" if member.get('faction_rank') else ""
         level_text = f"Level {member.get('level')}" if member.get('level') else "N/A"
         
-        # 🔧 FIX: Use correct database key for player name
         player_name = member.get('username', member.get('player_name', 'Unknown'))
         
         embed.add_field(
@@ -1050,6 +1189,15 @@ async def bot_stats(interaction: discord.Interaction):
         inline=True
     )
     
+    # Show last scanned ID if available
+    last_id = progress.get('last_scanned_id')
+    if last_id:
+        embed.add_field(
+            name="📊 Ultimul ID scanat",
+            value=f"**{last_id}**",
+            inline=True
+        )
+    
     if SCAN_IN_PROGRESS:
         embed.add_field(
             name="🔄 Scan activ",
@@ -1057,7 +1205,7 @@ async def bot_stats(interaction: discord.Interaction):
             inline=False
         )
     
-    embed.set_footer(text=f"Bot versiune 2.1 • Îmbunătățiri Ianuarie 2026 • Today at {datetime.now().strftime('%H:%M')}")
+    embed.set_footer(text=f"Bot versiune 2.2 • Optimizat cu resume scan + real-time status • Today at {datetime.now().strftime('%H:%M')}")
     
     await interaction.followup.send(embed=embed)
 
