@@ -197,37 +197,105 @@ class Pro4KingsScraper:
         logger.info(f"Total online players found: {len(all_players)}")
         return all_players
     
-    async def get_latest_actions(self, limit: int = 100) -> List[PlayerAction]:
-        """Get latest actions from homepage"""
+    async def get_latest_actions(self, limit: int = 200) -> List[PlayerAction]:
+        """
+        CRITICAL: Get latest actions - THIS IS THE PRIMARY FUNCTION
+        Enhanced with multiple detection methods
+        """
         url = f"{self.base_url}/"
         html = await self.fetch_page(url)
-        
+    
         if not html:
+            logger.error("❌ Failed to fetch homepage for actions!")
             return []
-        
-        soup = BeautifulSoup(html, 'html.parser')
-        
-        # Find "Ultimele acțiuni" section
-        actions_section = soup.find(text=re.compile(r'Ultimele.*ac.*iuni', re.IGNORECASE))
-        if actions_section:
-            actions_container = actions_section.find_parent(['div', 'section', 'table'])
-        else:
-            actions_container = soup.select_one('#ultimele-actiuni, .latest-actions, .recent-actions')
-        
-        if not actions_container:
-            logger.warning("Could not find 'Ultimele acțiuni' section")
-            return []
-        
-        action_entries = actions_container.select('li, tr, .action-item, .activity-row')
+    
+        soup = BeautifulSoup(html, 'lxml')  # Use lxml parser for better performance
         actions = []
+    
+        # STRATEGY 1: Find by common Romanian text patterns
+        activity_keywords = ['Activitate', 'Ultimele', 'acțiuni', 'actiuni', 'Recent']
+        possible_sections = []
+    
+        for keyword in activity_keywords:
+            headings = soup.find_all(text=re.compile(keyword, re.IGNORECASE))
+            for heading in headings:
+                parent = heading.find_parent(['div', 'section', 'article', 'main'])
+                if parent:
+                    possible_sections.append(parent)
+    
+        # STRATEGY 2: Find lists with player action patterns
+        all_lists = soup.find_all(['ul', 'ol', 'div'], class_=re.compile(r'activity|actions|feed|timeline', re.IGNORECASE))
+        possible_sections.extend(all_lists)
+    
+        # STRATEGY 3: Find by common class/id patterns
+        direct_selectors = [
+            '#activity', '#actions', '#latest-actions', '#recent-activity',
+            '.activity', '.actions', '.recent-actions', '.latest-actions',
+            '.activity-feed', '.action-log', '.player-actions'
+        ]
+        for selector in direct_selectors:
+            elem = soup.select_one(selector)
+            if elem:
+                possible_sections.append(elem)
+    
+        # STRATEGY 4: Find any list containing "Jucatorul" text (player actions)
+        all_text_containers = soup.find_all(['ul', 'ol', 'div', 'table'])
+        for container in all_text_containers:
+            text = container.get_text()
+            # Check if it contains multiple player actions
+            if text.count('Jucatorul') >= 3 or text.count('jucatorul') >= 3:
+                possible_sections.append(container)
+    
+        # Try each potential section
+        for section in possible_sections:
+            if not section:
+                continue
         
-        for entry in action_entries[:limit]:
-            action = self.parse_action_entry(entry)
-            if action:
-                actions.append(action)
+            # Extract action entries from this section
+            entries = section.find_all(['li', 'tr', 'div'], recursive=True)
         
-        logger.info(f"Parsed {len(actions)} actions from homepage")
-        return actions
+            for entry in entries:
+                text = entry.get_text(strip=True)
+            
+                # Skip if too short or doesn't contain player action markers
+                if len(text) < 20:
+                    continue
+                if 'Jucatorul' not in text and 'jucatorul' not in text:
+                    continue
+            
+                # Parse the action
+                action = self.parse_action_entry(entry)
+                if action:
+                    actions.append(action)
+                
+                    # Stop if we have enough
+                    if len(actions) >= limit:
+                    break
+            
+            # If we found actions in this section, stop searching
+            if len(actions) > 0:
+                logger.info(f"✓ Found actions in section: {section.name} (class: {section.get('class')})")
+                break
+    
+        if len(actions) == 0:
+            logger.error("❌ NO ACTIONS FOUND! Debugging HTML structure:")
+            logger.error(f"Total 'Jucatorul' mentions: {soup.get_text().count('Jucatorul')}")
+            logger.error(f"Possible sections found: {len(possible_sections)}")
+        
+            # Last resort: Find ALL text containing "Jucatorul" and try to parse
+            all_text = soup.get_text()
+            lines = all_text.split('\n')
+            for line in lines:
+                if 'Jucatorul' in line and len(line) > 20:
+                    # Create a fake element with this text
+                    fake_elem = BeautifulSoup(f'<div>{line}</div>', 'lxml').div
+                    action = self.parse_action_entry(fake_elem)
+                    if action:
+                        actions.append(action)
+    
+        logger.info(f"✓ Parsed {len(actions)} actions from homepage")
+        return actions[:limit]
+
     
     def parse_action_entry(self, entry) -> Optional[PlayerAction]:
         """Parse individual action entry"""
@@ -628,5 +696,6 @@ class Pro4KingsScraper:
                 logger.error(f"Error in batch: {profile}")
         
         return results
+
 
 
