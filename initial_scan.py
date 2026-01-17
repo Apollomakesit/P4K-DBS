@@ -24,15 +24,14 @@ DB_PATH = os.getenv('DATABASE_PATH', 'pro4kings.db')
 START_ID = 1
 END_ID = 230000
 
-# 🔥 OPTIMIZED CONFIGURATION
-CONCURRENT_WORKERS = 8      # Redus de la 20 la 8 pentru stabilitate
-BATCH_SIZE = 40             # Batch-uri mai mici
-SCAN_DELAY = 0.15           # Mai mult delay între request-uri
+# 🔥 HIGHLY OPTIMIZED CONFIGURATION - Uses scraper's batch_get_profiles()
+CONCURRENT_WORKERS = 8      # 8 concurrent workers
+BATCH_SIZE = 200            # Each worker processes 200 IDs at once using batch_get_profiles
 
 class FastScanner:
     """
-    Optimized scanner with intelligent rate limiting
-    Strategy: 8 concurrent workers, smart rate limiting, wave pattern
+    HIGHLY OPTIMIZED scanner using scraper.batch_get_profiles()
+    Strategy: Let scraper handle rate limiting, we just feed it batches
     Target: 6-10 ID/s with minimal 503 errors
     """
     
@@ -50,8 +49,6 @@ class FastScanner:
             'end_time': None
         }
         self.stats_lock = asyncio.Lock()
-        self.backoff_level = 0  # Global backoff when 503 occurs
-        self.backoff_lock = asyncio.Lock()
         
         # 🔥 Performance tracking
         self.last_progress_time = None
@@ -85,84 +82,97 @@ class FastScanner:
         except Exception as e:
             logger.error(f"Error saving scan state: {e}")
     
-    async def increase_backoff(self):
-        """Increase global backoff when 503 occurs"""
-        async with self.backoff_lock:
-            self.backoff_level = min(self.backoff_level + 1, 5)
-            logger.warning(f"⚠️ Increasing backoff level to {self.backoff_level}")
-    
-    async def decrease_backoff(self):
-        """Gradually decrease backoff when things are stable"""
-        async with self.backoff_lock:
-            if self.backoff_level > 0:
-                self.backoff_level -= 1
-    
-    async def get_backoff_delay(self) -> float:
-        """Get current backoff delay"""
-        return SCAN_DELAY * (1.5 ** self.backoff_level)  # Exponential backoff
-    
-    async def worker(self, worker_id: int, scraper: Pro4KingsScraper, player_ids: List[str]):
-        """Worker coroutine to process player IDs"""
-        for player_id in player_ids:
+    async def worker(self, worker_id: int, scraper: Pro4KingsScraper, player_ids_batches: List[List[str]]):
+        """
+        🔥 OPTIMIZED: Worker uses scraper.batch_get_profiles() for parallel processing
+        Each batch is processed fully in parallel by the scraper's built-in concurrency
+        """
+        for batch_index, batch_ids in enumerate(player_ids_batches):
             try:
-                # Get current backoff delay
-                delay = await self.get_backoff_delay()
+                logger.info(f"Worker {worker_id}: Processing batch {batch_index + 1}/{len(player_ids_batches)} ({len(batch_ids)} IDs)")
                 
-                profile = await scraper.get_player_profile(player_id)
+                # 🔥 KEY FIX: Use batch_get_profiles() which handles parallelism internally
+                # No manual delay needed - scraper handles rate limiting!
+                profiles = await scraper.batch_get_profiles(batch_ids)
                 
-                if profile:
-                    # Save to database
-                    profile_dict = {
-                        'player_id': profile.player_id,
-                        'player_name': profile.username,
-                        'is_online': profile.is_online,
-                        'last_connection': profile.last_seen,
-                        'faction': profile.faction,
-                        'faction_rank': profile.faction_rank,
-                        'job': profile.job,
-                        'level': profile.level,
-                        'respect_points': profile.respect_points,
-                        'warns': profile.warnings,
-                        'played_hours': profile.played_hours,
-                        'age_ic': profile.age_ic,
-                        'phone_number': profile.phone_number,
-                        'vehicles_count': profile.vehicles_count,
-                        'properties_count': profile.properties_count
-                    }
-                    self.db.save_player_profile(profile_dict)
-                    
-                    async with self.stats_lock:
-                        self.stats['found'] += 1
-                    
-                    # Decrease backoff on success
-                    if self.stats['total_scanned'] % 100 == 0:
-                        await self.decrease_backoff()
-                else:
-                    async with self.stats_lock:
-                        self.stats['not_found'] += 1
+                # Save all found profiles
+                for profile in profiles:
+                    if profile:
+                        profile_dict = {
+                            'player_id': profile.player_id,
+                            'player_name': profile.username,
+                            'is_online': profile.is_online,
+                            'last_connection': profile.last_seen,
+                            'faction': profile.faction,
+                            'faction_rank': profile.faction_rank,
+                            'job': profile.job,
+                            'level': profile.level,
+                            'respect_points': profile.respect_points,
+                            'warns': profile.warnings,
+                            'played_hours': profile.played_hours,
+                            'age_ic': profile.age_ic,
+                            'phone_number': profile.phone_number,
+                            'vehicles_count': profile.vehicles_count,
+                            'properties_count': profile.properties_count
+                        }
+                        self.db.save_player_profile(profile_dict)
+                        
+                        async with self.stats_lock:
+                            self.stats['found'] += 1
+                
+                # Count not found
+                found_count = len([p for p in profiles if p])
+                not_found_count = len(batch_ids) - found_count
                 
                 async with self.stats_lock:
-                    self.stats['total_scanned'] += 1
+                    self.stats['not_found'] += not_found_count
+                    self.stats['total_scanned'] += len(batch_ids)
                 
-                # Rate limiting with adaptive delay
-                await asyncio.sleep(delay)
+                logger.info(f"Worker {worker_id}: Batch {batch_index + 1} completed - Found: {found_count}, Not Found: {not_found_count}")
                 
             except Exception as e:
                 if '503' in str(e):
                     async with self.stats_lock:
                         self.stats['retries_503'] += 1
-                    await self.increase_backoff()
-                    logger.warning(f"Worker {worker_id}: 503 error, backing off...")
-                    await asyncio.sleep(5)  # Extra delay on 503
+                    logger.warning(f"Worker {worker_id}: 503 error on batch, retrying...")
+                    await asyncio.sleep(10)  # Extra delay on 503
+                    # Retry the batch
+                    try:
+                        profiles = await scraper.batch_get_profiles(batch_ids)
+                        for profile in profiles:
+                            if profile:
+                                profile_dict = {
+                                    'player_id': profile.player_id,
+                                    'player_name': profile.username,
+                                    'is_online': profile.is_online,
+                                    'last_connection': profile.last_seen,
+                                    'faction': profile.faction,
+                                    'faction_rank': profile.faction_rank,
+                                    'job': profile.job,
+                                    'level': profile.level,
+                                    'respect_points': profile.respect_points,
+                                    'warns': profile.warnings,
+                                    'played_hours': profile.played_hours,
+                                    'age_ic': profile.age_ic,
+                                    'phone_number': profile.phone_number,
+                                    'vehicles_count': profile.vehicles_count,
+                                    'properties_count': profile.properties_count
+                                }
+                                self.db.save_player_profile(profile_dict)
+                        async with self.stats_lock:
+                            self.stats['total_scanned'] += len(batch_ids)
+                    except Exception as retry_error:
+                        logger.error(f"Worker {worker_id}: Retry failed: {retry_error}")
+                        async with self.stats_lock:
+                            self.stats['errors'] += len(batch_ids)
                 else:
                     async with self.stats_lock:
-                        self.stats['errors'] += 1
-                    logger.error(f"Worker {worker_id}: Error on ID {player_id}: {e}")
-                    await asyncio.sleep(1)
+                        self.stats['errors'] += len(batch_ids)
+                    logger.error(f"Worker {worker_id}: Error on batch: {e}")
     
     async def scan_parallel(self):
         """
-        Parallel scan with dynamic rate limiting
+        Parallel scan using batch processing
         Target: 6-10 ID/s with minimal 503 errors
         """
         self.stats['start_time'] = datetime.now()
@@ -172,10 +182,11 @@ class FastScanner:
         start_id = self.scan_state['last_id'] + 1
         
         logger.info("=" * 60)
-        logger.info(f"OPTIMIZED PARALLEL PROFILE SCANNER")
+        logger.info(f"HIGHLY OPTIMIZED PARALLEL PROFILE SCANNER")
         logger.info(f"Range: {start_id:,} to {END_ID:,} ({END_ID - start_id + 1:,} profiles)")
-        logger.info(f"Workers: {self.workers} (reduced for stability)")
-        logger.info(f"Rate Limiter: 8 req/s with adaptive throttling")
+        logger.info(f"Workers: {self.workers} (batch processing)")
+        logger.info(f"Batch Size: {BATCH_SIZE} IDs per batch")
+        logger.info(f"Strategy: Using scraper.batch_get_profiles() for optimal parallelism")
         logger.info(f"Target: 6-10 ID/s with minimal 503 errors")
         logger.info(f"Estimated Time: 8-12 hours")
         logger.info("=" * 60)
@@ -183,20 +194,24 @@ class FastScanner:
         # Generate list of IDs to scan
         player_ids = [str(i) for i in range(start_id, END_ID + 1)]
         
-        # Split IDs among workers
-        chunk_size = len(player_ids) // self.workers
-        id_chunks = [
-            player_ids[i * chunk_size:(i + 1) * chunk_size if i < self.workers - 1 else None]
+        # 🔥 Split IDs into batches
+        all_batches = [player_ids[i:i + BATCH_SIZE] for i in range(0, len(player_ids), BATCH_SIZE)]
+        logger.info(f"Total batches to process: {len(all_batches)}")
+        
+        # Distribute batches among workers evenly
+        batches_per_worker = len(all_batches) // self.workers
+        worker_batches = [
+            all_batches[i * batches_per_worker:(i + 1) * batches_per_worker if i < self.workers - 1 else None]
             for i in range(self.workers)
         ]
         
-        async with Pro4KingsScraper(max_concurrent=self.workers) as scraper:
+        async with Pro4KingsScraper(max_concurrent=5) as scraper:
             # Progress reporting task
             progress_task = asyncio.create_task(self.report_progress(start_id))
             
             # Create worker tasks
             worker_tasks = [
-                asyncio.create_task(self.worker(i, scraper, id_chunks[i]))
+                asyncio.create_task(self.worker(i, scraper, worker_batches[i]))
                 for i in range(self.workers)
             ]
             
@@ -258,7 +273,6 @@ class FastScanner:
 ║ 📈 Performance:
 ║   Current Rate: {current_rate:.2f} ID/s (last 30s)
 ║   Average Rate: {overall_rate:.2f} ID/s (overall)
-║   Backoff Level: {self.backoff_level}/5
 ║ 
 ║ ⏱️ Time:
 ║   ETA: {int(eta_hours)}h {int(eta_minutes)}m
