@@ -1,16 +1,31 @@
-version: "3.9"
+version: '3.8'
+
 services:
-  api:
+  p4k-bot:
     build: .
-    depends_on: [db, redis]
-    ports: ["8000:8000"]
-
-  db:
-    image: postgres:15
+    container_name: p4k-discord-bot
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: p4k
-      POSTGRES_PASSWORD: p4k
-      POSTGRES_DB: p4k
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - DATABASE_PATH=/data/pro4kings.db
+      - MAX_CONCURRENT_REQUESTS=50
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    networks:
+      - p4k-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/data/pro4kings.db') else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  redis:
-    image: redis:7
+networks:
+  p4k-network:
+    driver: bridge
+
+volumes:
+  data:
+  logs:
