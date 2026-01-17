@@ -6,6 +6,10 @@ from database import Database
 from scraper import Pro4KingsScraper
 import asyncio
 import logging
+# Discord command sync tracking
+COMMANDS_SYNCED = False
+SYNC_LOCK = asyncio.Lock()
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,24 +32,45 @@ scraper = None  # Will be initialized in setup_hook
 
 @bot.event
 async def on_ready():
+    """Bot startup with proper slash command registration"""
+    global COMMANDS_SYNCED
+    
     logger.info(f'✅ {bot.user} is now running!')
-    await bot.tree.sync()
+    
+    # Sync slash commands (only once)
+    async with SYNC_LOCK:
+        if not COMMANDS_SYNCED:
+            try:
+                logger.info("🔄 Syncing slash commands...")
+                synced = await bot.tree.sync()
+                logger.info(f"✅ Synced {len(synced)} slash commands:")
+                for cmd in synced:
+                    logger.info(f"  - /{cmd.name}: {cmd.description}")
+                COMMANDS_SYNCED = True
+            except Exception as e:
+                logger.error(f"❌ Failed to sync commands: {e}", exc_info=True)
     
     # Start monitoring tasks
-    scrape_actions.start()
-    scrape_online_players.start()
-    update_pending_profiles.start()
-    check_banned_players.start()
+    if not scrape_actions.is_running():
+        scrape_actions.start()
+        logger.info('✓ Started: scrape_actions (30s interval)')
     
-    logger.info('🚀 All monitoring tasks started!')
-    print(f'✅ {bot.user} is online and monitoring!')
-
-@bot.event
-async def on_close():
-    """Cleanup when bot shuts down"""
-    if scraper:
-        await scraper.__aexit__(None, None, None)
-    logger.info('👋 Bot shutting down')
+    if not scrape_online_players.is_running():
+        scrape_online_players.start()
+        logger.info('✓ Started: scrape_online_players (60s interval)')
+    
+    if not update_pending_profiles.is_running():
+        update_pending_profiles.start()
+        logger.info('✓ Started: update_pending_profiles (2min interval)')
+    
+    if not check_banned_players.is_running():
+        check_banned_players.start()
+        logger.info('✓ Started: check_banned_players (1h interval)')
+    
+    logger.info('🚀 All systems operational!')
+    print(f'\n{"="*60}')
+    print(f'✅ {bot.user} is ONLINE and monitoring Pro4Kings!')
+    print(f'{"="*60}\n')
 
 # ============================================================================
 # BACKGROUND MONITORING TASKS
@@ -577,3 +602,4 @@ if __name__ == '__main__':
         exit(1)
     
     bot.run(TOKEN)
+
