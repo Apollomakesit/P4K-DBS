@@ -606,8 +606,11 @@ async def player_info(interaction: discord.Interaction, identifier: str):
         await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**. Folosește ID-ul pentru rezultate mai precise (ex: /player 12345).")
         return
     
+    # 🔧 FIX: Use 'player_name' key (from database) instead of 'username'
+    player_name = profile.get('player_name') or profile.get('username', f"Player_{profile['player_id']}")
+    
     embed = discord.Embed(
-        title=f"👤 {profile['player_name']}",
+        title=f"👤 {player_name}",
         description=f"ID: **{profile['player_id']}**",
         color=discord.Color.green() if profile.get('is_online') else discord.Color.red(),
         timestamp=datetime.now()
@@ -685,23 +688,45 @@ async def player_actions(interaction: discord.Interaction, identifier: str, days
         timestamp=datetime.now()
     )
     
+    # 🔧 FIX: Limit content to avoid 6000 character embed limit
+    total_chars = 0
+    max_embed_chars = 5500  # Safe limit below 6000
+    actions_added = 0
+    
     for action in actions[:25]:
         timestamp = action['timestamp']
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
         
-        # Format action text
+        # Format action text with LENGTH LIMIT
         action_text = action.get('raw_text', action.get('action_detail', 'N/A'))
-        if len(action_text) > 1024:
-            action_text = action_text[:1020] + "..."
+        
+        # Truncate individual action to max 200 chars
+        if len(action_text) > 200:
+            action_text = action_text[:197] + "..."
+        
+        field_content = action_text
+        field_name = timestamp.strftime('%d.%m.%Y %H:%M:%S')
+        
+        # Calculate size of this field
+        field_size = len(field_name) + len(field_content)
+        
+        # Stop if adding this field would exceed limit
+        if total_chars + field_size > max_embed_chars:
+            break
         
         embed.add_field(
-            name=timestamp.strftime('%d.%m.%Y %H:%M:%S'),
-            value=action_text,
+            name=field_name,
+            value=field_content,
             inline=False
         )
+        
+        total_chars += field_size
+        actions_added += 1
     
-    if len(actions) > 25:
+    if actions_added < len(actions):
+        embed.set_footer(text=f"Afișate {actions_added} din {len(actions)} acțiuni (limitat pentru Discord)")
+    elif len(actions) > 25:
         embed.set_footer(text=f"Afișate primele 25 din {len(actions)} acțiuni")
     
     await interaction.followup.send(embed=embed)
@@ -718,14 +743,15 @@ async def rank_history(interaction: discord.Interaction, identifier: str):
         return
     
     player_id = profile['player_id']
+    player_name = profile.get('player_name') or profile.get('username', f"Player_{player_id}")
     rank_history = db.get_player_rank_history(player_id)
     
     if not rank_history:
-        await interaction.followup.send(f"❌ Nu am istoric de rang pentru **{profile['player_name']}**.")
+        await interaction.followup.send(f"❌ Nu am istoric de rang pentru **{player_name}**.")
         return
     
     embed = discord.Embed(
-        title=f"🎖️ Istoric Rang - {profile['player_name']}",
+        title=f"🎖️ Istoric Rang - {player_name}",
         description=f"ID: {player_id} • **{len(rank_history)}** schimbări de rang",
         color=discord.Color.gold(),
         timestamp=datetime.now()
