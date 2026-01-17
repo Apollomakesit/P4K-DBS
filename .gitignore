@@ -1,0 +1,91 @@
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# Database Files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+data/
+backups/
+
+# Scan State
+scan_state.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+ENV/
+env/
+.venv
+virtualenv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+bot.log
+initial_scan.log
+scraper.log
+
+# Backups
+*.backup
+*.bak
+
+# Test Files
+test_*.db
+test_*.json
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary Files
+*.tmp
+temp/
+tmp/
+
+# Export Files
+*.csv
+database_export.json
+scrape_results.json
+
+# Railway
+.railway/
+
+# Docker
+docker-compose.override.yml
