@@ -484,6 +484,79 @@ class Database:
             ))
             conn.commit()
     
+    def mark_expired_bans(self, current_ban_ids: set) -> None:
+        """NEW METHOD: Mark bans as expired if they're no longer on the banlist"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get all active bans
+            cursor.execute('SELECT player_id FROM banned_players WHERE is_active = TRUE')
+            active_bans = {row[0] for row in cursor.fetchall()}
+            
+            # Find expired bans (active in DB but not on current list)
+            expired = active_bans - current_ban_ids
+            
+            if expired:
+                placeholders = ','.join('?' * len(expired))
+                cursor.execute(f'''
+                    UPDATE banned_players
+                    SET is_active = FALSE
+                    WHERE player_id IN ({placeholders}) AND is_active = TRUE
+                ''', list(expired))
+                
+                conn.commit()
+                logger.info(f"Marked {len(expired)} bans as expired")
+    
+    def get_banned_players(self, include_expired: bool = False) -> List[Dict]:
+        """Get banned players"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            if include_expired:
+                cursor.execute('SELECT * FROM banned_players ORDER BY detected_at DESC')
+            else:
+                cursor.execute('SELECT * FROM banned_players WHERE is_active = TRUE ORDER BY detected_at DESC')
+            
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_player_by_exact_id(self, player_id: str) -> Optional[Dict]:
+        """NEW METHOD: Get player by exact ID match (not fuzzy)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM players WHERE player_id = ?', (player_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
+    def get_player_rank_history(self, player_id: str) -> List[Dict]:
+        """Get player rank history"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM rank_history
+                WHERE player_id = ?
+                ORDER BY rank_obtained DESC
+            ''', (player_id,))
+            
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_recent_promotions(self, days: int = 7) -> List[Dict]:
+        """Get recent rank promotions"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = datetime.now() - timedelta(days=days)
+            
+            cursor.execute('''
+                SELECT 
+                    r.*,
+                    p.username as player_name
+                FROM rank_history r
+                INNER JOIN players p ON r.player_id = p.player_id
+                WHERE r.rank_obtained >= ?
+                ORDER BY r.rank_obtained DESC
+            ''', (cutoff,))
+            
+            return [dict(row) for row in cursor.fetchall()]
+    
     def get_player_gave(self, identifier: str, days: int = 7) -> List[Dict]:
         """Get items given by player"""
         with self.get_connection() as conn:
@@ -605,18 +678,6 @@ class Database:
             
             return [dict(row) for row in cursor.fetchall()]
     
-    def get_player_rank_history(self, player_id: str) -> List[Dict]:
-        """Get player rank history"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM rank_history
-                WHERE player_id = ?
-                ORDER BY rank_obtained DESC
-            ''', (player_id,))
-            
-            return [dict(row) for row in cursor.fetchall()]
-    
     def get_current_faction_ranks(self, faction_name: str) -> List[Dict]:
         """Get current ranks in a faction"""
         with self.get_connection() as conn:
@@ -650,24 +711,6 @@ class Database:
                 WHERE r.rank_name LIKE ?
                 ORDER BY r.rank_obtained DESC
             ''', (f'%{rank_name}%',))
-            
-            return [dict(row) for row in cursor.fetchall()]
-    
-    def get_recent_promotions(self, days: int = 7) -> List[Dict]:
-        """Get recent rank promotions"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cutoff = datetime.now() - timedelta(days=days)
-            
-            cursor.execute('''
-                SELECT 
-                    r.*,
-                    p.username as player_name
-                FROM rank_history r
-                INNER JOIN players p ON r.player_id = p.player_id
-                WHERE r.rank_obtained >= ?
-                ORDER BY r.rank_obtained DESC
-            ''', (cutoff,))
             
             return [dict(row) for row in cursor.fetchall()]
     
