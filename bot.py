@@ -20,7 +20,7 @@ SCAN_STATS = {
     'found': 0,
     'errors': 0,
     'current_id': 0,
-    'last_saved_id': 0  # 🔥 NEW: Track last saved checkpoint
+    'last_saved_id': 0
 }
 
 logging.basicConfig(
@@ -307,15 +307,15 @@ async def check_banned_players():
         logger.error(f"✗ Error checking banned players: {e}", exc_info=True)
 
 # ============================================================================
-# INITIAL SCAN FUNCTION (Background) - WITH RESUME SUPPORT
+# INITIAL SCAN FUNCTION (Background) - 🔥 SEQUENTIAL WITH 50-ID CHECKPOINTS
 # ============================================================================
 
 async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, end_id: int = 230000, workers: int = 30):
-    """🔥 NEW: Run initial scan with RESUME support and progress saving"""
+    """🔥 SEQUENTIAL scan with better checkpointing"""
     global SCAN_IN_PROGRESS, SCAN_STATS
     
     if SCAN_IN_PROGRESS:
-        await interaction.followup.send("⚠️ Un scan este deja în curs! Folosește `/scan_status` pentru progres.")
+        await interaction.followup.send("⚠️ Un scan este deja în curs!")
         return
     
     SCAN_IN_PROGRESS = True
@@ -329,36 +329,33 @@ async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, 
     }
     
     await interaction.followup.send(
-        f"🚀 **Scan inițial pornit!**\n"
-        f"📊 Range: {start_id:,} - {end_id:,} ({end_id - start_id + 1:,} ID-uri)\n"
-        f"⚙️ Workers: {workers} concurenți\n"
-        f"⚡ Viteză așteptată: 10-15 ID-uri/sec\n"
-        f"⏱️ Estimare: ~4-6 ore\n\n"
-        f"✅ **Progresul se salvează automat la fiecare 100 ID-uri!**\n"
-        f"Dacă se oprește, folosește `/scan_resume` pentru a continua.\n\n"
-        f"Folosește `/scan_status` pentru progres live!"
+        f"🚀 **Scan secvențial pornit!**\n"
+        f"📊 Range: **{start_id:,} → {end_id:,}**\n"
+        f"⚙️ Workers: {workers}\n"
+        f"💾 **Checkpoint la fiecare 50 ID-uri**\n\n"
+        f"✅ Dacă se întrerupe, reluează cu `/scan_resume`\n"
+        f"📊 Vezi progres live cu `/scan_status`"
     )
     
     try:
-        # Create dedicated scraper for scan
         scan_scraper = Pro4KingsScraper(max_concurrent=workers)
         await scan_scraper.__aenter__()
         
-        # 🔥 Batch scan cu salvare de progres
-        batch_size = 200  # 🔥 Crescut de la 100 la 200
-        save_interval = 100  # Salvează după fiecare 100 ID-uri
+        # 🔥 SEQUENTIAL scanning cu checkpoint frecvent
+        batch_size = 50  # Smaller batches for frequent checkpoints
+        checkpoint_interval = 50  # Save every 50 IDs
         
-        for batch_start in range(start_id, end_id + 1, batch_size):
-            if not SCAN_IN_PROGRESS:  # Allow cancellation
-                logger.info("🛑 Scan cancelled by user")
-                break
+        current_id = start_id
+        
+        while current_id <= end_id and SCAN_IN_PROGRESS:
+            # Create batch of sequential IDs
+            batch_end = min(current_id + batch_size - 1, end_id)
+            batch_ids = [str(i) for i in range(current_id, batch_end + 1)]
             
-            batch_end = min(batch_start + batch_size - 1, end_id)
-            batch_ids = [str(i) for i in range(batch_start, batch_end + 1)]
-            
+            # Fetch profiles
             profiles = await scan_scraper.batch_get_profiles(batch_ids)
             
-            # Save to database
+            # Save profiles
             for profile in profiles:
                 try:
                     profile_dict = {
@@ -387,65 +384,53 @@ async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, 
             SCAN_STATS['scanned'] += len(batch_ids)
             SCAN_STATS['current_id'] = batch_end
             
-            # 🔥 SAVE PROGRESS CHECKPOINT every 100 IDs
-            if SCAN_STATS['scanned'] % save_interval == 0 or batch_end == end_id:
+            # 🔥 SAVE CHECKPOINT every 50 IDs
+            if (batch_end - start_id) % checkpoint_interval == 0 or batch_end == end_id:
                 db.save_scan_progress(
                     last_player_id=str(batch_end),
                     total_scanned=SCAN_STATS['found'],
                     completed=(batch_end >= end_id)
                 )
                 SCAN_STATS['last_saved_id'] = batch_end
-                logger.info(f"💾 Progress saved: ID {batch_end:,} | Found: {SCAN_STATS['found']:,}")
+                logger.info(f"💾 Checkpoint: ID {batch_end:,} | Găsiți: {SCAN_STATS['found']:,}")
             
-            # Log progress every 1000 players
-            if SCAN_STATS['scanned'] % 1000 == 0:
+            # Log progress
+            if SCAN_STATS['scanned'] % 500 == 0:
                 elapsed = (datetime.now() - SCAN_STATS['start_time']).total_seconds()
                 rate = SCAN_STATS['scanned'] / elapsed if elapsed > 0 else 0
-                remaining = (end_id - batch_end) / rate if rate > 0 else 0
-                
                 logger.info(
-                    f"📊 Scan progress: {SCAN_STATS['scanned']:,}/{end_id:,} "
+                    f"📊 Progress: {SCAN_STATS['scanned']:,}/{end_id:,} "
                     f"({SCAN_STATS['scanned']/end_id*100:.1f}%) | "
-                    f"Found: {SCAN_STATS['found']:,} | "
                     f"Rate: {rate:.1f}/s | "
-                    f"ETA: {remaining/60:.0f}min | "
                     f"Last saved: {SCAN_STATS['last_saved_id']:,}"
                 )
             
-            # Small delay between batches
-            await asyncio.sleep(0.5)
-        
+            # Move to next batch
+            current_id = batch_end + 1
+            
         await scan_scraper.__aexit__(None, None, None)
         
         # Final report
         elapsed = (datetime.now() - SCAN_STATS['start_time']).total_seconds()
-        
-        # Mark scan as complete
         db.save_scan_progress(
             last_player_id=str(end_id),
             total_scanned=SCAN_STATS['found'],
             completed=True
         )
         
-        # Try to send completion message to original channel
         try:
             await interaction.channel.send(
-                f"✅ **Scan finalizat!**\n"
-                f"⏱️ Durată: {elapsed/60:.1f} minute\n"
-                f"📊 Scanați: {SCAN_STATS['scanned']:,} ID-uri\n"
-                f"👥 Găsiți: {SCAN_STATS['found']:,} jucători\n"
-                f"❌ Erori: {SCAN_STATS['errors']}\n"
-                f"⚡ Viteză medie: {SCAN_STATS['scanned']/elapsed:.1f} ID-uri/sec\n\n"
-                f"Folosește `/stats` pentru statistici complete!"
+                f"✅ **Scan complet!**\n"
+                f"⏱️ Durată: {elapsed/60:.1f} min\n"
+                f"📊 Scanați: {SCAN_STATS['scanned']:,}\n"
+                f"👥 Găsiți: {SCAN_STATS['found']:,}\n"
+                f"⚡ Viteză: {SCAN_STATS['scanned']/elapsed:.1f} ID/s"
             )
         except:
-            logger.info("Scan completed but couldn't send message to channel")
-        
-        logger.info(f"✅ Initial scan completed: {SCAN_STATS['found']:,} players found")
+            pass
         
     except Exception as e:
         logger.error(f"❌ Scan error: {e}", exc_info=True)
-        # Save progress even on error
         db.save_scan_progress(
             last_player_id=str(SCAN_STATS['current_id']),
             total_scanned=SCAN_STATS['found'],
@@ -453,10 +438,9 @@ async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, 
         )
         try:
             await interaction.channel.send(
-                f"❌ **Eroare în scan la ID {SCAN_STATS['current_id']:,}**\n"
-                f"Ultimul ID salvat: **{SCAN_STATS['last_saved_id']:,}**\n"
-                f"Găsiți până acum: {SCAN_STATS['found']:,}\n\n"
-                f"Folosește `/scan_resume` pentru a relua!"
+                f"❌ **Eroare la ID {SCAN_STATS['current_id']:,}**\n"
+                f"Ultimul salvat: **{SCAN_STATS['last_saved_id']:,}**\n"
+                f"Folosește `/scan_resume`"
             )
         except:
             pass
@@ -591,22 +575,20 @@ async def scan_resume(interaction: discord.Interaction, workers: int = 30):
     # Start from next ID after last saved
     asyncio.create_task(run_initial_scan(interaction, last_id + 1, 230000, workers))
 
-@bot.tree.command(name="scan_status", description="Vezi progresul scanării (actualizare automată timp de 60s)")
-async def scan_status(interaction: discord.Interaction):
-    """🔥 NEW: Check scan progress with REAL-TIME auto-updates"""
+@bot.tree.command(name="scan_status", description="Vezi progresul scanării (actualizare continuă)")
+async def scan_status(interaction: discord.Interaction, continuous: bool = True):
+    """🔥 CONTINUOUS real-time updates until scan completes"""
     await interaction.response.defer()
     
     if not SCAN_IN_PROGRESS:
-        total_players = db.get_scan_progress()['total_scanned']
         progress = db.get_scan_progress()
+        total_players = progress['total_scanned']
         last_id = progress.get('last_scanned_id', 'N/A')
         
         await interaction.followup.send(
-            f"ℹ️ **Nu este niciun scan activ**\n"
-            f"👥 Jucători în baza de date: **{total_players:,}**\n"
-            f"📊 Ultimul ID scanat: **{last_id}**\n\n"
-            f"Pentru a începe un scan complet, folosește:\n"
-            f"`/scan_all` sau `/scan_resume` dacă ai progres salvat"
+            f"ℹ️ **Nu este scan activ**\n"
+            f"👥 Jucători: **{total_players:,}**\n"
+            f"📊 Ultimul ID: **{last_id}**"
         )
         return
     
@@ -614,15 +596,13 @@ async def scan_status(interaction: discord.Interaction):
     embed = create_scan_status_embed()
     message = await interaction.followup.send(embed=embed)
     
-    # 🔥 AUTO-UPDATE: Update every 5 seconds for 60 seconds
+    # 🔥 CONTINUOUS UPDATES until scan completes (if enabled)
     update_count = 0
-    max_updates = 12  # 60 seconds / 5 seconds
     
-    while SCAN_IN_PROGRESS and update_count < max_updates:
-        await asyncio.sleep(5)
+    while SCAN_IN_PROGRESS and (continuous or update_count < 12):
+        await asyncio.sleep(3)  # Update every 3 seconds
         
         if not SCAN_IN_PROGRESS:
-            # Final update
             embed = create_scan_status_embed()
             embed.set_footer(text="✅ Scan finalizat!")
             await message.edit(embed=embed)
@@ -630,18 +610,28 @@ async def scan_status(interaction: discord.Interaction):
         
         # Update embed
         embed = create_scan_status_embed()
-        embed.set_footer(text=f"🔄 Actualizare automată... ({update_count + 1}/{max_updates})")
+        if continuous:
+            embed.set_footer(text=f"🔄 Actualizare continuă activă... (update #{update_count + 1})")
+        else:
+            embed.set_footer(text=f"🔄 Actualizare... ({update_count + 1}/12)")
         
         try:
             await message.edit(embed=embed)
-        except:
+        except discord.errors.NotFound:
+            # Message was deleted
+            break
+        except Exception as e:
+            logger.error(f"Error updating status: {e}")
             break
         
         update_count += 1
     
-    if SCAN_IN_PROGRESS and update_count >= max_updates:
-        embed.set_footer(text="⏱️ Actualizare automată oprită după 60s. Rulează comanda din nou pentru progres actualizat.")
-        await message.edit(embed=embed)
+    if continuous and SCAN_IN_PROGRESS:
+        embed.set_footer(text="✅ Monitorizare completă. Rulează din nou pentru update.")
+        try:
+            await message.edit(embed=embed)
+        except:
+            pass
 
 def create_scan_status_embed() -> discord.Embed:
     """🔥 NEW: Helper to create scan status embed"""
@@ -1205,7 +1195,7 @@ async def bot_stats(interaction: discord.Interaction):
             inline=False
         )
     
-    embed.set_footer(text=f"Bot versiune 2.2 • Optimizat cu resume scan + real-time status • Today at {datetime.now().strftime('%H:%M')}")
+    embed.set_footer(text=f"Bot versiune 2.3 • Sequential scan + continuous status • Today at {datetime.now().strftime('%H:%M')}")
     
     await interaction.followup.send(embed=embed)
 
