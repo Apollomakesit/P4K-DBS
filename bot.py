@@ -78,14 +78,20 @@ async def on_ready():
 
 @tasks.loop(seconds=30)
 async def scrape_actions():
-    """Scrape latest actions every 30 seconds - INDEFINITE STORAGE"""
+    """Scrape latest actions - WITH ENHANCED ERROR HANDLING"""
     try:
         global scraper
         if not scraper:
-            scraper = Pro4KingsScraper()
+            scraper = Pro4KingsScraper(max_concurrent=5)  # Lower concurrency
             await scraper.__aenter__()
         
+        logger.info("🔍 Fetching latest actions...")
         actions = await scraper.get_latest_actions(limit=200)
+        
+        if not actions:
+            logger.warning("⚠️ No actions retrieved this cycle")
+            return
+        
         new_count = 0
         new_player_ids = set()
         
@@ -107,11 +113,12 @@ async def scrape_actions():
                 'raw_text': action.raw_text
             }
             
+            # Check for duplicates using timestamp AND raw_text
             if not db.action_exists(action.timestamp, action.raw_text):
                 db.save_action(action_dict)
                 new_count += 1
                 
-                # Mark players for profile update
+                # Mark players for update
                 if action.player_id:
                     new_player_ids.add((action.player_id, action.player_name))
                     db.mark_player_for_update(action.player_id, action.player_name)
@@ -121,10 +128,19 @@ async def scrape_actions():
                     db.mark_player_for_update(action.target_player_id, action.target_player_name)
         
         if new_count > 0:
-            logger.info(f"✓ Saved {new_count} new actions, marked {len(new_player_ids)} players for update")
+            logger.info(f"✅ Saved {new_count} new actions, marked {len(new_player_ids)} players for update")
+        else:
+            logger.info(f"ℹ️  No new actions (checked {len(actions)} entries)")
             
     except Exception as e:
-        logger.error(f"✗ Error scraping actions: {e}", exc_info=True)
+        logger.error(f"❌ Error in scrape_actions: {e}", exc_info=True)
+
+@scrape_actions.before_loop
+async def before_scrape_actions():
+    """Wait for bot to be ready"""
+    await bot.wait_until_ready()
+    logger.info("✓ scrape_actions task ready")
+
 
 @tasks.loop(seconds=60)
 async def scrape_online_players():
@@ -602,4 +618,5 @@ if __name__ == '__main__':
         exit(1)
     
     bot.run(TOKEN)
+
 
