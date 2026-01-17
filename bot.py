@@ -253,8 +253,8 @@ async def update_pending_profiles():
         
         logger.info(f"🔄 Updating {len(pending_ids)} pending profiles...")
         
-        # FIXED: Removed 'concurrent' parameter - it doesn't exist in batch_get_profiles
-        results = await scraper.batch_get_profiles(pending_ids, delay=0.1)
+        # 🔧 FIXED: Eliminat parametrul 'delay' invalid
+        results = await scraper.batch_get_profiles(pending_ids)
         
         for profile in results:
             profile_dict = {
@@ -350,8 +350,8 @@ async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, 
             batch_end = min(batch_start + batch_size - 1, end_id)
             batch_ids = [str(i) for i in range(batch_start, batch_end + 1)]
             
-            # Fetch profiles
-            profiles = await scan_scraper.batch_get_profiles(batch_ids, delay=0.05)
+            # 🔧 FIXED: Eliminat parametrul 'delay' invalid
+            profiles = await scan_scraper.batch_get_profiles(batch_ids)
             
             # Save to database
             for profile in profiles:
