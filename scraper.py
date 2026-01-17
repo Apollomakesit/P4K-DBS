@@ -52,8 +52,9 @@ class PlayerProfile:
 
 class TokenBucketRateLimiter:
     """Rate limiter care permite burst-uri controlate"""
-    def __init__(self, rate: float = 10.0, capacity: int = 20):
+    def __init__(self, rate: float = 15.0, capacity: int = 30):
         """
+        🔥 OPTIMIZED: Crescut de la 8 la 15 req/s, capacity de la 15 la 30
         rate: request-uri pe secundă permise
         capacity: dimensiunea burst-ului maxim
         """
@@ -89,16 +90,16 @@ class Pro4KingsScraper:
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.client: Optional[httpx.AsyncClient] = None
         
-        # 🔥 RATE LIMITER
+        # 🔥 OPTIMIZED RATE LIMITER
         self.rate_limiter = TokenBucketRateLimiter(
-            rate=8.0,        # 8 request-uri/secundă
-            capacity=15      # Permite burst de 15 request-uri
+            rate=15.0,       # 🔥 Crescut de la 8 la 15 request-uri/secundă
+            capacity=30      # 🔥 Crescut de la 15 la 30 pentru burst mai mare
         )
         
         # Track 503 errors pentru adaptive throttling
         self.error_503_count = 0
         self.success_count = 0
-        self.adaptive_delay = 0.1
+        self.adaptive_delay = 0.05  # 🔥 Redus de la 0.1 la 0.05
         
         self.last_request_time = {}  # Track per-worker
         self.headers = {
@@ -134,7 +135,7 @@ class Pro4KingsScraper:
         await self.rate_limiter.acquire()
         
         # Adaugă jitter (randomizare) pentru a evita sincronizarea
-        jitter = random.uniform(0, 0.05)  # 0-50ms jitter
+        jitter = random.uniform(0, 0.02)  # 🔥 Redus de la 50ms la 20ms
         await asyncio.sleep(self.adaptive_delay + jitter)
         
         async with self.semaphore:
@@ -145,7 +146,7 @@ class Pro4KingsScraper:
                     if response.status_code == 200:
                         # Success - reduce delay
                         self.success_count += 1
-                        if self.success_count >= 50 and self.adaptive_delay > 0.05:
+                        if self.success_count >= 50 and self.adaptive_delay > 0.02:
                             self.adaptive_delay *= 0.95  # Reduce delay cu 5%
                             self.success_count = 0
                         return response.text
@@ -267,8 +268,7 @@ class Pro4KingsScraper:
     
     async def get_latest_actions(self, limit: int = 200) -> List[PlayerAction]:
         """
-        CRITICAL: Get latest actions - THIS IS THE PRIMARY FUNCTION
-        Enhanced with multiple detection methods
+        🔥 CRITICAL FIX: Get latest actions - STRICT filtering to avoid homepage stats
         """
         url = f"{self.base_url}/"
         html = await self.fetch_page(url)
@@ -323,9 +323,31 @@ class Pro4KingsScraper:
             for entry in entries:
                 text = entry.get_text(strip=True)
                 
-                if len(text) < 20:
+                # 🔥 STRICT FILTERING: Must meet ALL criteria
+                if len(text) < 50:  # 🔥 Minimum 50 chars for real actions
                     continue
+                
                 if 'Jucatorul' not in text and 'jucatorul' not in text:
+                    continue
+                
+                # 🔥 EXCLUDE homepage statistics patterns
+                if any(pattern in text for pattern in [
+                    'Jucători Conectați',
+                    'Jucători Banați',
+                    'Înregistrări Server',
+                    'Facțiuni',
+                    'ORE JUCATE',
+                    'ROMANIA e mai mult',
+                    'PRO4KINGS',
+                    'Informații',
+                    'Anunțuri',
+                    'Updates'
+                ]):
+                    continue
+                
+                # 🔥 MUST contain action verbs
+                action_verbs = ['a primit', 'a dat', 'a pus', 'a scos', 'a cumparat', 'a vandut', 'a retras']
+                if not any(verb in text for verb in action_verbs):
                     continue
                 
                 action = self.parse_action_entry(entry)
@@ -336,24 +358,16 @@ class Pro4KingsScraper:
                         break
             
             if len(actions) > 0:
-                logger.info(f"✓ Found actions in section: {section.name} (class: {section.get('class')})")
+                logger.info(f"✓ Found {len(actions)} valid actions in section: {section.name}")
                 break
         
         if len(actions) == 0:
-            logger.error("❌ NO ACTIONS FOUND! Debugging HTML structure:")
+            logger.error("❌ NO VALID ACTIONS FOUND after strict filtering!")
             logger.error(f"Total 'Jucatorul' mentions: {soup.get_text().count('Jucatorul')}")
             logger.error(f"Possible sections found: {len(possible_sections)}")
-            
-            all_text = soup.get_text()
-            lines = all_text.split('\n')
-            for line in lines:
-                if 'Jucatorul' in line and len(line) > 20:
-                    fake_elem = BeautifulSoup(f'<div>{line}</div>', 'lxml').div
-                    action = self.parse_action_entry(fake_elem)
-                    if action:
-                        actions.append(action)
+        else:
+            logger.info(f"✅ Parsed {len(actions)} valid player actions from homepage")
         
-        logger.info(f"✓ Parsed {len(actions)} actions from homepage")
         return actions[:limit]
     
     def parse_action_entry(self, entry) -> Optional[PlayerAction]:
@@ -452,7 +466,23 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
             
-            # Pattern 5: Vehicle purchase/sale
+            # Pattern 5: Money withdrawal
+            withdraw_match = re.search(
+                r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d\.,]+)\$',
+                text,
+                re.IGNORECASE
+            )
+            if withdraw_match:
+                return PlayerAction(
+                    player_id=withdraw_match.group(2),
+                    player_name=withdraw_match.group(1).strip(),
+                    action_type='money_withdraw',
+                    action_detail=f"Retragere {withdraw_match.group(3)}$",
+                    timestamp=timestamp,
+                    raw_text=text
+                )
+            
+            # Pattern 6: Vehicle purchase/sale
             vehicle_match = re.search(
                 r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+(cumparat|vandut)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
                 text,
@@ -469,7 +499,7 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
             
-            # Pattern 6: Property purchase/sale  
+            # Pattern 7: Property purchase/sale  
             property_match = re.search(
                 r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+(cumparat|vandut)\s+(casa|afacere|proprietate).*?(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
                 text,
@@ -486,7 +516,7 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
             
-            # Pattern 7: Generic player action
+            # Pattern 8: Generic player action
             generic_match = re.search(
                 r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
                 text,
@@ -502,20 +532,10 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
             
-            if 'jucatorul' in text.lower():
-                return PlayerAction(
-                    player_id=None,
-                    player_name=None,
-                    action_type='unknown',
-                    action_detail=text[:200],
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
             return None
             
         except Exception as e:
-            logger.error(f"Error parsing action: {e} | Text: {text[:100] if text else 'N/A'}")
+            logger.error(f"Error parsing action: {e} | Text: {text[:100] if 'text' in locals() else 'N/A'}")
             return None
     
     async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
@@ -557,10 +577,8 @@ class Pro4KingsScraper:
                         # Try YYYY-MM-DD format
                         else:
                             last_seen = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
-                        logger.info(f"✓ Parsed last_seen for {player_id}: {last_seen}")
                         break
                     except Exception as e:
-                        logger.warning(f"Failed to parse time '{time_str}': {e}")
                         continue
             
             # Method 2: Search in table rows
@@ -580,7 +598,6 @@ class Pro4KingsScraper:
                                         last_seen = datetime.strptime(time_str, '%d/%m/%Y %H:%M:%S')
                                     else:
                                         last_seen = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S')
-                                    logger.info(f"✓ Parsed last_seen from table for {player_id}: {last_seen}")
                                     break
                                 except:
                                     continue
@@ -588,7 +605,6 @@ class Pro4KingsScraper:
             # Default to now ONLY if parsing completely failed
             if not last_seen:
                 last_seen = datetime.now()
-                logger.warning(f"⚠️ Could not parse last_seen for {player_id}, defaulting to now()")
             
             profile_data = {}
             
@@ -764,12 +780,12 @@ class Pro4KingsScraper:
         return banned
     
     async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
-        """Batch fetch cu wave pattern pentru a evita burst-uri"""
+        """🔥 OPTIMIZED: Batch fetch cu wave pattern mai rapid"""
         results = []
         
-        # 🔥 WAVE PATTERN: lansează request-uri în valuri mici
-        wave_size = 5  # Câți jucători pe val
-        wave_delay = 0.5  # Delay între valuri
+        # 🔥 OPTIMIZED: Wave size crescut de la 5 la 10, delay redus de la 0.5s la 0.2s
+        wave_size = 10  # 🔥 Crescut de la 5 la 10
+        wave_delay = 0.2  # 🔥 Redus de la 0.5 la 0.2
         
         for i in range(0, len(player_ids), wave_size):
             wave = player_ids[i:i + wave_size]
@@ -784,7 +800,7 @@ class Pro4KingsScraper:
                 elif isinstance(result, Exception):
                     logger.error(f"Error: {result}")
             
-            # Delay între valuri pentru a nu overwhelm serverul
+            # Delay între valuri
             if i + wave_size < len(player_ids):
                 await asyncio.sleep(wave_delay)
         
