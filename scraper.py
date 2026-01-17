@@ -67,15 +67,35 @@ class Pro4KingsScraper:
     
     async def __aenter__(self):
         """Async context manager entry"""
-        connector = aiohttp.TCPConnector(limit=100, limit_per_host=50, ttl_dns_cache=300)
+        # Import brotli to ensure it's available
+        try:
+            import brotli
+            import brotlicffi
+            logger.info("✓ Brotli compression support loaded")
+        except ImportError as e:
+            logger.warning(f"⚠️ Brotli not available: {e}")
+    
+        # Create connector with proper settings
+        connector = aiohttp.TCPConnector(
+            limit=100,
+            limit_per_host=50,
+            ttl_dns_cache=300,
+            ssl=False  # Already using ssl=False in fetch_page
+        )
+    
         timeout = aiohttp.ClientTimeout(total=60, connect=20, sock_read=30)
+    
+        # Don't pass headers to ClientSession, let aiohttp handle compression
         self.session = aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
-            headers=self.headers,
-            trust_env=True
+            trust_env=True,
+            auto_decompress=True  # Explicitly enable auto decompression
         )
-        return self
+    
+    logger.info("✓ HTTP session initialized with Brotli support")
+    return self
+
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
@@ -679,5 +699,6 @@ class Pro4KingsScraper:
                 logger.error(f"Error in batch: {profile}")
         
         return results
+
 
 
