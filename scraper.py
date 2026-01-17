@@ -297,123 +297,171 @@ class Pro4KingsScraper:
         return actions[:limit]
 
     
-    def parse_action_entry(self, entry) -> Optional[PlayerAction]:
-        """Parse individual action entry"""
-        try:
-            text = entry.get_text(strip=True)
-            if not text:
-                return None
-            
-            timestamp_match = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', text)
-            timestamp = datetime.now()
-            if timestamp_match:
-                try:
-                    timestamp = datetime.strptime(timestamp_match.group(1), '%Y-%m-%d %H:%M:%S')
-                except:
-                    pass
-            
-            # Warning pattern
-            warning_match = re.search(
-                r'Jucatorul\s+([^\(]+)\((\d+)\)\s+a primit un avertisment\s+\((\d+/\d+)\),\s+de la administratorul\s+\[([^\]]+)\]\s+([^\(]+)\((\d+)\),\s+motiv\s+(.+?)(?=\s+\d{4}|$)',
-                text,
-                re.IGNORECASE
+def parse_action_entry(self, entry) -> Optional[PlayerAction]:
+    """Enhanced action parser with MORE patterns"""
+    try:
+        text = entry.get_text(strip=True)
+        if not text or len(text) < 15:
+            return None
+        
+        # Clean up text
+        text = ' '.join(text.split())  # Remove extra whitespace
+        
+        # Extract timestamp
+        timestamp_match = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', text)
+        timestamp = datetime.now()
+        if timestamp_match:
+            try:
+                timestamp = datetime.strptime(timestamp_match.group(1), '%Y-%m-%d %H:%M:%S')
+            except:
+                pass
+        
+        # Pattern 1: Warning received (most common admin action)
+        warning_match = re.search(
+            r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+primit\s+un\s+avertisment\s+\((\d+/\d+)\)[,\s]+de\s+la\s+administratorul\s+\[([^\]]+)\]\s+([^\(]+)\s*\((\d+)\)[,\s]+motiv[:\s]+(.+?)(?=\d{4}-\d{2}-\d{2}|$)',
+            text,
+            re.IGNORECASE
+        )
+        if warning_match:
+            return PlayerAction(
+                player_id=warning_match.group(2),
+                player_name=warning_match.group(1).strip(),
+                action_type='warning_received',
+                action_detail=f"Avertisment {warning_match.group(3)} de la {warning_match.group(5).strip()}",
+                admin_id=warning_match.group(6),
+                admin_name=warning_match.group(5).strip(),
+                warning_count=warning_match.group(3),
+                reason=warning_match.group(7).strip(),
+                timestamp=timestamp,
+                raw_text=text
             )
-            if warning_match:
-                return PlayerAction(
-                    player_id=warning_match.group(2),
-                    player_name=warning_match.group(1).strip(),
-                    action_type='warning_received',
-                    action_detail=f"Primit avertisment {warning_match.group(3)}",
-                    admin_id=warning_match.group(6),
-                    admin_name=warning_match.group(5).strip(),
-                    warning_count=warning_match.group(3),
-                    reason=warning_match.group(7).strip(),
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            # Chest pattern
-            chest_match = re.search(
-                r'Jucatorul\s+([^\(]+)\((\d+)\)\s+a (pus in|scos din)\s+chest\([^\)]+\),\s+(\d+)x\s+(.+?)(?=\s+\d{4}|$)',
-                text,
-                re.IGNORECASE
+        
+        # Pattern 2: Chest deposit/withdraw
+        chest_match = re.search(
+            r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+(pus\s+in|scos\s+din)\s+chest.*?(\d+)x\s+([^\d]+?)(?=\d{4}-\d{2}-\d{2}|$)',
+            text,
+            re.IGNORECASE
+        )
+        if chest_match:
+            action_type = 'chest_deposit' if 'pus' in chest_match.group(3).lower() else 'chest_withdraw'
+            return PlayerAction(
+                player_id=chest_match.group(2),
+                player_name=chest_match.group(1).strip(),
+                action_type=action_type,
+                action_detail=f"{chest_match.group(3)} chest",
+                item_name=chest_match.group(5).strip(),
+                item_quantity=int(chest_match.group(4)),
+                timestamp=timestamp,
+                raw_text=text
             )
-            if chest_match:
-                action_type = 'chest_deposit' if 'pus' in chest_match.group(3) else 'chest_withdraw'
-                return PlayerAction(
-                    player_id=chest_match.group(2),
-                    player_name=chest_match.group(1).strip(),
-                    action_type=action_type,
-                    action_detail=f"{chest_match.group(3)} chest",
-                    item_name=chest_match.group(5).strip(),
-                    item_quantity=int(chest_match.group(4)),
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            # Item transfer patterns
-            gave_match = re.search(
-                r'Jucatorul\s+([^\(]+)\((\d+)\)\s+a dat lui\s+([^\(]+)\((\d+)\)\s+(\d+)x\s+(.+?)(?=\s+\d{4}|$)',
-                text,
-                re.IGNORECASE
+        
+        # Pattern 3: Item given to another player
+        gave_match = re.search(
+            r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+dat\s+lui\s+([^\(]+)\s*\((\d+)\)\s+(\d+)x\s+([^\d]+?)(?=\d{4}-\d{2}-\d{2}|$)',
+            text,
+            re.IGNORECASE
+        )
+        if gave_match:
+            return PlayerAction(
+                player_id=gave_match.group(2),
+                player_name=gave_match.group(1).strip(),
+                action_type='item_given',
+                action_detail=f"Dat {gave_match.group(6).strip()} către {gave_match.group(3).strip()}",
+                item_name=gave_match.group(6).strip(),
+                item_quantity=int(gave_match.group(5)),
+                target_player_id=gave_match.group(4),
+                target_player_name=gave_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text
             )
-            if gave_match:
-                return PlayerAction(
-                    player_id=gave_match.group(2),
-                    player_name=gave_match.group(1).strip(),
-                    action_type='item_given',
-                    action_detail=f"Dat către {gave_match.group(3).strip()}",
-                    item_name=gave_match.group(6).strip(),
-                    item_quantity=int(gave_match.group(5)),
-                    target_player_id=gave_match.group(4),
-                    target_player_name=gave_match.group(3).strip(),
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            received_match = re.search(
-                r'Jucatorul\s+([^\(]+)\((\d+)\)\s+a primit de la\s+([^\(]+)\((\d+)\)\s+(\d+)x\s+(.+?)(?=\s+\d{4}|$)',
-                text,
-                re.IGNORECASE
+        
+        # Pattern 4: Item received from another player
+        received_match = re.search(
+            r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+primit\s+de\s+la\s+([^\(]+)\s*\((\d+)\)\s+(\d+)x\s+([^\d]+?)(?=\d{4}-\d{2}-\d{2}|$)',
+            text,
+            re.IGNORECASE
+        )
+        if received_match:
+            return PlayerAction(
+                player_id=received_match.group(2),
+                player_name=received_match.group(1).strip(),
+                action_type='item_received',
+                action_detail=f"Primit {received_match.group(6).strip()} de la {received_match.group(3).strip()}",
+                item_name=received_match.group(6).strip(),
+                item_quantity=int(received_match.group(5)),
+                target_player_id=received_match.group(4),
+                target_player_name=received_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text
             )
-            if received_match:
-                return PlayerAction(
-                    player_id=received_match.group(2),
-                    player_name=received_match.group(1).strip(),
-                    action_type='item_received',
-                    action_detail=f"Primit de la {received_match.group(3).strip()}",
-                    item_name=received_match.group(6).strip(),
-                    item_quantity=int(received_match.group(5)),
-                    target_player_id=received_match.group(4),
-                    target_player_name=received_match.group(3).strip(),
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            # Generic pattern
-            generic_match = re.search(r'Jucatorul\s+([^\(]+)\((\d+)\)\s+(.+?)(?=\s+\d{4}|$)', text, re.IGNORECASE)
-            if generic_match:
-                return PlayerAction(
-                    player_id=generic_match.group(2),
-                    player_name=generic_match.group(1).strip(),
-                    action_type='other',
-                    action_detail=generic_match.group(3).strip(),
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
+        
+        # Pattern 5: Vehicle purchase/sale
+        vehicle_match = re.search(
+            r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+(cumparat|vandut)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
+            text,
+            re.IGNORECASE
+        )
+        if vehicle_match:
+            action_type = 'vehicle_bought' if 'cumparat' in vehicle_match.group(3).lower() else 'vehicle_sold'
+            return PlayerAction(
+                player_id=vehicle_match.group(2),
+                player_name=vehicle_match.group(1).strip(),
+                action_type=action_type,
+                action_detail=vehicle_match.group(4).strip(),
+                timestamp=timestamp,
+                raw_text=text
+            )
+        
+        # Pattern 6: Property purchase/sale  
+        property_match = re.search(
+            r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+(cumparat|vandut)\s+(casa|afacere|proprietate).*?(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
+            text,
+            re.IGNORECASE
+        )
+        if property_match:
+            action_type = 'property_bought' if 'cumparat' in property_match.group(3).lower() else 'property_sold'
+            return PlayerAction(
+                player_id=property_match.group(2),
+                player_name=property_match.group(1).strip(),
+                action_type=action_type,
+                action_detail=f"{property_match.group(3)} {property_match.group(4)}",
+                timestamp=timestamp,
+                raw_text=text
+            )
+        
+        # Pattern 7: Generic player action (catch-all)
+        generic_match = re.search(
+            r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
+            text,
+            re.IGNORECASE
+        )
+        if generic_match:
+            return PlayerAction(
+                player_id=generic_match.group(2),
+                player_name=generic_match.group(1).strip(),
+                action_type='other',
+                action_detail=generic_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text
+            )
+        
+        # If no pattern matched but contains "Jucatorul", store as unknown
+        if 'jucatorul' in text.lower():
             return PlayerAction(
                 player_id=None,
                 player_name=None,
                 action_type='unknown',
-                action_detail=text,
+                action_detail=text[:200],  # Limit length
                 timestamp=timestamp,
                 raw_text=text
             )
-            
-        except Exception as e:
-            logger.error(f"Error parsing action entry: {e}")
-            return None
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error parsing action: {e} | Text: {text[:100]}")
+        return None
+
     
     async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
         """Get complete player profile"""
@@ -696,6 +744,7 @@ class Pro4KingsScraper:
                 logger.error(f"Error in batch: {profile}")
         
         return results
+
 
 
 
