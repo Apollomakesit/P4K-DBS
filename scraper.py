@@ -470,7 +470,7 @@ class Pro4KingsScraper:
                 if 'telefon' in key or 'phone' in key:
                     phone_match = re.search(r'(\d+)', val)
                     if phone_match:
-                        phone_number = phone_match.group(1))
+                        phone_number = phone_match.group(1)
                     break
             
             # Get properties
@@ -637,3 +637,4 @@ class Pro4KingsScraper:
                 logger.error(f"Error in batch: {profile}")
         
         return results
+
