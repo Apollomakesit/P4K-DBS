@@ -1,4 +1,4 @@
-import aiohttp
+import httpx
 import asyncio
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
@@ -49,13 +49,13 @@ class PlayerProfile:
     profile_data: Dict = None
 
 class Pro4KingsScraper:
-    """Enhanced scraper for panel.pro4kings.ro"""
+    """Enhanced scraper for panel.pro4kings.ro using httpx with Brotli support"""
     
     def __init__(self, base_url: str = "https://panel.pro4kings.ro", max_concurrent: int = 50):
         self.base_url = base_url
         self.max_concurrent = max_concurrent
         self.semaphore = asyncio.Semaphore(max_concurrent)
-        self.session: Optional[aiohttp.ClientSession] = None
+        self.client: Optional[httpx.AsyncClient] = None
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -67,88 +67,59 @@ class Pro4KingsScraper:
     
     async def __aenter__(self):
         """Async context manager entry"""
-        # Import brotli to ensure it's available
-        try:
-            import brotli
-            import brotlicffi
-            logger.info("✓ Brotli compression support loaded")
-        except ImportError as e:
-            logger.warning(f"⚠️ Brotli not available: {e}")
-    
-        # Create connector with proper settings
-        connector = aiohttp.TCPConnector(
-            limit=100,
-            limit_per_host=50,
-            ttl_dns_cache=300,
-            ssl=False  # Already using ssl=False in fetch_page
+        # httpx automatically handles Brotli decompression
+        self.client = httpx.AsyncClient(
+            headers=self.headers,
+            timeout=60.0,
+            limits=httpx.Limits(
+                max_connections=100,
+                max_keepalive_connections=50
+            ),
+            follow_redirects=True,
+            verify=False  # Disable SSL verification
         )
-    
-        timeout = aiohttp.ClientTimeout(total=60, connect=20, sock_read=30)
-    
-        # Don't pass headers to ClientSession, let aiohttp handle compression
-        self.session = aiohttp.ClientSession(
-            connector=connector,
-            timeout=timeout,
-            trust_env=True,
-            auto_decompress=True  # Explicitly enable auto decompression
-        )
-    
-    logger.info("✓ HTTP session initialized with Brotli support")
-    return self
-
+        logger.info("✓ HTTP client initialized with native Brotli support")
+        return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
-        if self.session:
-            await self.session.close()
-            await asyncio.sleep(0.25)  # Give time for connections to close
+        if self.client:
+            await self.client.aclose()
     
     async def fetch_page(self, url: str, retries: int = 3) -> Optional[str]:
         """Fetch page with retry logic and rate limiting"""
         async with self.semaphore:
             for attempt in range(retries):
                 try:
-                    # Pass headers with each request, not at session level
-                    async with self.session.get(
-                        url,
-                        headers=self.headers,
-                        allow_redirects=True,
-                        ssl=False
-                    ) as response:
-                        if response.status == 200:
-                            # Use response.text() which handles encoding automatically
-                            return await response.text()
-                        elif response.status == 429:  # Rate limited
-                            wait_time = 2 ** attempt
-                            logger.warning(f"Rate limited, waiting {wait_time}s")
-                            await asyncio.sleep(wait_time)
-                            continue
-                        elif response.status == 404:
-                            logger.warning(f"Page not found: {url}")
-                            return None
-                        elif response.status == 400:
-                            # Log the actual error
-                            error_text = await response.text()
-                            logger.error(f"Status 400 for {url}: {error_text[:200]}")
-                            return None
-                        else:
-                            logger.warning(f"Status {response.status} for {url}")
-                            if attempt < retries - 1:
-                                await asyncio.sleep(1)
-                                continue
-                            return None
-                except aiohttp.ClientError as e:
-                        logger.error(f"Client error fetching {url}: {e}")
-                    if "brotli" in str(e).lower():
-                        logger.error("❌ BROTLI ERROR: Install with: pip install Brotli brotlicffi")
-                    if attempt < retries - 1:
-                       await asyncio.sleep(2)
+                    response = await self.client.get(url)
+                    
+                    if response.status_code == 200:
+                        return response.text
+                    elif response.status_code == 429:  # Rate limited
+                        wait_time = 2 ** attempt
+                        logger.warning(f"Rate limited, waiting {wait_time}s")
+                        await asyncio.sleep(wait_time)
                         continue
-                    return None
-                except asyncio.TimeoutError:
+                    elif response.status_code == 404:
+                        logger.warning(f"Page not found: {url}")
+                        return None
+                    else:
+                        logger.warning(f"Status {response.status_code} for {url}")
+                        if attempt < retries - 1:
+                            await asyncio.sleep(1)
+                            continue
+                        return None
+                        
+                except httpx.TimeoutException:
                     logger.warning(f"Timeout on {url}, attempt {attempt + 1}/{retries}")
                     if attempt < retries - 1:
                         await asyncio.sleep(2)
+                        continue
+                    return None
+                except httpx.HTTPError as e:
+                    logger.error(f"HTTP error fetching {url}: {e}")
+                    if attempt < retries - 1:
+                        await asyncio.sleep(1)
                         continue
                     return None
                 except Exception as e:
@@ -158,7 +129,7 @@ class Pro4KingsScraper:
                         continue
                     return None
         return None
-
+    
     async def get_online_players(self) -> List[Dict]:
         """
         Get all online players from https://panel.pro4kings.ro/online
@@ -178,17 +149,15 @@ class Pro4KingsScraper:
             soup = BeautifulSoup(html, 'html.parser')
             
             # Find online players table/list
-            # Adjust selectors based on actual HTML structure
             player_rows = soup.select('table tr, .player-row, .online-player')
             
-            if not player_rows or len(player_rows) <= 1:  # No more players (header row only)
+            if not player_rows or len(player_rows) <= 1:
                 break
             
             page_players = []
             for row in player_rows[1:]:  # Skip header
                 try:
                     # Extract player ID and name
-                    # Method 1: From profile link
                     link = row.select_one('a[href*="/profile/"]')
                     if link:
                         href = link.get('href', '')
@@ -207,7 +176,6 @@ class Pro4KingsScraper:
                     if not link:
                         cells = row.select('td')
                         if len(cells) >= 2:
-                            # Typically: ID | Name | Level | etc
                             player_id = cells[0].get_text(strip=True)
                             player_name = cells[1].get_text(strip=True)
                             if player_id.isdigit():
@@ -233,16 +201,13 @@ class Pro4KingsScraper:
                 break
             
             page += 1
-            await asyncio.sleep(0.5)  # Rate limiting between pages
+            await asyncio.sleep(0.5)
         
         logger.info(f"Total online players found: {len(all_players)}")
         return all_players
     
     async def get_latest_actions(self, limit: int = 100) -> List[PlayerAction]:
-        """
-        Get latest actions from https://panel.pro4kings.ro/ 
-        From "Ultimele acțiuni" section (lower right)
-        """
+        """Get latest actions from homepage"""
         url = f"{self.base_url}/"
         html = await self.fetch_page(url)
         
@@ -256,14 +221,12 @@ class Pro4KingsScraper:
         if actions_section:
             actions_container = actions_section.find_parent(['div', 'section', 'table'])
         else:
-            # Try alternative selectors
             actions_container = soup.select_one('#ultimele-actiuni, .latest-actions, .recent-actions')
         
         if not actions_container:
             logger.warning("Could not find 'Ultimele acțiuni' section")
             return []
         
-        # Find all action entries
         action_entries = actions_container.select('li, tr, .action-item, .activity-row')
         actions = []
         
@@ -276,19 +239,12 @@ class Pro4KingsScraper:
         return actions
     
     def parse_action_entry(self, entry) -> Optional[PlayerAction]:
-        """
-        Parse individual action entry
-        Examples:
-        - "Jucatorul TechnegruFULL(137703) a primit un avertisment (2/3), de la administratorul [A605] Nea Daly(804), motiv 200.  2026-01-17 02:26:54"
-        - "Jucatorul PANDA(219847) a pus in chest(id u219847vehtiptruck), 200x Seminte Plante.  2026-01-17 02:26:55"
-        - "Jucatorul John(12345) a dat lui Mike(67890) 50x Wood.  2026-01-17 02:25:00"
-        """
+        """Parse individual action entry"""
         try:
             text = entry.get_text(strip=True)
             if not text:
                 return None
             
-            # Extract timestamp (format: YYYY-MM-DD HH:MM:SS)
             timestamp_match = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', text)
             timestamp = datetime.now()
             if timestamp_match:
@@ -297,8 +253,7 @@ class Pro4KingsScraper:
                 except:
                     pass
             
-            # Pattern 1: Warning received
-            # "Jucatorul PlayerName(ID) a primit un avertisment (2/3), de la administratorul [AdminTag] AdminName(AdminID), motiv Reason"
+            # Warning pattern
             warning_match = re.search(
                 r'Jucatorul\s+([^\(]+)\((\d+)\)\s+a primit un avertisment\s+\((\d+/\d+)\),\s+de la administratorul\s+\[([^\]]+)\]\s+([^\(]+)\((\d+)\),\s+motiv\s+(.+?)(?=\s+\d{4}|$)',
                 text,
@@ -318,8 +273,7 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
             
-            # Pattern 2: Chest interaction
-            # "Jucatorul PlayerName(ID) a pus in chest(id chestid), 200x Item Name"
+            # Chest pattern
             chest_match = re.search(
                 r'Jucatorul\s+([^\(]+)\((\d+)\)\s+a (pus in|scos din)\s+chest\([^\)]+\),\s+(\d+)x\s+(.+?)(?=\s+\d{4}|$)',
                 text,
@@ -338,8 +292,7 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
             
-            # Pattern 3: Item transfer (gave to player)
-            # "Jucatorul PlayerName1(ID1) a dat lui PlayerName2(ID2) 50x Item"
+            # Item transfer patterns
             gave_match = re.search(
                 r'Jucatorul\s+([^\(]+)\((\d+)\)\s+a dat lui\s+([^\(]+)\((\d+)\)\s+(\d+)x\s+(.+?)(?=\s+\d{4}|$)',
                 text,
@@ -359,8 +312,6 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
             
-            # Pattern 4: Item received
-            # "Jucatorul PlayerName2(ID2) a primit de la PlayerName1(ID1) 50x Item"
             received_match = re.search(
                 r'Jucatorul\s+([^\(]+)\((\d+)\)\s+a primit de la\s+([^\(]+)\((\d+)\)\s+(\d+)x\s+(.+?)(?=\s+\d{4}|$)',
                 text,
@@ -380,8 +331,7 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
             
-            # Pattern 5: Generic player action
-            # "Jucatorul PlayerName(ID) action description"
+            # Generic pattern
             generic_match = re.search(r'Jucatorul\s+([^\(]+)\((\d+)\)\s+(.+?)(?=\s+\d{4}|$)', text, re.IGNORECASE)
             if generic_match:
                 return PlayerAction(
@@ -393,7 +343,6 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
             
-            # If no pattern matches, store as raw action
             return PlayerAction(
                 player_id=None,
                 player_name=None,
@@ -408,11 +357,7 @@ class Pro4KingsScraper:
             return None
     
     async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
-        """
-        Get complete player profile from https://panel.pro4kings.ro/profile/{player_id}
-        Includes both "Profil" and "Proprietăți" tabs
-        """
-        # Main profile page
+        """Get complete player profile"""
         profile_url = f"{self.base_url}/profile/{player_id}#home"
         html = await self.fetch_page(profile_url)
         
@@ -422,15 +367,12 @@ class Pro4KingsScraper:
         soup = BeautifulSoup(html, 'html.parser')
         
         try:
-            # Extract username
             username_elem = soup.select_one('.profile-username, .player-name, h1, h2')
             username = username_elem.get_text(strip=True) if username_elem else f"Player_{player_id}"
             
-            # Check if player is online (look for online indicator)
             is_online = bool(soup.select_one('.online-indicator, .status-online, .badge-success')) or \
                        'online' in soup.get_text().lower()[:1000]
             
-            # Extract last connection
             last_seen = datetime.now()
             last_conn_elem = soup.find(text=re.compile(r'Ultima.*conectare|Last.*connection', re.IGNORECASE))
             if last_conn_elem:
@@ -444,10 +386,8 @@ class Pro4KingsScraper:
                         except:
                             pass
             
-            # Extract profile data
             profile_data = {}
             
-            # Method 1: Parse infobox/profile table
             info_rows = soup.select('.profile-info tr, .player-stats tr, .info-row')
             for row in info_rows:
                 label = row.select_one('th, .label, .key')
@@ -457,7 +397,6 @@ class Pro4KingsScraper:
                     val = value.get_text(strip=True)
                     profile_data[key] = val
             
-            # Method 2: Parse definition lists
             dt_elements = soup.select('dt')
             for dt in dt_elements:
                 dd = dt.find_next_sibling('dd')
@@ -466,7 +405,7 @@ class Pro4KingsScraper:
                     val = dd.get_text(strip=True)
                     profile_data[key] = val
             
-            # Extract specific fields
+            # Extract fields (same logic as before)
             faction = None
             faction_rank = None
             job = None
@@ -477,29 +416,21 @@ class Pro4KingsScraper:
             age_ic = None
             phone_number = None
             
-            # Faction
             for key, val in profile_data.items():
                 if 'fac' in key or 'factiune' in key:
                     faction = val
                     break
-            if not faction:
-                faction_elem = soup.select_one('.faction, .factiune')
-                if faction_elem:
-                    faction = faction_elem.get_text(strip=True)
             
-            # Faction Rank
             for key, val in profile_data.items():
                 if 'rank' in key or 'rang' in key:
                     faction_rank = val
                     break
             
-            # Job
             for key, val in profile_data.items():
-                if 'job' in key or 'meserie' in key or 'ocupatie' in key:
+                if 'job' in key or 'meserie' in key:
                     job = val
                     break
             
-            # Level
             for key, val in profile_data.items():
                 if 'level' in key or 'nivel' in key:
                     level_match = re.search(r'\d+', val)
@@ -507,7 +438,6 @@ class Pro4KingsScraper:
                         level = int(level_match.group())
                     break
             
-            # Respect Points
             for key, val in profile_data.items():
                 if 'respect' in key or 'puncte' in key:
                     resp_match = re.search(r'\d+', val)
@@ -515,7 +445,6 @@ class Pro4KingsScraper:
                         respect_points = int(resp_match.group())
                     break
             
-            # Warnings
             for key, val in profile_data.items():
                 if 'warn' in key or 'avertis' in key:
                     warn_match = re.search(r'(\d+)', val)
@@ -523,7 +452,6 @@ class Pro4KingsScraper:
                         warnings = int(warn_match.group(1))
                     break
             
-            # Played Hours
             for key, val in profile_data.items():
                 if 'ore' in key or 'hours' in key or 'timp' in key:
                     hours_match = re.search(r'([\d\.]+)', val)
@@ -531,23 +459,21 @@ class Pro4KingsScraper:
                         played_hours = float(hours_match.group(1))
                     break
             
-            # Age IC
             for key, val in profile_data.items():
-                if 'varsta' in key or 'age' in key or 'ani' in key:
+                if 'varsta' in key or 'age' in key:
                     age_match = re.search(r'(\d+)', val)
                     if age_match:
                         age_ic = int(age_match.group(1))
                     break
             
-            # Phone Number
             for key, val in profile_data.items():
-                if 'telefon' in key or 'phone' in key or 'numar' in key:
+                if 'telefon' in key or 'phone' in key:
                     phone_match = re.search(r'(\d+)', val)
                     if phone_match:
-                        phone_number = phone_match.group(1)
+                        phone_number = phone_match.group(1))
                     break
             
-            # Get properties count (from "Proprietăți" tab)
+            # Get properties
             properties_url = f"{self.base_url}/profile/{player_id}#profile"
             props_html = await self.fetch_page(properties_url)
             vehicles_count = None
@@ -556,7 +482,6 @@ class Pro4KingsScraper:
             if props_html:
                 props_soup = BeautifulSoup(props_html, 'html.parser')
                 
-                # Count vehicles
                 vehicles_section = props_soup.find(text=re.compile(r'Vehicule|Vehicles', re.IGNORECASE))
                 if vehicles_section:
                     vehicles_parent = vehicles_section.find_parent(['div', 'section'])
@@ -564,7 +489,6 @@ class Pro4KingsScraper:
                         vehicle_items = vehicles_parent.select('.vehicle-item, tr, li')
                         vehicles_count = len(vehicle_items)
                 
-                # Count properties
                 properties_section = props_soup.find(text=re.compile(r'Proprietăți|Properties', re.IGNORECASE))
                 if properties_section:
                     props_parent = properties_section.find_parent(['div', 'section'])
@@ -596,7 +520,7 @@ class Pro4KingsScraper:
             return None
     
     async def get_faction_members(self) -> Dict[str, List[Dict]]:
-        """Get all factions and their member counts from https://panel.pro4kings.ro/factions"""
+        """Get all factions and their member counts"""
         url = f"{self.base_url}/factions"
         html = await self.fetch_page(url)
         
@@ -606,10 +530,9 @@ class Pro4KingsScraper:
         soup = BeautifulSoup(html, 'html.parser')
         factions = {}
         
-        # Find faction list/table
         faction_rows = soup.select('table tr, .faction-row, .faction-item')
         
-        for row in faction_rows[1:]:  # Skip header
+        for row in faction_rows[1:]:
             try:
                 cells = row.select('td')
                 if len(cells) >= 2:
@@ -628,7 +551,7 @@ class Pro4KingsScraper:
         return factions
     
     async def get_online_staff(self) -> List[Dict]:
-        """Get online staff from https://panel.pro4kings.ro/staff"""
+        """Get online staff"""
         url = f"{self.base_url}/staff"
         html = await self.fetch_page(url)
         
@@ -638,7 +561,6 @@ class Pro4KingsScraper:
         soup = BeautifulSoup(html, 'html.parser')
         staff = []
         
-        # Find online staff indicators
         online_section = soup.select('.staff-online, .online-staff')
         for elem in online_section:
             name_elem = elem.select_one('.staff-name, .admin-name')
@@ -654,10 +576,7 @@ class Pro4KingsScraper:
         return staff
     
     async def get_banned_players(self) -> List[Dict]:
-        """
-        Get banned players from https://panel.pro4kings.ro/banlist
-        Returns: ID / Jucător / Admin / Motiv / Durată / Dată primire / Dată expirare
-        """
+        """Get banned players from banlist"""
         url = f"{self.base_url}/banlist"
         html = await self.fetch_page(url)
         
@@ -667,10 +586,9 @@ class Pro4KingsScraper:
         soup = BeautifulSoup(html, 'html.parser')
         banned = []
         
-        # Find ban list table
         ban_rows = soup.select('table tr, .ban-row, .banned-player')
         
-        for row in ban_rows[1:]:  # Skip header
+        for row in ban_rows[1:]:
             try:
                 cells = row.select('td')
                 if len(cells) >= 6:
@@ -719,7 +637,3 @@ class Pro4KingsScraper:
                 logger.error(f"Error in batch: {profile}")
         
         return results
-
-
-
-
