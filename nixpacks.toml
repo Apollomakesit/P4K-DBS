@@ -1,12 +1,5 @@
-[phases.setup]
-nixPkgs = ["python311", "gcc", "gnumake"]
-
 [phases.install]
-cmds = [
-    "pip install --upgrade pip setuptools wheel",
-    "pip install Brotli brotlicffi --no-cache-dir",
-    "pip install -r requirements.txt --no-cache-dir"
-]
+cmds = ["pip install -r requirements.txt"]
 
 [start]
 cmd = "python bot.py"
