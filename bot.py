@@ -629,7 +629,7 @@ async def player_info(interaction: discord.Interaction, identifier: str):
     embed.add_field(name=f"{faction_emoji} Facțiune", value=f"**{faction}**", inline=True)
     
     if profile.get('faction_rank'):
-        embed.add_field(name="🎖️ Rank", value=f"**{profile['faction_rank']}**", inline=True)
+        embed.add_field(name="🏎️ Rank", value=f"**{profile['faction_rank']}**", inline=True)
     
     if profile.get('job'):
         embed.add_field(name="💼 Job", value=f"**{profile['job']}**", inline=True)
@@ -751,7 +751,7 @@ async def rank_history(interaction: discord.Interaction, identifier: str):
         return
     
     embed = discord.Embed(
-        title=f"🎖️ Istoric Rang - {player_name}",
+        title=f"🏎️ Istoric Rang - {player_name}",
         description=f"ID: {player_id} • **{len(rank_history)}** schimbări de rang",
         color=discord.Color.gold(),
         timestamp=datetime.now()
@@ -830,7 +830,7 @@ async def recent_promotions(interaction: discord.Interaction, days: int = 7):
         return
     
     embed = discord.Embed(
-        title="🎖️ Promovări Recente",
+        title="🏎️ Promovări Recente",
         description=f"Ultimele {days} zile • **{len(promotions)}** promovări",
         color=discord.Color.gold(),
         timestamp=datetime.now()
@@ -966,8 +966,11 @@ async def faction_members(interaction: discord.Interaction, faction_name: str):
         rank_text = f" • {member.get('faction_rank')}" if member.get('faction_rank') else ""
         level_text = f"Level {member.get('level')}" if member.get('level') else "N/A"
         
+        # 🔧 FIX: Use correct database key for player name
+        player_name = member.get('username', member.get('player_name', 'Unknown'))
+        
         embed.add_field(
-            name=f"{status} {member['username']} (ID: {member['player_id']})",
+            name=f"{status} {player_name} (ID: {member['player_id']})",
             value=f"{level_text}{rank_text}{warn_text}",
             inline=False
         )
