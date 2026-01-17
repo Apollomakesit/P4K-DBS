@@ -210,8 +210,8 @@ async def update_pending_profiles():
         
         logger.info(f"🔄 Updating {len(pending_ids)} pending profiles...")
         
-        # Batch fetch profiles
-        results = await scraper.batch_get_profiles(pending_ids, delay=0.1, concurrent=25)
+        # FIXED: Removed 'concurrent' parameter - it doesn't exist in batch_get_profiles
+        results = await scraper.batch_get_profiles(pending_ids, delay=0.1)
         
         for profile in results:
             profile_dict = {
@@ -743,7 +743,7 @@ async def bot_stats(interaction: discord.Interaction):
         inline=True
     )
     
-    embed.set_footer(text=f"Bot versiune 2.1 • Îmbunătățiri Ianuarie 2026")
+    embed.set_footer(text=f"Bot versiune 2.1 • Îmbunătățiri Ianuarie 2026 • Today at {datetime.now().strftime('%H:%M')}")
     
     await interaction.followup.send(embed=embed)
 
