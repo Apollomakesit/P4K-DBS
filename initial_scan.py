@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 import json
 import logging
+import time
 from typing import List, Dict
 from database import Database
 from scraper import Pro4KingsScraper
@@ -23,13 +24,19 @@ DB_PATH = os.getenv('DATABASE_PATH', 'pro4kings.db')
 START_ID = 1
 END_ID = 230000
 
+# 🔥 OPTIMIZED CONFIGURATION
+CONCURRENT_WORKERS = 8      # Redus de la 20 la 8 pentru stabilitate
+BATCH_SIZE = 40             # Batch-uri mai mici
+SCAN_DELAY = 0.15           # Mai mult delay între request-uri
+
 class FastScanner:
     """
-    Optimized scanner: 230,000 profiles in ~2 hours
-    Strategy: 20 concurrent workers, smart rate limiting
+    Optimized scanner with intelligent rate limiting
+    Strategy: 8 concurrent workers, smart rate limiting, wave pattern
+    Target: 6-10 ID/s with minimal 503 errors
     """
     
-    def __init__(self, db_path: str = DB_PATH, workers: int = 20):
+    def __init__(self, db_path: str = DB_PATH, workers: int = CONCURRENT_WORKERS):
         self.db = Database(db_path)
         self.workers = workers
         self.scan_state = self.load_scan_state()
@@ -45,6 +52,10 @@ class FastScanner:
         self.stats_lock = asyncio.Lock()
         self.backoff_level = 0  # Global backoff when 503 occurs
         self.backoff_lock = asyncio.Lock()
+        
+        # 🔥 Performance tracking
+        self.last_progress_time = None
+        self.last_progress_count = 0
     
     def load_scan_state(self) -> Dict:
         """Load previous scan state"""
@@ -88,7 +99,7 @@ class FastScanner:
     
     async def get_backoff_delay(self) -> float:
         """Get current backoff delay"""
-        return 0.2 * (1.5 ** self.backoff_level)  # Exponential: 0.2, 0.3, 0.45, 0.67, 1.0, 1.5
+        return SCAN_DELAY * (1.5 ** self.backoff_level)  # Exponential backoff
     
     async def worker(self, worker_id: int, scraper: Pro4KingsScraper, player_ids: List[str]):
         """Worker coroutine to process player IDs"""
@@ -133,7 +144,7 @@ class FastScanner:
                 async with self.stats_lock:
                     self.stats['total_scanned'] += 1
                 
-                # Rate limiting
+                # Rate limiting with adaptive delay
                 await asyncio.sleep(delay)
                 
             except Exception as e:
@@ -152,16 +163,21 @@ class FastScanner:
     async def scan_parallel(self):
         """
         Parallel scan with dynamic rate limiting
-        Target: ~2 hours for 230,000 profiles
+        Target: 6-10 ID/s with minimal 503 errors
         """
         self.stats['start_time'] = datetime.now()
+        self.last_progress_time = time.time()
+        self.last_progress_count = 0
+        
         start_id = self.scan_state['last_id'] + 1
         
         logger.info("=" * 60)
-        logger.info(f"FAST PARALLEL PROFILE SCANNER")
+        logger.info(f"OPTIMIZED PARALLEL PROFILE SCANNER")
         logger.info(f"Range: {start_id:,} to {END_ID:,} ({END_ID - start_id + 1:,} profiles)")
-        logger.info(f"Workers: {self.workers}")
-        logger.info(f"Target Time: ~2 hours")
+        logger.info(f"Workers: {self.workers} (reduced for stability)")
+        logger.info(f"Rate Limiter: 8 req/s with adaptive throttling")
+        logger.info(f"Target: 6-10 ID/s with minimal 503 errors")
+        logger.info(f"Estimated Time: 8-12 hours")
         logger.info("=" * 60)
         
         # Generate list of IDs to scan
@@ -202,7 +218,7 @@ class FastScanner:
         self.print_final_report()
     
     async def report_progress(self, start_id: int):
-        """Background task to report progress"""
+        """Background task to report progress with performance metrics"""
         last_count = 0
         last_time = datetime.now()
         
@@ -212,7 +228,7 @@ class FastScanner:
             current_time = datetime.now()
             current_count = self.stats['total_scanned']
             
-            # Calculate rate
+            # Calculate current rate (last 30s)
             time_diff = (current_time - last_time).total_seconds()
             count_diff = current_count - last_count
             current_rate = count_diff / time_diff if time_diff > 0 else 0
@@ -230,17 +246,23 @@ class FastScanner:
             # Progress percentage
             progress = (current_count / (END_ID - start_id + 1)) * 100
             
+            # Success rate
+            success_rate = (self.stats['found'] / current_count * 100) if current_count > 0 else 0
+            
             logger.info(f"""
 ╔════════════════════════════════════════════════════════════╗
 ║ PROGRESS: {progress:.1f}% ({current_count:,}/{END_ID - start_id + 1:,})
-║ Found: {self.stats['found']:,} | Not Found: {self.stats['not_found']:,}
+║ Found: {self.stats['found']:,} ({success_rate:.1f}%) | Not Found: {self.stats['not_found']:,}
 ║ Errors: {self.stats['errors']:,} | 503 Retries: {self.stats['retries_503']:,}
 ║ 
-║ Rate: {current_rate:.1f}/s (current) | {overall_rate:.1f}/s (avg)
-║ Backoff Level: {self.backoff_level}/5
+║ 📈 Performance:
+║   Current Rate: {current_rate:.2f} ID/s (last 30s)
+║   Average Rate: {overall_rate:.2f} ID/s (overall)
+║   Backoff Level: {self.backoff_level}/5
 ║ 
-║ ETA: {int(eta_hours)}h {int(eta_minutes)}m
-║ Elapsed: {int(elapsed/3600)}h {int((elapsed%3600)/60)}m
+║ ⏱️ Time:
+║   ETA: {int(eta_hours)}h {int(eta_minutes)}m
+║   Elapsed: {int(elapsed/3600)}h {int((elapsed%3600)/60)}m
 ╚════════════════════════════════════════════════════════════╝
             """)
             
@@ -251,31 +273,38 @@ class FastScanner:
             self.save_scan_state(start_id + current_count)
     
     def print_final_report(self):
-        """Print final report"""
+        """Print final report with detailed metrics"""
         elapsed = (self.stats['end_time'] - self.stats['start_time']).total_seconds()
+        avg_rate = self.stats['total_scanned'] / elapsed if elapsed > 0 else 0
+        success_rate = (self.stats['found'] / self.stats['total_scanned'] * 100) if self.stats['total_scanned'] > 0 else 0
         
         logger.info("\n" + "=" * 60)
         logger.info("✅ SCAN COMPLETED!")
         logger.info("=" * 60)
         logger.info(f"""
-Total Scanned: {self.stats['total_scanned']:,}
-Found (exists): {self.stats['found']:,}
-Not Found (404): {self.stats['not_found']:,}
-Errors: {self.stats['errors']:,}
-503 Retries: {self.stats['retries_503']:,}
+📊 Statistics:
+  Total Scanned: {self.stats['total_scanned']:,}
+  Found (exists): {self.stats['found']:,} ({success_rate:.1f}%)
+  Not Found (404): {self.stats['not_found']:,}
+  Errors: {self.stats['errors']:,}
+  503 Retries: {self.stats['retries_503']:,}
 
-Time: {int(elapsed/3600)}h {int((elapsed%3600)/60)}m
-Average Rate: {self.stats['total_scanned']/elapsed:.2f} profiles/sec
+⏱️ Performance:
+  Duration: {int(elapsed/3600)}h {int((elapsed%3600)/60)}m
+  Average Rate: {avg_rate:.2f} profiles/sec
+  Target Rate: 6-10 ID/s
+  Status: {'✅ EXCELLENT' if avg_rate >= 6 else '⚠️ BELOW TARGET'}
 
-Database now contains {self.stats['found']:,} player profiles!
+💾 Database:
+  Total profiles stored: {self.stats['found']:,}
         """)
 
 async def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description='Fast scanner for Pro4Kings profiles')
-    parser.add_argument('--workers', type=int, default=20,
-                        help='Number of concurrent workers (default: 20)')
+    parser = argparse.ArgumentParser(description='Optimized scanner for Pro4Kings profiles')
+    parser.add_argument('--workers', type=int, default=CONCURRENT_WORKERS,
+                        help=f'Number of concurrent workers (default: {CONCURRENT_WORKERS})')
     parser.add_argument('--reset', action='store_true',
                         help='Reset scan state and start from ID 1')
     
