@@ -446,19 +446,29 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
     
     def get_player_actions(self, identifier: str, days: int = 7) -> List[Dict]:
-        """🔧 FIXED: Get player actions by ID (exact match) or name (fuzzy)"""
+        """🔥 FIXED: Get player actions - STRICT filtering to prevent false positives"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cutoff = datetime.now() - timedelta(days=days)
             
-            # 🔥 FIX: Try exact ID match first, then fallback to name LIKE
-            # This prevents false positives from raw_text containing the identifier
+            # Strategy 1: Try exact player_id match first
+            if identifier.isdigit():
+                cursor.execute('''
+                    SELECT * FROM actions
+                    WHERE player_id = ? AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                ''', (identifier, cutoff))
+                results = cursor.fetchall()
+                
+                if results:
+                    return [dict(row) for row in results]
+            
+            # Strategy 2: Fuzzy name match (but only in player_name column)
             cursor.execute('''
                 SELECT * FROM actions
-                WHERE (player_id = ? OR (player_id IS NULL AND player_name LIKE ?))
-                    AND timestamp >= ?
+                WHERE player_name LIKE ? AND timestamp >= ?
                 ORDER BY timestamp DESC
-            ''', (identifier, f'%{identifier}%', cutoff))
+            ''', (f'%{identifier}%', cutoff))
             
             return [dict(row) for row in cursor.fetchall()]
     
