@@ -774,182 +774,184 @@ class Database:
     async def save_scan_progress(self, last_player_id: str, total_scanned: int, completed: bool = False) -> None:
         """ASYNC: Save scan progress (legacy)"""
         await asyncio.to_thread(self._save_scan_progress_sync, last_player_id, total_scanned, completed)
-
-async def get_database_stats(self) -> Dict:
-    """Get database statistics"""
-    def _get_stats_sync():
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT COUNT(*) FROM players')
-            total_players = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(*) FROM actions')
-            total_actions = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(*) FROM online_players')
-            online_count = cursor.fetchone()[0]
-            
-            return {
-                'total_players': total_players,
-                'total_actions': total_actions,
-                'online_count': online_count
-            }
     
-    return await asyncio.to_thread(_get_stats_sync)
-
-async def get_actions_count_last_24h(self) -> int:
-    """Get actions count in last 24 hours"""
-    def _get_count_sync():
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cutoff = datetime.now() - timedelta(hours=24)
-            cursor.execute('SELECT COUNT(*) FROM actions WHERE timestamp >= ?', (cutoff,))
-            return cursor.fetchone()[0]
+    # 🔥 FIXED: Properly indented class methods below
     
-    return await asyncio.to_thread(_get_count_sync)
-
-async def get_logins_count_today(self) -> int:
-    """Get login count today"""
-    def _get_count_sync():
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            cursor.execute('SELECT COUNT(*) FROM login_events WHERE event_type = ? AND timestamp >= ?', ('login', today))
-            return cursor.fetchone()[0]
+    async def get_database_stats(self) -> Dict:
+        """Get database statistics"""
+        def _get_stats_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute('SELECT COUNT(*) FROM players')
+                total_players = cursor.fetchone()[0]
+                
+                cursor.execute('SELECT COUNT(*) FROM actions')
+                total_actions = cursor.fetchone()[0]
+                
+                cursor.execute('SELECT COUNT(*) FROM online_players')
+                online_count = cursor.fetchone()[0]
+                
+                return {
+                    'total_players': total_players,
+                    'total_actions': total_actions,
+                    'online_count': online_count
+                }
+        
+        return await asyncio.to_thread(_get_stats_sync)
     
-    return await asyncio.to_thread(_get_count_sync)
-
-async def get_active_bans_count(self) -> int:
-    """Get active bans count"""
-    def _get_count_sync():
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT COUNT(*) FROM banned_players WHERE is_active = TRUE')
-            return cursor.fetchone()[0]
+    async def get_actions_count_last_24h(self) -> int:
+        """Get actions count in last 24 hours"""
+        def _get_count_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(hours=24)
+                cursor.execute('SELECT COUNT(*) FROM actions WHERE timestamp >= ?', (cutoff,))
+                return cursor.fetchone()[0]
+        
+        return await asyncio.to_thread(_get_count_sync)
     
-    return await asyncio.to_thread(_get_count_sync)
-
-async def get_player_sessions(self, player_id: str, days: int = 7) -> List[Dict]:
-    """Get player sessions"""
-    def _get_sessions_sync():
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cutoff = datetime.now() - timedelta(days=days)
-            
-            cursor.execute('''
-                SELECT 
-                    l1.timestamp as login_time,
-                    l2.timestamp as logout_time,
-                    l2.session_duration_seconds
-                FROM login_events l1
-                LEFT JOIN login_events l2 ON l2.player_id = l1.player_id 
-                    AND l2.event_type = 'logout' 
-                    AND l2.timestamp > l1.timestamp
-                    AND l2.timestamp = (
-                        SELECT MIN(timestamp) FROM login_events 
-                        WHERE player_id = l1.player_id 
-                        AND event_type = 'logout' 
-                        AND timestamp > l1.timestamp
-                    )
-                WHERE l1.player_id = ? AND l1.event_type = 'login' AND l1.timestamp >= ?
-                ORDER BY l1.timestamp DESC
-            ''', (player_id, cutoff))
-            
-            return [dict(row) for row in cursor.fetchall()]
+    async def get_logins_count_today(self) -> int:
+        """Get login count today"""
+        def _get_count_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                cursor.execute('SELECT COUNT(*) FROM login_events WHERE event_type = ? AND timestamp >= ?', ('login', today))
+                return cursor.fetchone()[0]
+        
+        return await asyncio.to_thread(_get_count_sync)
     
-    return await asyncio.to_thread(_get_sessions_sync)
-
-async def get_player_rank_history(self, player_id: str) -> List[Dict]:
-    """Get player rank history"""
-    def _get_history_sync():
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM rank_history 
-                WHERE player_id = ? 
-                ORDER BY rank_obtained DESC
-            ''', (player_id,))
-            return [dict(row) for row in cursor.fetchall()]
+    async def get_active_bans_count(self) -> int:
+        """Get active bans count"""
+        def _get_count_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM banned_players WHERE is_active = TRUE')
+                return cursor.fetchone()[0]
+        
+        return await asyncio.to_thread(_get_count_sync)
     
-    return await asyncio.to_thread(_get_history_sync)
-
-async def get_faction_members(self, faction_name: str) -> List[Dict]:
-    """Get faction members"""
-    def _get_members_sync():
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM players 
-                WHERE faction = ? 
-                ORDER BY is_online DESC, level DESC
-            ''', (faction_name,))
-            return [dict(row) for row in cursor.fetchall()]
+    async def get_player_sessions(self, player_id: str, days: int = 7) -> List[Dict]:
+        """Get player sessions"""
+        def _get_sessions_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(days=days)
+                
+                cursor.execute('''
+                    SELECT 
+                        l1.timestamp as login_time,
+                        l2.timestamp as logout_time,
+                        l2.session_duration_seconds
+                    FROM login_events l1
+                    LEFT JOIN login_events l2 ON l2.player_id = l1.player_id 
+                        AND l2.event_type = 'logout' 
+                        AND l2.timestamp > l1.timestamp
+                        AND l2.timestamp = (
+                            SELECT MIN(timestamp) FROM login_events 
+                            WHERE player_id = l1.player_id 
+                            AND event_type = 'logout' 
+                            AND timestamp > l1.timestamp
+                        )
+                    WHERE l1.player_id = ? AND l1.event_type = 'login' AND l1.timestamp >= ?
+                    ORDER BY l1.timestamp DESC
+                ''', (player_id, cutoff))
+                
+                return [dict(row) for row in cursor.fetchall()]
+        
+        return await asyncio.to_thread(_get_sessions_sync)
     
-    return await asyncio.to_thread(_get_members_sync)
-
-async def get_recent_promotions(self, days: int = 7) -> List[Dict]:
-    """Get recent promotions"""
-    def _get_promotions_sync():
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cutoff = datetime.now() - timedelta(days=days)
-            
-            cursor.execute('''
-                SELECT 
-                    p.username as player_name,
-                    ph1.old_value as old_rank,
-                    ph1.new_value as new_rank,
-                    p.faction,
-                    ph1.changed_at as timestamp
-                FROM profile_history ph1
-                JOIN players p ON p.player_id = ph1.player_id
-                WHERE ph1.field_name = 'faction_rank' 
-                AND ph1.changed_at >= ?
-                ORDER BY ph1.changed_at DESC
-            ''', (cutoff,))
-            
-            return [dict(row) for row in cursor.fetchall()]
+    async def get_player_rank_history(self, player_id: str) -> List[Dict]:
+        """Get player rank history"""
+        def _get_history_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT * FROM rank_history 
+                    WHERE player_id = ? 
+                    ORDER BY rank_obtained DESC
+                ''', (player_id,))
+                return [dict(row) for row in cursor.fetchall()]
+        
+        return await asyncio.to_thread(_get_history_sync)
     
-    return await asyncio.to_thread(_get_promotions_sync)
-
-async def cleanup_old_data(self, dry_run: bool = True) -> Dict[str, int]:
-    """Cleanup old data"""
-    def _cleanup_sync():
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            results = {}
-            
-            # Actions older than 90 days
-            cutoff_actions = datetime.now() - timedelta(days=90)
-            if dry_run:
-                cursor.execute('SELECT COUNT(*) FROM actions WHERE timestamp < ?', (cutoff_actions,))
-                results['Actions'] = cursor.fetchone()[0]
-            else:
-                cursor.execute('DELETE FROM actions WHERE timestamp < ?', (cutoff_actions,))
-                results['Actions'] = cursor.rowcount
-            
-            # Login events older than 30 days
-            cutoff_logins = datetime.now() - timedelta(days=30)
-            if dry_run:
-                cursor.execute('SELECT COUNT(*) FROM login_events WHERE timestamp < ?', (cutoff_logins,))
-                results['Login Events'] = cursor.fetchone()[0]
-            else:
-                cursor.execute('DELETE FROM login_events WHERE timestamp < ?', (cutoff_logins,))
-                results['Login Events'] = cursor.rowcount
-            
-            # Profile history older than 180 days
-            cutoff_profile = datetime.now() - timedelta(days=180)
-            if dry_run:
-                cursor.execute('SELECT COUNT(*) FROM profile_history WHERE changed_at < ?', (cutoff_profile,))
-                results['Profile History'] = cursor.fetchone()[0]
-            else:
-                cursor.execute('DELETE FROM profile_history WHERE changed_at < ?', (cutoff_profile,))
-                results['Profile History'] = cursor.rowcount
-            
-            if not dry_run:
-                conn.commit()
-            
-            return results
+    async def get_faction_members(self, faction_name: str) -> List[Dict]:
+        """Get faction members"""
+        def _get_members_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT * FROM players 
+                    WHERE faction = ? 
+                    ORDER BY is_online DESC, level DESC
+                ''', (faction_name,))
+                return [dict(row) for row in cursor.fetchall()]
+        
+        return await asyncio.to_thread(_get_members_sync)
     
-    return await asyncio.to_thread(_cleanup_sync)
+    async def get_recent_promotions(self, days: int = 7) -> List[Dict]:
+        """Get recent promotions"""
+        def _get_promotions_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(days=days)
+                
+                cursor.execute('''
+                    SELECT 
+                        p.username as player_name,
+                        ph1.old_value as old_rank,
+                        ph1.new_value as new_rank,
+                        p.faction,
+                        ph1.changed_at as timestamp
+                    FROM profile_history ph1
+                    JOIN players p ON p.player_id = ph1.player_id
+                    WHERE ph1.field_name = 'faction_rank' 
+                    AND ph1.changed_at >= ?
+                    ORDER BY ph1.changed_at DESC
+                ''', (cutoff,))
+                
+                return [dict(row) for row in cursor.fetchall()]
+        
+        return await asyncio.to_thread(_get_promotions_sync)
+    
+    async def cleanup_old_data(self, dry_run: bool = True) -> Dict[str, int]:
+        """Cleanup old data"""
+        def _cleanup_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                results = {}
+                
+                # Actions older than 90 days
+                cutoff_actions = datetime.now() - timedelta(days=90)
+                if dry_run:
+                    cursor.execute('SELECT COUNT(*) FROM actions WHERE timestamp < ?', (cutoff_actions,))
+                    results['Actions'] = cursor.fetchone()[0]
+                else:
+                    cursor.execute('DELETE FROM actions WHERE timestamp < ?', (cutoff_actions,))
+                    results['Actions'] = cursor.rowcount
+                
+                # Login events older than 30 days
+                cutoff_logins = datetime.now() - timedelta(days=30)
+                if dry_run:
+                    cursor.execute('SELECT COUNT(*) FROM login_events WHERE timestamp < ?', (cutoff_logins,))
+                    results['Login Events'] = cursor.fetchone()[0]
+                else:
+                    cursor.execute('DELETE FROM login_events WHERE timestamp < ?', (cutoff_logins,))
+                    results['Login Events'] = cursor.rowcount
+                
+                # Profile history older than 180 days
+                cutoff_profile = datetime.now() - timedelta(days=180)
+                if dry_run:
+                    cursor.execute('SELECT COUNT(*) FROM profile_history WHERE changed_at < ?', (cutoff_profile,))
+                    results['Profile History'] = cursor.fetchone()[0]
+                else:
+                    cursor.execute('DELETE FROM profile_history WHERE changed_at < ?', (cutoff_profile,))
+                    results['Profile History'] = cursor.rowcount
+                
+                if not dry_run:
+                    conn.commit()
+                
+                return results
+        
+        return await asyncio.to_thread(_cleanup_sync)
