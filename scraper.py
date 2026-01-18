@@ -689,57 +689,18 @@ class Pro4KingsScraper:
             logger.error(f"Error parsing profile for player {player_id}: {e}")
             return None
     
-    async def get_banned_players(self) -> List[Dict]:
-        """Get banned players from banlist"""
-        url = f"{self.base_url}/banlist"
-        html = await self.fetch_page(url)
-        
-        if not html:
-            return []
-        
-        soup = BeautifulSoup(html, 'html.parser')
-        banned = []
-        
-        ban_rows = soup.select('table tr, .ban-row, .banned-player')
-        
-        for row in ban_rows[1:]:
-            try:
-                cells = row.select('td')
-                if len(cells) >= 6:
-                    player_link = cells[1].select_one('a[href*="/profile/"]')
-                    player_id = None
-                    if player_link:
-                        id_match = re.search(r'/profile/(\d+)', player_link.get('href', ''))
-                        if id_match:
-                            player_id = id_match.group(1)
-                    
-                    banned.append({
-                        'player_id': player_id or cells[0].get_text(strip=True),
-                        'player_name': cells[1].get_text(strip=True),
-                        'admin': cells[2].get_text(strip=True),
-                        'reason': cells[3].get_text(strip=True),
-                        'duration': cells[4].get_text(strip=True),
-                        'ban_date': cells[5].get_text(strip=True),
-                        'expiry_date': cells[6].get_text(strip=True) if len(cells) > 6 else None
-                    })
-            except Exception as e:
-                logger.error(f"Error parsing ban row: {e}")
-                continue
-        
-        return banned
-    
     async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
-        """🔥 OPTIMIZED: Batch fetch cu wave pattern mai rapid"""
+        """🔥 OPTIMIZED: Batch fetch with detailed performance logging"""
         results = []
         
-        # 🔥 OPTIMIZED: Wave size crescut de la 10 la 20, delay redus de la 0.2s la 0.05s
-        wave_size = 20  # 🔥 Crescut de la 10 la 20
-        wave_delay = 0.05  # 🔥 Redus de la 0.2s la 0.05s
+        wave_size = 20
+        wave_delay = 0.05  # Small delay between waves
         
         for i in range(0, len(player_ids), wave_size):
+            wave_start = time.time()  # Track wave timing
             wave = player_ids[i:i + wave_size]
             
-            # Lansează valul în paralel
+            # Launch wave in parallel
             tasks = [self.get_player_profile(pid) for pid in wave]
             wave_results = await asyncio.gather(*tasks, return_exceptions=True)
             
@@ -749,7 +710,11 @@ class Pro4KingsScraper:
                 elif isinstance(result, Exception):
                     logger.error(f"Error: {result}")
             
-            # Delay între valuri
+            wave_elapsed = time.time() - wave_start
+            logger.info(f"Wave {i//wave_size + 1}: {len(wave)} profiles in {wave_elapsed:.2f}s "
+                       f"(avg: {wave_elapsed/len(wave):.2f}s per profile)")
+            
+            # Delay between waves
             if i + wave_size < len(player_ids):
                 await asyncio.sleep(wave_delay)
         
