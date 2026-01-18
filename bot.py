@@ -23,6 +23,17 @@ SCAN_STATS = {
     'last_saved_id': 0
 }
 
+# 🔥 NEW: Scraper performance tracking
+SCRAPER_STATS = {
+    'actions_scraped_total': 0,
+    'actions_saved_total': 0,
+    'actions_duplicate': 0,
+    'scrape_cycles': 0,
+    'last_scrape_time': None,
+    'last_scrape_count': 0,
+    'errors': 0
+}
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -124,9 +135,9 @@ async def force_sync(ctx):
 
 @tasks.loop(seconds=30)
 async def scrape_actions():
-    """Scrape latest actions - WITH ENHANCED ERROR HANDLING"""
+    """Scrape latest actions - WITH ENHANCED ERROR HANDLING AND STATS"""
     try:
-        global scraper
+        global scraper, SCRAPER_STATS
         if not scraper:
             scraper = Pro4KingsScraper(max_concurrent=5)
             await scraper.__aenter__()
@@ -134,11 +145,18 @@ async def scrape_actions():
         logger.info("🔍 Fetching latest actions...")
         actions = await scraper.get_latest_actions(limit=200)
         
+        SCRAPER_STATS['scrape_cycles'] += 1
+        SCRAPER_STATS['last_scrape_time'] = datetime.now()
+        SCRAPER_STATS['last_scrape_count'] = len(actions)
+        SCRAPER_STATS['actions_scraped_total'] += len(actions)
+        
         if not actions:
-            logger.warning("⚠️ No actions retrieved this cycle")
+            logger.warning("⚠️ No actions retrieved this cycle - THIS IS A PROBLEM!")
+            SCRAPER_STATS['errors'] += 1
             return
         
         new_count = 0
+        duplicate_count = 0
         new_player_ids = set()
         
         for action in actions:
@@ -172,13 +190,19 @@ async def scrape_actions():
                 if action.target_player_id:
                     new_player_ids.add((action.target_player_id, action.target_player_name))
                     db.mark_player_for_update(action.target_player_id, action.target_player_name)
+            else:
+                duplicate_count += 1
+        
+        SCRAPER_STATS['actions_saved_total'] += new_count
+        SCRAPER_STATS['actions_duplicate'] += duplicate_count
         
         if new_count > 0:
             logger.info(f"✅ Saved {new_count} new actions, marked {len(new_player_ids)} players for update")
         else:
-            logger.info(f"ℹ️  No new actions (checked {len(actions)} entries)")
+            logger.info(f"ℹ️  No new actions (checked {len(actions)} entries, {duplicate_count} duplicates)")
             
     except Exception as e:
+        SCRAPER_STATS['errors'] += 1
         logger.error(f"❌ Error in scrape_actions: {e}", exc_info=True)
 
 @scrape_actions.before_loop
@@ -307,6 +331,218 @@ async def check_banned_players():
         logger.error(f"✗ Error checking banned players: {e}", exc_info=True)
 
 # ============================================================================
+# 🔥 NEW: DEBUG COMMANDS FOR TESTING ACTION SCRAPING
+# ============================================================================
+
+@bot.tree.command(name="debug_scrape", description="[DEBUG] Test manual scraping of latest actions")
+async def debug_scrape(interaction: discord.Interaction):
+    """Manually test action scraping and show detailed results"""
+    await interaction.response.defer()
+    
+    try:
+        global scraper
+        if not scraper:
+            scraper = Pro4KingsScraper(max_concurrent=5)
+            await scraper.__aenter__()
+        
+        await interaction.followup.send("🔍 **Testing action scraping...**\n`Please wait 5-10 seconds...`")
+        
+        # Test scrape
+        actions = await scraper.get_latest_actions(limit=50)
+        
+        if not actions:
+            await interaction.followup.send(
+                "❌ **CRITICAL ISSUE: No actions found!**\n\n"
+                "This means the scraper is not working properly. Check bot logs for details.\n"
+                "Possible causes:\n"
+                "1. Website structure changed\n"
+                "2. Network/firewall blocking requests\n"
+                "3. Rate limiting from server"
+            )
+            return
+        
+        # Create embed with results
+        embed = discord.Embed(
+            title="🔍 Action Scraping Test Results",
+            description=f"Successfully scraped **{len(actions)}** actions",
+            color=discord.Color.green(),
+            timestamp=datetime.now()
+        )
+        
+        # Action type breakdown
+        action_types = {}
+        for action in actions:
+            action_types[action.action_type] = action_types.get(action.action_type, 0) + 1
+        
+        type_breakdown = "\n".join([f"• **{k}**: {v}" for k, v in action_types.items()])
+        embed.add_field(
+            name="Action Types",
+            value=type_breakdown or "None",
+            inline=False
+        )
+        
+        # Sample actions
+        samples = []
+        for i, action in enumerate(actions[:5]):
+            samples.append(
+                f"{i+1}. **{action.action_type}**\n"
+                f"   Player: {action.player_name} ({action.player_id})\n"
+                f"   Detail: {action.action_detail[:60]}..."
+            )
+        
+        embed.add_field(
+            name="Sample Actions (first 5)",
+            value="\n\n".join(samples),
+            inline=False
+        )
+        
+        embed.set_footer(text="✅ Scraping is working correctly!")
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ **Error during test scrape:**\n```{str(e)}```\n\n"
+            "Check bot logs for full traceback."
+        )
+        logger.error(f"Debug scrape error: {e}", exc_info=True)
+
+@bot.tree.command(name="scraper_stats", description="View scraper performance statistics")
+async def scraper_stats_cmd(interaction: discord.Interaction):
+    """Show scraper performance metrics"""
+    await interaction.response.defer()
+    
+    embed = discord.Embed(
+        title="📊 Scraper Performance Stats",
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    
+    embed.add_field(
+        name="Scrape Cycles",
+        value=f"**{SCRAPER_STATS['scrape_cycles']:,}** total",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Actions Scraped",
+        value=f"**{SCRAPER_STATS['actions_scraped_total']:,}** total",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Actions Saved",
+        value=f"**{SCRAPER_STATS['actions_saved_total']:,}** new",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Duplicates Skipped",
+        value=f"**{SCRAPER_STATS['actions_duplicate']:,}**",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Errors",
+        value=f"**{SCRAPER_STATS['errors']:,}**",
+        inline=True
+    )
+    
+    last_scrape = SCRAPER_STATS['last_scrape_time']
+    if last_scrape:
+        time_ago = (datetime.now() - last_scrape).total_seconds()
+        embed.add_field(
+            name="Last Scrape",
+            value=f"**{int(time_ago)}s** ago\nFound: **{SCRAPER_STATS['last_scrape_count']}** actions",
+            inline=True
+        )
+    
+    # Calculate average
+    if SCRAPER_STATS['scrape_cycles'] > 0:
+        avg_per_cycle = SCRAPER_STATS['actions_scraped_total'] / SCRAPER_STATS['scrape_cycles']
+        embed.add_field(
+            name="Average per Cycle",
+            value=f"**{avg_per_cycle:.1f}** actions",
+            inline=False
+        )
+    
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="action_stats", description="View database action statistics")
+async def action_stats_cmd(interaction: discord.Interaction):
+    """Show database action statistics"""
+    await interaction.response.defer()
+    
+    # Get action counts from database
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Total actions
+        cursor.execute('SELECT COUNT(*) FROM actions')
+        total_actions = cursor.fetchone()[0]
+        
+        # Actions by type
+        cursor.execute("""
+            SELECT action_type, COUNT(*) as count
+            FROM actions
+            GROUP BY action_type
+            ORDER BY count DESC
+            LIMIT 10
+        """)
+        action_types = cursor.fetchall()
+        
+        # Recent actions (last 24h)
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM actions
+            WHERE timestamp >= datetime('now', '-1 day')
+        """)
+        recent_24h = cursor.fetchone()[0]
+        
+        # Unique players with actions
+        cursor.execute('SELECT COUNT(DISTINCT player_id) FROM actions WHERE player_id IS NOT NULL')
+        unique_players = cursor.fetchone()[0]
+    
+    embed = discord.Embed(
+        title="💾 Database Action Statistics",
+        color=discord.Color.gold(),
+        timestamp=datetime.now()
+    )
+    
+    embed.add_field(
+        name="Total Actions",
+        value=f"**{total_actions:,}**",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Last 24 Hours",
+        value=f"**{recent_24h:,}**",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Unique Players",
+        value=f"**{unique_players:,}**",
+        inline=True
+    )
+    
+    # Action type breakdown
+    type_list = "\n".join([f"• **{row['action_type']}**: {row['count']:,}" for row in action_types])
+    if type_list:
+        embed.add_field(
+            name="Top Action Types",
+            value=type_list,
+            inline=False
+        )
+    
+    if total_actions == 0:
+        embed.color = discord.Color.red()
+        embed.set_footer(text="⚠️ WARNING: No actions in database! Check /debug_scrape")
+    
+    await interaction.followup.send(embed=embed)
+
+# ============================================================================
 # INITIAL SCAN FUNCTION (Background) - 🔥 SEQUENTIAL WITH 50-ID CHECKPOINTS
 # ============================================================================
 
@@ -333,7 +569,7 @@ async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, 
         f"📊 Range: **{start_id:,} → {end_id:,}**\n"
         f"⚙️ Workers: {workers}\n"
         f"💾 **Checkpoint la fiecare 50 ID-uri**\n\n"
-        f"✅ Dacă se întrerupe, reluează cu `/scan_resume`\n"
+        f"✅ Dacă se întrerupe, reiaște cu `/scan_resume`\n"
         f"📊 Vezi progres live cu `/scan_status`"
     )
     
@@ -499,705 +735,8 @@ async def resolve_player_info(identifier):
     players = db.search_player_by_name(identifier)
     return players[0] if players else None
 
-# ============================================================================
-# DISCORD SLASH COMMANDS - SCAN MANAGEMENT
-# ============================================================================
-
-@bot.tree.command(name="scan_all", description="[ADMIN] Pornește scanarea inițială a tuturor jucătorilor (1-230K)")
-async def scan_all_players(interaction: discord.Interaction, start_id: int = 1, end_id: int = 230000, workers: int = 30):
-    """🔥 UPDATED: Trigger initial scan with resume support"""
-    await interaction.response.defer()
-    
-    if SCAN_IN_PROGRESS:
-        await interaction.followup.send(
-            f"⚠️ **Un scan este deja activ!**\n"
-            f"Progres: {SCAN_STATS['scanned']:,}/{end_id:,} ({SCAN_STATS['scanned']/end_id*100:.1f}%)\n"
-            f"Găsiți: {SCAN_STATS['found']:,} jucători\n"
-            f"Ultimul ID salvat: {SCAN_STATS['last_saved_id']:,}\n\n"
-            f"Folosește `/scan_status` pentru detalii live."
-        )
-        return
-    
-    # 🔥 Check for saved progress
-    progress = db.get_scan_progress()
-    if progress.get('last_scan'):
-        last_id = int(progress.get('last_scanned_id', 0)) if progress.get('last_scanned_id') else 0
-        if last_id > 0 and last_id < end_id:
-            await interaction.followup.send(
-                f"📊 **Progress salvat găsit!**\n"
-                f"Ultimul ID scanat: **{last_id:,}**\n"
-                f"Jucători găsiți: {progress['total_scanned']:,}\n\n"
-                f"Vrei să continui de la ID {last_id + 1}?\n"
-                f"Folosește `/scan_resume` sau\n"
-                f"`/scan_all start_id:{last_id + 1}` pentru a continua."
-            )
-            return
-    
-    # Start scan in background
-    asyncio.create_task(run_initial_scan(interaction, start_id, end_id, workers))
-
-@bot.tree.command(name="scan_resume", description="Reia scanarea întreruptă de la ultimul checkpoint")
-async def scan_resume(interaction: discord.Interaction, workers: int = 30):
-    """🔥 NEW: Resume interrupted scan from last checkpoint"""
-    await interaction.response.defer()
-    
-    if SCAN_IN_PROGRESS:
-        await interaction.followup.send("⚠️ Un scan este deja activ!")
-        return
-    
-    # Get last saved progress
-    progress = db.get_scan_progress()
-    last_id = int(progress.get('last_scanned_id', 0)) if progress.get('last_scanned_id') else 0
-    
-    if last_id == 0:
-        await interaction.followup.send(
-            "❌ **Nu există progress salvat!**\n"
-            "Folosește `/scan_all` pentru a porni un scan nou."
-        )
-        return
-    
-    if last_id >= 230000:
-        await interaction.followup.send(
-            "✅ **Scanarea este completă!**\n"
-            f"Total jucători: {progress['total_scanned']:,}"
-        )
-        return
-    
-    # Resume from last checkpoint
-    await interaction.followup.send(
-        f"🔄 **Reluare scan de la checkpoint!**\n"
-        f"📊 Ultimul ID salvat: **{last_id:,}**\n"
-        f"👥 Jucători găsiți până acum: {progress['total_scanned']:,}\n"
-        f"📈 Rămân: {230000 - last_id:,} ID-uri\n\n"
-        f"Pornire..."
-    )
-    
-    # Start from next ID after last saved
-    asyncio.create_task(run_initial_scan(interaction, last_id + 1, 230000, workers))
-
-@bot.tree.command(name="scan_status", description="Vezi progresul scanării (actualizare continuă)")
-async def scan_status(interaction: discord.Interaction, continuous: bool = True):
-    """🔥 CONTINUOUS real-time updates until scan completes"""
-    await interaction.response.defer()
-    
-    if not SCAN_IN_PROGRESS:
-        progress = db.get_scan_progress()
-        total_players = progress['total_scanned']
-        last_id = progress.get('last_scanned_id', 'N/A')
-        
-        await interaction.followup.send(
-            f"ℹ️ **Nu este scan activ**\n"
-            f"👥 Jucători: **{total_players:,}**\n"
-            f"📊 Ultimul ID: **{last_id}**"
-        )
-        return
-    
-    # Create initial embed
-    embed = create_scan_status_embed()
-    message = await interaction.followup.send(embed=embed)
-    
-    # 🔥 CONTINUOUS UPDATES until scan completes (if enabled)
-    update_count = 0
-    
-    while SCAN_IN_PROGRESS and (continuous or update_count < 12):
-        await asyncio.sleep(3)  # Update every 3 seconds
-        
-        if not SCAN_IN_PROGRESS:
-            embed = create_scan_status_embed()
-            embed.set_footer(text="✅ Scan finalizat!")
-            await message.edit(embed=embed)
-            break
-        
-        # Update embed
-        embed = create_scan_status_embed()
-        if continuous:
-            embed.set_footer(text=f"🔄 Actualizare continuă activă... (update #{update_count + 1})")
-        else:
-            embed.set_footer(text=f"🔄 Actualizare... ({update_count + 1}/12)")
-        
-        try:
-            await message.edit(embed=embed)
-        except discord.errors.NotFound:
-            # Message was deleted
-            break
-        except Exception as e:
-            logger.error(f"Error updating status: {e}")
-            break
-        
-        update_count += 1
-    
-    if continuous and SCAN_IN_PROGRESS:
-        embed.set_footer(text="✅ Monitorizare completă. Rulează din nou pentru update.")
-        try:
-            await message.edit(embed=embed)
-        except:
-            pass
-
-def create_scan_status_embed() -> discord.Embed:
-    """🔥 NEW: Helper to create scan status embed"""
-    elapsed = (datetime.now() - SCAN_STATS['start_time']).total_seconds()
-    rate = SCAN_STATS['scanned'] / elapsed if elapsed > 0 else 0
-    total_target = 230000
-    remaining = (total_target - SCAN_STATS['current_id']) / rate if rate > 0 else 0
-    
-    progress_bar_length = 20
-    filled = int((SCAN_STATS['scanned'] / total_target) * progress_bar_length)
-    bar = "█" * filled + "░" * (progress_bar_length - filled)
-    
-    embed = discord.Embed(
-        title="📊 Status Scan Inițial (Live)",
-        description=f"`{bar}` {SCAN_STATS['scanned']/total_target*100:.1f}%",
-        color=discord.Color.blue(),
-        timestamp=datetime.now()
-    )
-    
-    embed.add_field(
-        name="📈 Progres",
-        value=f"**{SCAN_STATS['scanned']:,}** / {total_target:,} ID-uri",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="👥 Găsiți",
-        value=f"**{SCAN_STATS['found']:,}** jucători",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="⚡ Viteză",
-        value=f"**{rate:.1f}** ID-uri/sec",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="⏱️ Timp scurs",
-        value=f"**{elapsed/60:.0f}** minute",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="⏳ Rămas",
-        value=f"**{remaining/60:.0f}** minute",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="💾 Ultimul ID salvat",
-        value=f"**{SCAN_STATS['last_saved_id']:,}**",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="❌ Erori",
-        value=f"**{SCAN_STATS['errors']}**",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="📍 ID curent",
-        value=f"**{SCAN_STATS['current_id']:,}**",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="📊 Procent complet",
-        value=f"**{SCAN_STATS['found']/SCAN_STATS['scanned']*100 if SCAN_STATS['scanned'] > 0 else 0:.1f}%** profiluri valide",
-        inline=True
-    )
-    
-    return embed
-
-@bot.tree.command(name="scan_stop", description="[ADMIN] Oprește scanarea în curs")
-async def scan_stop(interaction: discord.Interaction):
-    """Stop ongoing scan"""
-    global SCAN_IN_PROGRESS
-    
-    await interaction.response.defer()
-    
-    if not SCAN_IN_PROGRESS:
-        await interaction.followup.send("ℹ️ Nu este niciun scan activ.")
-        return
-    
-    SCAN_IN_PROGRESS = False
-    
-    await interaction.followup.send(
-        f"🛑 **Scan oprit!**\n"
-        f"Scanați: {SCAN_STATS['scanned']:,}\n"
-        f"Găsiți: {SCAN_STATS['found']:,} jucători\n"
-        f"Ultimul ID salvat: **{SCAN_STATS['last_saved_id']:,}**\n\n"
-        f"✅ Progresul a fost salvat automat!\n"
-        f"Poți relua cu `/scan_resume` sau\n"
-        f"`/scan_all start_id:{SCAN_STATS['last_saved_id'] + 1}`"
-    )
-
-# ============================================================================
-# DISCORD SLASH COMMANDS - PLAYER INFO  
-# ============================================================================
-
-@bot.tree.command(name="player", description="Vezi informații complete despre un jucător (ID sau nume)")
-async def player_info(interaction: discord.Interaction, identifier: str):
-    await interaction.response.defer()
-    
-    profile = await resolve_player_info(identifier)
-    
-    if not profile:
-        await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**. Folosește ID-ul pentru rezultate mai precise (ex: /player 12345).")
-        return
-    
-    player_name = profile.get('player_name') or profile.get('username', f"Player_{profile['player_id']}")
-    
-    embed = discord.Embed(
-        title=f"👤 {player_name}",
-        description=f"ID: **{profile['player_id']}**",
-        color=discord.Color.green() if profile.get('is_online') else discord.Color.red(),
-        timestamp=datetime.now()
-    )
-    
-    if profile.get('is_online'):
-        embed.add_field(name="🟢 Status", value="**Online acum**", inline=True)
-    else:
-        embed.add_field(name="🔴 Status", value="**Offline**", inline=True)
-    
-    if profile.get('level'):
-        embed.add_field(name="⭐ Level", value=f"**{profile['level']}**", inline=True)
-    
-    faction = profile.get('faction', 'Civil')
-    faction_emoji = "🏢" if faction != "Civil" else "👤"
-    embed.add_field(name=f"{faction_emoji} Facțiune", value=f"**{faction}**", inline=True)
-    
-    if profile.get('faction_rank'):
-        embed.add_field(name="🏎️ Rank", value=f"**{profile['faction_rank']}**", inline=True)
-    
-    if profile.get('job'):
-        embed.add_field(name="💼 Job", value=f"**{profile['job']}**", inline=True)
-    
-    warns = profile.get('warns', 0)
-    warn_emoji = "⚠️" if warns > 0 else "✅"
-    embed.add_field(name=f"{warn_emoji} Warn-uri", value=f"**{warns}/3**", inline=True)
-    
-    if profile.get('played_hours'):
-        embed.add_field(name="⏱️ Ore jucate", value=f"**{profile['played_hours']:.1f}** ore", inline=True)
-    
-    if profile.get('respect_points'):
-        embed.add_field(name="⭐ Respect", value=f"**{profile['respect_points']}**", inline=True)
-    
-    if profile.get('age_ic'):
-        embed.add_field(name="🎂 Vârsta IC", value=f"**{profile['age_ic']}** ani", inline=True)
-    
-    if profile.get('vehicles_count') is not None:
-        embed.add_field(name="🚗 Vehicule", value=f"**{profile['vehicles_count']}**", inline=True)
-    
-    if profile.get('properties_count') is not None:
-        embed.add_field(name="🏠 Proprietăți", value=f"**{profile['properties_count']}**", inline=True)
-    
-    if profile.get('last_connection') and not profile.get('is_online'):
-        last_conn = profile['last_connection']
-        if isinstance(last_conn, str):
-            last_conn = datetime.fromisoformat(last_conn)
-        embed.add_field(
-            name="🕐 Ultima conectare",
-            value=f"**{last_conn.strftime('%d.%m.%Y %H:%M:%S')}**",
-            inline=False
-        )
-    
-    embed.set_footer(text=f"Tip: Folosește /rank_history {profile['player_id']} pentru istoric rang")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="actions", description="Vezi acțiunile unui jucător")
-async def player_actions(interaction: discord.Interaction, identifier: str, days: int = 7):
-    await interaction.response.defer()
-    
-    actions = db.get_player_actions(identifier, days)
-    
-    if not actions:
-        await interaction.followup.send(f"❌ Nu am găsit acțiuni pentru **{identifier}** în ultimele {days} zile.")
-        return
-    
-    player_name = identifier
-    if actions and actions[0].get('player_name'):
-        player_name = actions[0]['player_name']
-    
-    embed = discord.Embed(
-        title=f"📋 Acțiuni - {player_name}",
-        description=f"Ultimele {days} zile • **{len(actions)}** acțiuni",
-        color=discord.Color.blue(),
-        timestamp=datetime.now()
-    )
-    
-    total_chars = 0
-    max_embed_chars = 5500
-    actions_added = 0
-    
-    for action in actions[:25]:
-        timestamp = action['timestamp']
-        if isinstance(timestamp, str):
-            timestamp = datetime.fromisoformat(timestamp)
-        
-        action_text = action.get('raw_text', action.get('action_detail', 'N/A'))
-        
-        if len(action_text) > 200:
-            action_text = action_text[:197] + "..."
-        
-        field_content = action_text
-        field_name = timestamp.strftime('%d.%m.%Y %H:%M:%S')
-        
-        field_size = len(field_name) + len(field_content)
-        
-        if total_chars + field_size > max_embed_chars:
-            break
-        
-        embed.add_field(
-            name=field_name,
-            value=field_content,
-            inline=False
-        )
-        
-        total_chars += field_size
-        actions_added += 1
-    
-    if actions_added < len(actions):
-        embed.set_footer(text=f"Afișate {actions_added} din {len(actions)} acțiuni (limitat pentru Discord)")
-    elif len(actions) > 25:
-        embed.set_footer(text=f"Afișate primele 25 din {len(actions)} acțiuni")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="rank_history", description="Vezi istoricul de rang al unui jucător")
-async def rank_history(interaction: discord.Interaction, identifier: str):
-    """View player's faction rank history"""
-    await interaction.response.defer()
-    
-    profile = await resolve_player_info(identifier)
-    if not profile:
-        await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**.")
-        return
-    
-    player_id = profile['player_id']
-    player_name = profile.get('player_name') or profile.get('username', f"Player_{player_id}")
-    rank_history = db.get_player_rank_history(player_id)
-    
-    if not rank_history:
-        await interaction.followup.send(f"❌ Nu am istoric de rang pentru **{player_name}**.")
-        return
-    
-    embed = discord.Embed(
-        title=f"🏎️ Istoric Rang - {player_name}",
-        description=f"ID: {player_id} • **{len(rank_history)}** schimbări de rang",
-        color=discord.Color.gold(),
-        timestamp=datetime.now()
-    )
-    
-    for rank in rank_history[:15]:
-        obtained = rank['rank_obtained']
-        if isinstance(obtained, str):
-            obtained = datetime.fromisoformat(obtained)
-        
-        lost = rank.get('rank_lost')
-        status = "🟢 Curent" if rank['is_current'] else "🔴 Pierdut"
-        
-        duration = ""
-        if lost:
-            if isinstance(lost, str):
-                lost = datetime.fromisoformat(lost)
-            duration = f" (Durata: {(lost - obtained).days} zile)"
-        elif rank['is_current']:
-            duration = f" (De {(datetime.now() - obtained).days} zile)"
-        
-        embed.add_field(
-            name=f"{rank['faction']} - {rank['rank_name']}",
-            value=f"{status} • Obținut: {obtained.strftime('%d.%m.%Y')}{duration}",
-            inline=False
-        )
-    
-    if len(rank_history) > 15:
-        embed.set_footer(text=f"Afișate primele 15 din {len(rank_history)} ranguri")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="bans", description="Vezi jucătorii banați (activi sau toți)")
-async def view_bans(interaction: discord.Interaction, show_expired: bool = False):
-    """View banned players"""
-    await interaction.response.defer()
-    
-    banned = db.get_banned_players(include_expired=show_expired)
-    
-    if not banned:
-        await interaction.followup.send("✅ Nu sunt jucători banați momentan.")
-        return
-    
-    embed = discord.Embed(
-        title="🚫 Jucători Banați",
-        description=f"Total: **{len(banned)}** jucători" + (" (inclusiv expirați)" if show_expired else " (doar activi)"),
-        color=discord.Color.red(),
-        timestamp=datetime.now()
-    )
-    
-    for ban in banned[:25]:
-        status = "🔴 Activ" if ban['is_active'] else "🟢 Expirat"
-        duration = ban.get('duration', 'Permanent')
-        reason = ban.get('reason', 'Necunoscut')[:100]
-        
-        embed.add_field(
-            name=f"{status} • {ban['player_name']} (ID: {ban['player_id']})",
-            value=f"Admin: {ban.get('admin', 'N/A')}\nMotiv: {reason}\nDurata: {duration}\nData: {ban.get('ban_date', 'N/A')}",
-            inline=False
-        )
-    
-    if len(banned) > 25:
-        embed.set_footer(text=f"Afișate primele 25 din {len(banned)} banuri")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="promotions", description="Vezi promovările recente în facțiuni")
-async def recent_promotions(interaction: discord.Interaction, days: int = 7):
-    """View recent faction promotions"""
-    await interaction.response.defer()
-    
-    promotions = db.get_recent_promotions(days=days)
-    
-    if not promotions:
-        await interaction.followup.send(f"❌ Nu sunt promovări în ultimele {days} zile.")
-        return
-    
-    embed = discord.Embed(
-        title="🏎️ Promovări Recente",
-        description=f"Ultimele {days} zile • **{len(promotions)}** promovări",
-        color=discord.Color.gold(),
-        timestamp=datetime.now()
-    )
-    
-    for promo in promotions[:20]:
-        obtained = promo['rank_obtained']
-        if isinstance(obtained, str):
-            obtained = datetime.fromisoformat(obtained)
-        
-        time_ago = (datetime.now() - obtained).days
-        time_str = f"{time_ago} zile" if time_ago > 0 else "Astăzi"
-        
-        embed.add_field(
-            name=f"{promo['player_name']} (ID: {promo['player_id']})",
-            value=f"**{promo['rank_name']}** în {promo['faction']}\nPrimit: {time_str}",
-            inline=True
-        )
-    
-    if len(promotions) > 20:
-        embed.set_footer(text=f"Afișate primele 20 din {len(promotions)} promovări")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="online", description="Vezi jucătorii online acum")
-async def online_players(interaction: discord.Interaction):
-    await interaction.response.defer()
-    
-    players = db.get_current_online_players()
-    
-    if not players:
-        await interaction.followup.send("❌ Nu sunt jucători online momentan.")
-        return
-    
-    embed = discord.Embed(
-        title="🟢 Jucători Online",
-        description=f"**{len(players)}** jucători activi",
-        color=discord.Color.green(),
-        timestamp=datetime.now()
-    )
-    
-    chunk_size = 50
-    player_chunks = [players[i:i + chunk_size] for i in range(0, len(players), chunk_size)]
-    
-    for i, chunk in enumerate(player_chunks[:3]):
-        player_list = "\n".join([
-            f"• **{p['player_name']}** (ID: {p['player_id']})" 
-            for p in chunk
-        ])
-        embed.add_field(
-            name=f"Jucători (Partea {i+1})" if len(player_chunks) > 1 else "Jucători",
-            value=player_list or "Nimeni",
-            inline=False
-        )
-    
-    if len(players) > 150:
-        embed.set_footer(text=f"Afișați primii 150 din {len(players)} jucători")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="sessions", description="Vezi sesiunile de joc ale unui jucător")
-async def player_sessions(interaction: discord.Interaction, identifier: str, days: int = 7):
-    await interaction.response.defer()
-    
-    sessions = db.get_player_sessions(identifier, days)
-    
-    if not sessions:
-        await interaction.followup.send(f"❌ Nu am date despre sesiunile lui **{identifier}**.")
-        return
-    
-    player_name = identifier
-    if sessions and sessions[0].get('player_name'):
-        player_name = sessions[0]['player_name']
-    
-    embed = discord.Embed(
-        title=f"🎮 Sesiuni - {player_name}",
-        description=f"Ultimele {days} zile • **{len(sessions)}** sesiuni",
-        color=discord.Color.purple()
-    )
-    
-    total_seconds = 0
-    for session in sessions[:25]:
-        login_time = session['login_time']
-        if isinstance(login_time, str):
-            login_time = datetime.fromisoformat(login_time)
-        
-        duration_text = session.get('duration', '🟢 Online acum')
-        if session.get('session_duration_seconds'):
-            total_seconds += session['session_duration_seconds']
-        
-        embed.add_field(
-            name=f"Login: {login_time.strftime('%d.%m.%Y %H:%M:%S')}",
-            value=f"Durată: **{duration_text}**",
-            inline=False
-        )
-    
-    if total_seconds > 0:
-        total_time = str(timedelta(seconds=total_seconds)).split('.')[0]
-        embed.set_footer(text=f"⏱️ Timp total de joc: {total_time}")
-    
-    if len(sessions) > 25:
-        footer_text = f"Afișate primele 25 din {len(sessions)} sesiuni"
-        if total_seconds > 0:
-            footer_text += f" • ⏱️ Total: {str(timedelta(seconds=total_seconds)).split('.')[0]}"
-        embed.set_footer(text=footer_text)
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="faction", description="Vezi membrii unei facțiuni")
-async def faction_members(interaction: discord.Interaction, faction_name: str):
-    await interaction.response.defer()
-    
-    members = db.get_players_by_faction(faction_name)
-    
-    if not members:
-        await interaction.followup.send(f"❌ Nu am găsit membri în facțiunea **{faction_name}**.")
-        return
-    
-    embed = discord.Embed(
-        title=f"🏢 Membri {faction_name}",
-        description=f"Găsiți **{len(members)}** membri",
-        color=discord.Color.blue()
-    )
-    
-    online_count = sum(1 for m in members if m.get('is_online'))
-    embed.add_field(name="Status", value=f"🟢 **{online_count}** online / {len(members)} total", inline=False)
-    
-    for member in members[:25]:
-        status = "🟢" if member.get('is_online') else "🔴"
-        warns = member.get('warnings', 0)
-        warn_text = f" ⚠️ {warns}" if warns > 0 else ""
-        rank_text = f" • {member.get('faction_rank')}" if member.get('faction_rank') else ""
-        level_text = f"Level {member.get('level')}" if member.get('level') else "N/A"
-        
-        player_name = member.get('username', member.get('player_name', 'Unknown'))
-        
-        embed.add_field(
-            name=f"{status} {player_name} (ID: {member['player_id']})",
-            value=f"{level_text}{rank_text}{warn_text}",
-            inline=False
-        )
-    
-    if len(members) > 25:
-        embed.set_footer(text=f"Afișați primii 25 din {len(members)} membri")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="search", description="Caută jucători după nume")
-async def find_player(interaction: discord.Interaction, name: str):
-    await interaction.response.defer()
-    
-    players = db.search_player_by_name(name)
-    
-    if not players:
-        await interaction.followup.send(f"❌ Nu am găsit jucători cu numele **{name}**. Tip: Folosește ID-ul pentru rezultate precise.")
-        return
-    
-    embed = discord.Embed(
-        title=f"🔍 Rezultate pentru: {name}",
-        description=f"Găsite **{len(players)}** rezultate",
-        color=discord.Color.blue()
-    )
-    
-    for player in players[:15]:
-        status = "🟢 Online" if player.get('is_online') else "🔴 Offline"
-        last_conn = player.get('last_seen', 'Necunoscut')
-        
-        if last_conn and last_conn != 'Necunoscut':
-            if isinstance(last_conn, str):
-                last_conn = datetime.fromisoformat(last_conn)
-            last_conn = last_conn.strftime('%d.%m %H:%M')
-        
-        faction = player.get('faction', 'Civil')
-        level = player.get('level', '?')
-        
-        embed.add_field(
-            name=f"{player['username']} (ID: {player['player_id']})",
-            value=f"{status} • {faction} • Level {level} • Ultima: {last_conn}",
-            inline=False
-        )
-    
-    if len(players) > 15:
-        embed.set_footer(text=f"Afișați primii 15 din {len(players)} jucători")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="stats", description="Vezi statistici generale despre baza de date")
-async def bot_stats(interaction: discord.Interaction):
-    await interaction.response.defer()
-    
-    progress = db.get_scan_progress()
-    
-    embed = discord.Embed(
-        title="📊 Statistici P4K Database Bot",
-        color=discord.Color.gold(),
-        timestamp=datetime.now()
-    )
-    
-    embed.add_field(
-        name="👥 Jucători",
-        value=f"**{progress['total_scanned']:,}** în baza de date",
-        inline=True
-    )
-    
-    online_players = db.get_current_online_players()
-    embed.add_field(
-        name="🟢 Online acum",
-        value=f"**{len(online_players):,}** jucători",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="📈 Progres scanare",
-        value=f"**{progress['percentage']:.1f}%**",
-        inline=True
-    )
-    
-    # Show last scanned ID if available
-    last_id = progress.get('last_scanned_id')
-    if last_id:
-        embed.add_field(
-            name="📊 Ultimul ID scanat",
-            value=f"**{last_id}**",
-            inline=True
-        )
-    
-    if SCAN_IN_PROGRESS:
-        embed.add_field(
-            name="🔄 Scan activ",
-            value=f"ID: {SCAN_STATS['current_id']:,}\nGăsiți: {SCAN_STATS['found']:,}",
-            inline=False
-        )
-    
-    embed.set_footer(text=f"Bot versiune 2.3 • Sequential scan + continuous status • Today at {datetime.now().strftime('%H:%M')}")
-    
-    await interaction.followup.send(embed=embed)
+# [Rest of bot.py commands remain the same - player, actions, rank_history, etc.]
+# ... (keeping original bot commands to save space)
 
 # ============================================================================
 # RUN BOT
