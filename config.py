@@ -1,9 +1,30 @@
 """Configuration management with environment variables"""
 import os
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 class Config:
     """Centralized configuration with environment variable support"""
+    
+    @staticmethod
+    def _safe_int(key: str, default: int) -> int:
+        """Safely parse int from env var with fallback"""
+        try:
+            return int(os.getenv(key, str(default)))
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid {key} env var, using default: {default}")
+            return default
+    
+    @staticmethod
+    def _safe_float(key: str, default: float) -> float:
+        """Safely parse float from env var with fallback"""
+        try:
+            return float(os.getenv(key, str(default)))
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid {key} env var, using default: {default}")
+            return default
     
     # Discord
     DISCORD_TOKEN: str = os.getenv('DISCORD_TOKEN', '')
@@ -13,40 +34,40 @@ class Config:
         if uid.strip().isdigit()
     ]
     
-    # Database
-    DATABASE_PATH: str = os.getenv('DATABASE_PATH', '/data/pro4kings.db')
-    DATABASE_BACKUP_PATH: str = os.getenv('DATABASE_BACKUP_PATH', '/data/backups')
+    # Database (relative paths for portability)
+    DATABASE_PATH: str = os.getenv('DATABASE_PATH', 'data/pro4kings.db')
+    DATABASE_BACKUP_PATH: str = os.getenv('DATABASE_BACKUP_PATH', 'data/backups')
     
     # Scraper Settings
-    SCRAPER_MAX_CONCURRENT: int = int(os.getenv('SCRAPER_MAX_CONCURRENT', '5'))
-    SCRAPER_RATE_LIMIT: float = float(os.getenv('SCRAPER_RATE_LIMIT', '25.0'))  # requests/sec
-    SCRAPER_BURST_CAPACITY: int = int(os.getenv('SCRAPER_BURST_CAPACITY', '50'))
+    SCRAPER_MAX_CONCURRENT: int = _safe_int.__func__('SCRAPER_MAX_CONCURRENT', 5)
+    SCRAPER_RATE_LIMIT: float = _safe_float.__func__('SCRAPER_RATE_LIMIT', 25.0)  # requests/sec
+    SCRAPER_BURST_CAPACITY: int = _safe_int.__func__('SCRAPER_BURST_CAPACITY', 50)
     
     # Task Intervals (in seconds)
-    SCRAPE_ACTIONS_INTERVAL: int = int(os.getenv('SCRAPE_ACTIONS_INTERVAL', '30'))
-    SCRAPE_ONLINE_INTERVAL: int = int(os.getenv('SCRAPE_ONLINE_INTERVAL', '60'))
-    UPDATE_PROFILES_INTERVAL: int = int(os.getenv('UPDATE_PROFILES_INTERVAL', '120'))  # 2 min
-    CHECK_BANNED_INTERVAL: int = int(os.getenv('CHECK_BANNED_INTERVAL', '3600'))  # 1 hour
-    TASK_WATCHDOG_INTERVAL: int = int(os.getenv('TASK_WATCHDOG_INTERVAL', '300'))  # 5 min
+    SCRAPE_ACTIONS_INTERVAL: int = _safe_int.__func__('SCRAPE_ACTIONS_INTERVAL', 30)
+    SCRAPE_ONLINE_INTERVAL: int = _safe_int.__func__('SCRAPE_ONLINE_INTERVAL', 60)
+    UPDATE_PROFILES_INTERVAL: int = _safe_int.__func__('UPDATE_PROFILES_INTERVAL', 120)  # 2 min
+    CHECK_BANNED_INTERVAL: int = _safe_int.__func__('CHECK_BANNED_INTERVAL', 3600)  # 1 hour
+    TASK_WATCHDOG_INTERVAL: int = _safe_int.__func__('TASK_WATCHDOG_INTERVAL', 300)  # 5 min
     
     # Data Retention (in days)
-    ACTIONS_RETENTION_DAYS: int = int(os.getenv('ACTIONS_RETENTION_DAYS', '90'))  # Keep 3 months
-    LOGIN_EVENTS_RETENTION_DAYS: int = int(os.getenv('LOGIN_EVENTS_RETENTION_DAYS', '30'))  # Keep 1 month
-    PROFILE_HISTORY_RETENTION_DAYS: int = int(os.getenv('PROFILE_HISTORY_RETENTION_DAYS', '180'))  # Keep 6 months
+    ACTIONS_RETENTION_DAYS: int = _safe_int.__func__('ACTIONS_RETENTION_DAYS', 90)  # Keep 3 months
+    LOGIN_EVENTS_RETENTION_DAYS: int = _safe_int.__func__('LOGIN_EVENTS_RETENTION_DAYS', 30)  # Keep 1 month
+    PROFILE_HISTORY_RETENTION_DAYS: int = _safe_int.__func__('PROFILE_HISTORY_RETENTION_DAYS', 180)  # Keep 6 months
     
     # Batch Sizes
-    ACTIONS_FETCH_LIMIT: int = int(os.getenv('ACTIONS_FETCH_LIMIT', '200'))
-    PROFILES_UPDATE_BATCH: int = int(os.getenv('PROFILES_UPDATE_BATCH', '200'))
+    ACTIONS_FETCH_LIMIT: int = _safe_int.__func__('ACTIONS_FETCH_LIMIT', 200)
+    PROFILES_UPDATE_BATCH: int = _safe_int.__func__('PROFILES_UPDATE_BATCH', 200)
     
     # Logging
     LOG_FILE_PATH: str = os.getenv('LOG_FILE_PATH', 'bot.log')
     LOG_LEVEL: str = os.getenv('LOG_LEVEL', 'INFO')
-    LOG_MAX_BYTES: int = int(os.getenv('LOG_MAX_BYTES', '10485760'))  # 10 MB
-    LOG_BACKUP_COUNT: int = int(os.getenv('LOG_BACKUP_COUNT', '5'))  # Keep 5 old logs
+    LOG_MAX_BYTES: int = _safe_int.__func__('LOG_MAX_BYTES', 10485760)  # 10 MB
+    LOG_BACKUP_COUNT: int = _safe_int.__func__('LOG_BACKUP_COUNT', 5)  # Keep 5 old logs
     
     # Error Notifications
     ENABLE_ERROR_NOTIFICATIONS: bool = os.getenv('ENABLE_ERROR_NOTIFICATIONS', 'true').lower() == 'true'
-    ERROR_NOTIFICATION_COOLDOWN: int = int(os.getenv('ERROR_NOTIFICATION_COOLDOWN', '300'))  # 5 min between same error
+    ERROR_NOTIFICATION_COOLDOWN: int = _safe_int.__func__('ERROR_NOTIFICATION_COOLDOWN', 300)  # 5 min between same error
     
     # Health Checks
     TASK_HEALTH_CHECK_MULTIPLIER: dict = {
@@ -120,6 +141,4 @@ class Config:
 # Initialize and validate on import
 _issues = Config.validate()
 if _issues:
-    import logging
-    logger = logging.getLogger(__name__)
     logger.warning(f"Configuration issues: {', '.join(_issues)}")
