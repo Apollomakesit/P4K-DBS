@@ -1,11 +1,17 @@
 """Discord Slash Commands for Pro4Kings Database Bot"""
+
 import discord
 from discord import app_commands
 from datetime import datetime, timedelta
 import logging
 import asyncio
+import os
+from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Admin user IDs from environment
+ADMIN_USER_IDS = set(map(int, os.getenv('ADMIN_USER_IDS', '').split(','))) if os.getenv('ADMIN_USER_IDS') else set()
 
 # SCAN STATE - Shared across commands
 SCAN_STATE = {
@@ -18,25 +24,23 @@ SCAN_STATE = {
     'error_count': 0,
     'start_time': None,
     'scan_task': None,
-    'status_message': None,  # 🔥 NEW: Store message for auto-refresh
-    'status_task': None,  # 🔥 NEW: Auto-refresh task
+    'status_message': None,
+    'status_task': None,
     'scan_config': {
-        'batch_size': 20,  # 🔥 INCREASED: 10 → 20
-        'workers': 20,  # 🔥 INCREASED: 10 → 20
-        'wave_delay': 0.05  # 🔥 DECREASED: 0.2 → 0.05
+        'batch_size': 20,
+        'workers': 20,
+        'wave_delay': 0.05
     }
 }
 
-# 🔧 FIX: Add format_time helper function
+# Helper Functions
 def format_time_duration(seconds: float) -> str:
-    """Format seconds into human-readable time (e.g., '2h 34m' or '45m')"""
+    """Format seconds into human-readable time"""
     if seconds < 60:
         return f"{int(seconds)}s"
-    
     minutes = int(seconds // 60)
     hours = minutes // 60
     minutes = minutes % 60
-    
     if hours > 0:
         return f"{hours}h {minutes}m"
     else:
@@ -45,12 +49,12 @@ def format_time_duration(seconds: float) -> str:
 async def resolve_player_info(db, scraper, identifier):
     """Helper to get player info by ID or name"""
     import re
-    
+
     # Try as direct ID first
     if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
         player_id = str(identifier)
-        profile = db.get_player_by_exact_id(player_id)
-        
+        profile = await db.get_player_by_exact_id(player_id)
+
         if not profile:
             # Fetch from website
             profile_obj = await scraper.get_player_profile(player_id)
@@ -70,37 +74,36 @@ async def resolve_player_info(db, scraper, identifier):
                     'age_ic': profile_obj.age_ic,
                     'phone_number': profile_obj.phone_number
                 }
-                db.save_player_profile(profile)
-        
+                await db.save_player_profile(profile)
         return profile
-    
+
     # Try extracting ID from format "Name (123)"
     id_match = re.search(r'\((\d+)\)', str(identifier))
     if id_match:
         player_id = id_match.group(1)
         return await resolve_player_info(db, scraper, player_id)
-    
+
     # Search by name
-    players = db.search_player_by_name(identifier)
+    players = await db.search_player_by_name(identifier)
     return players[0] if players else None
 
 def format_last_seen(last_seen_dt):
     """Format last seen time in human readable format"""
     if not last_seen_dt:
         return "Never"
-    
+
     if isinstance(last_seen_dt, str):
         try:
             last_seen_dt = datetime.fromisoformat(last_seen_dt)
         except:
             return "Unknown"
-    
+
     if not isinstance(last_seen_dt, datetime):
         return "Unknown"
-    
+
     time_diff = datetime.now() - last_seen_dt
     seconds = int(time_diff.total_seconds())
-    
+
     if seconds < 60:
         return "Just now"
     elif seconds < 3600:
@@ -122,59 +125,54 @@ def format_last_seen(last_seen_dt):
             months = days // 30
             return f"{months}mo ago"
 
-# 🔥 NEW: Helper function to build status embed
 def build_status_embed():
-    """Build real-time status embed"""
+    """Build real-time status embed for scan"""
     current = SCAN_STATE['current_id']
     start = SCAN_STATE['start_id']
     end = SCAN_STATE['end_id']
     total = end - start + 1
     scanned = max(0, current - start)
     progress_pct = (scanned / total * 100) if total > 0 else 0
-    
+
     # Calculate speed and ETA
     if SCAN_STATE['start_time']:
         elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
         speed = scanned / elapsed if elapsed > 0 else 0
         remaining = total - scanned
         eta_seconds = remaining / speed if speed > 0 else 0
-        
         elapsed_str = format_time_duration(elapsed)
         eta_str = format_time_duration(eta_seconds) if eta_seconds > 0 else "Calculating..."
     else:
         speed = 0
         elapsed_str = "0s"
         eta_str = "Unknown"
-    
+
     status_emoji = "⏸️" if SCAN_STATE['is_paused'] else "🔄"
     status_text = "Paused" if SCAN_STATE['is_paused'] else "Running"
-    
+
     embed = discord.Embed(
         title=f"{status_emoji} Scan Status: {status_text}",
         description=f"**Progress:** {progress_pct:.1f}% ({scanned:,}/{total:,} IDs)\n**Range:** {start:,} → {end:,}",
         color=discord.Color.orange() if SCAN_STATE['is_paused'] else discord.Color.blue(),
         timestamp=datetime.now()
     )
-    
+
     embed.add_field(name="📍 Current ID", value=f"{current:,}", inline=True)
     embed.add_field(name="⚡ Speed", value=f"{speed:.2f} IDs/s", inline=True)
     embed.add_field(name="⏱️ ETA", value=eta_str, inline=True)
-    
     embed.add_field(name="✅ Found", value=f"{SCAN_STATE['found_count']:,}", inline=True)
     embed.add_field(name="❌ Errors", value=f"{SCAN_STATE['error_count']:,}", inline=True)
     embed.add_field(name="⏲️ Elapsed", value=elapsed_str, inline=True)
-    
+
     # Progress bar
     bar_length = 20
     filled = int(progress_pct / 100 * bar_length)
     bar = "█" * filled + "░" * (bar_length - filled)
     embed.add_field(name="Progress Bar", value=f"`{bar}` {progress_pct:.1f}%", inline=False)
-    
     embed.set_footer(text="🔄 Auto-refreshing every 3 seconds | Use /scan pause or /scan cancel")
-    
+
     return embed
 
-# 🔥 NEW: Auto-refresh status task
 async def auto_refresh_status():
     """Auto-refresh the status message every 3 seconds"""
     try:
@@ -184,14 +182,12 @@ async def auto_refresh_status():
                     embed = build_status_embed()
                     await SCAN_STATE['status_message'].edit(embed=embed)
                 except discord.NotFound:
-                    # Message was deleted
                     SCAN_STATE['status_message'] = None
                     break
                 except Exception as e:
                     logger.error(f"Error refreshing status: {e}")
-            
-            await asyncio.sleep(3)  # Refresh every 3 seconds
-        
+            await asyncio.sleep(3)
+
         # Scan complete - one final update
         if SCAN_STATE['status_message']:
             try:
@@ -201,27 +197,748 @@ async def auto_refresh_status():
                 await SCAN_STATE['status_message'].edit(embed=embed)
             except:
                 pass
-            
     except asyncio.CancelledError:
         pass
     except Exception as e:
         logger.error(f"Auto-refresh error: {e}", exc_info=True)
 
+def is_admin(user_id: int) -> bool:
+    """Check if user is admin"""
+    return user_id in ADMIN_USER_IDS
+
+
 def setup_commands(bot, db, scraper_getter):
     """Setup all slash commands for the bot
-    
+
     Args:
         bot: Discord bot instance
         db: Database instance
         scraper_getter: Async function that returns scraper instance (accepts max_concurrent param)
     """
-    
+
     # ========================================================================
-    # SCAN MANAGEMENT COMMANDS - OPTIMIZED VERSION
+    # GENERAL COMMANDS
     # ========================================================================
-    
+
+    @bot.tree.command(name="health", description="Check bot health status")
+    @app_commands.checks.cooldown(1, 10)
+    async def health_command(interaction: discord.Interaction):
+        """Check bot health status"""
+        await interaction.response.defer()
+
+        try:
+            from bot import TASK_HEALTH
+            import psutil
+            import tracemalloc
+
+            embed = discord.Embed(
+                title="🏋️ Bot Health Status",
+                color=discord.Color.blue(),
+                timestamp=datetime.now()
+            )
+
+            # Background Tasks
+            task_status = []
+            for task_name, health in TASK_HEALTH.items():
+                last_run = health.get('last_run')
+                error_count = health.get('error_count', 0)
+
+                if last_run:
+                    elapsed = (datetime.now() - last_run).total_seconds()
+                    status_icon = "🟢" if elapsed < 300 and error_count < 5 else "🟡" if elapsed < 600 else "🔴"
+                    task_status.append(f"{status_icon} **{task_name}**")
+                    task_status.append(f"   Last run: {format_time_duration(elapsed)} ago")
+                    task_status.append(f"   Errors: {error_count}")
+                else:
+                    task_status.append(f"⚪ **{task_name}**")
+                    task_status.append(f"   Not started yet")
+
+            embed.add_field(
+                name="Background Tasks",
+                value="\n".join(task_status) if task_status else "No tasks running",
+                inline=False
+            )
+
+            # Memory Usage
+            current, peak = tracemalloc.get_traced_memory()
+            mem_mb = current / 1024 / 1024
+            embed.add_field(
+                name="Memory Usage",
+                value=f"Current: {mem_mb:.1f} MB",
+                inline=True
+            )
+
+            # Database Status
+            stats = await db.get_database_stats()
+            if stats:
+                db_status = f"✅ Connected\n"
+                db_status += f"Actions: {stats.get('total_actions', 0):,}\n"
+                db_status += f"Players: {stats.get('total_players', 0):,}"
+                embed.add_field(name="Database", value=db_status, inline=True)
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in health command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    @bot.tree.command(name="config", description="Display current configuration")
+    @app_commands.checks.cooldown(1, 30)
+    async def config_command(interaction: discord.Interaction):
+        """Display current configuration"""
+        await interaction.response.defer()
+
+        try:
+            embed = discord.Embed(
+                title="⚙️ Bot Configuration",
+                color=discord.Color.blue(),
+                timestamp=datetime.now()
+            )
+
+            # Database
+            embed.add_field(
+                name="📁 Database",
+                value=f"Path: `{db.db_path}`",
+                inline=False
+            )
+
+            # Task Intervals
+            embed.add_field(
+                name="⏱️ Task Intervals",
+                value="• Actions: 30s\n• Online Players: 60s\n• Profile Updates: 2min\n• Ban Check: 1h",
+                inline=False
+            )
+
+            # Scraper Settings
+            scraper = await scraper_getter()
+            embed.add_field(
+                name="🌐 Scraper",
+                value=f"• Workers: {scraper.max_concurrent}\n• Rate: {scraper.rate_limiter.rate} req/s",
+                inline=False
+            )
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in config command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    @bot.tree.command(name="stats", description="Show database statistics")
+    @app_commands.checks.cooldown(1, 10)
+    async def stats_command(interaction: discord.Interaction):
+        """Show database statistics"""
+        await interaction.response.defer()
+
+        try:
+            stats = await db.get_database_stats()
+
+            embed = discord.Embed(
+                title="📊 Database Statistics",
+                color=discord.Color.blue(),
+                timestamp=datetime.now()
+            )
+
+            embed.add_field(name="👥 Total Players", value=f"{stats.get('total_players', 0):,}", inline=True)
+            embed.add_field(name="📝 Total Actions", value=f"{stats.get('total_actions', 0):,}", inline=True)
+            embed.add_field(name="🟢 Online Now", value=f"{stats.get('online_count', 0):,}", inline=True)
+
+            # Recent Activity
+            actions_24h = await db.get_actions_count_last_24h()
+            embed.add_field(name="📈 Actions (24h)", value=f"{actions_24h:,}", inline=True)
+
+            logins_today = await db.get_logins_count_today()
+            embed.add_field(name="🔑 Logins Today", value=f"{logins_today:,}", inline=True)
+
+            banned_count = await db.get_active_bans_count()
+            embed.add_field(name="🚫 Active Bans", value=f"{banned_count:,}", inline=True)
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in stats command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    # ========================================================================
+    # PLAYER COMMANDS
+    # ========================================================================
+
+    @bot.tree.command(name="player", description="Get complete player profile")
+    @app_commands.describe(identifier="Player ID or name")
+    @app_commands.checks.cooldown(1, 5)
+    async def player_command(interaction: discord.Interaction, identifier: str):
+        """Get complete player profile"""
+        await interaction.response.defer()
+
+        try:
+            scraper = await scraper_getter()
+            player = await resolve_player_info(db, scraper, identifier)
+
+            if not player:
+                await interaction.followup.send(f"🔍 **Not Found**\n\nNo player found with identifier: `{identifier}`")
+                return
+
+            # Build embed
+            status_icon = "🟢" if player.get('is_online') else "⚪"
+            embed = discord.Embed(
+                title=f"{status_icon} {player['username']}",
+                description=f"Player ID: `{player['player_id']}`",
+                color=discord.Color.green() if player.get('is_online') else discord.Color.greyple(),
+                timestamp=datetime.now()
+            )
+
+            # Status and Faction
+            status_value = "Online" if player.get('is_online') else f"Last seen: {format_last_seen(player.get('last_seen'))}"
+            embed.add_field(name="Status", value=status_value, inline=True)
+
+            faction = player.get('faction') or "No faction"
+            faction_rank = player.get('faction_rank') or ""
+            faction_display = f"{faction}\n{faction_rank}" if faction_rank else faction
+            embed.add_field(name="Faction", value=faction_display, inline=True)
+
+            # Stats
+            embed.add_field(name="Level", value=str(player.get('level', 'N/A')), inline=True)
+            embed.add_field(name="Respect", value=str(player.get('respect_points', 'N/A')), inline=True)
+            embed.add_field(name="Warnings", value=f"{player.get('warnings', 0)}/3", inline=True)
+            embed.add_field(name="Played Hours", value=str(player.get('played_hours', 'N/A')), inline=True)
+
+            # Additional Info
+            if player.get('job'):
+                embed.add_field(name="Job", value=player['job'], inline=True)
+            if player.get('phone_number'):
+                embed.add_field(name="Phone", value=player['phone_number'], inline=True)
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in player command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    @bot.tree.command(name="search", description="Search players by name")
+    @app_commands.describe(query="Search term (minimum 2 characters)")
+    @app_commands.checks.cooldown(1, 10)
+    async def search_command(interaction: discord.Interaction, query: str):
+        """Search players by name"""
+        await interaction.response.defer()
+
+        try:
+            if len(query) < 2:
+                await interaction.followup.send("❌ Search query must be at least 2 characters long!")
+                return
+
+            players = await db.search_player_by_name(query)
+
+            if not players:
+                await interaction.followup.send(f"🔍 **No Results**\n\nNo players found matching: `{query}`")
+                return
+
+            # Build results embed
+            embed = discord.Embed(
+                title=f"🔍 Search Results for '{query}'",
+                description=f"Found {len(players)} player(s)",
+                color=discord.Color.blue(),
+                timestamp=datetime.now()
+            )
+
+            # Show up to 10 results
+            for i, player in enumerate(players[:10]):
+                status = "🟢 Online" if player.get('is_online') else "⚪ Offline"
+                faction = player.get('faction') or "No faction"
+                level = player.get('level') or '?'
+
+                value = f"{status}\n├ Faction: {faction}\n└ Level: {level}"
+                embed.add_field(
+                    name=f"{player['username']} (ID: {player['player_id']})",
+                    value=value,
+                    inline=False
+                )
+
+            if len(players) > 10:
+                embed.set_footer(text=f"Showing 10 of {len(players)} results")
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in search command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    @bot.tree.command(name="actions", description="Get player's recent actions")
+    @app_commands.describe(
+        identifier="Player ID or name",
+        days="Days to look back (default: 7, max: 30)"
+    )
+    @app_commands.checks.cooldown(1, 30)
+    async def actions_command(interaction: discord.Interaction, identifier: str, days: Optional[int] = 7):
+        """Get player's recent actions"""
+        await interaction.response.defer()
+
+        try:
+            if days < 1 or days > 30:
+                await interaction.followup.send("❌ Days must be between 1 and 30!")
+                return
+
+            scraper = await scraper_getter()
+            player = await resolve_player_info(db, scraper, identifier)
+
+            if not player:
+                await interaction.followup.send(f"🔍 **Not Found**\n\nNo player found with identifier: `{identifier}`")
+                return
+
+            actions = await db.get_player_actions(player['player_id'], days)
+
+            if not actions:
+                await interaction.followup.send(f"📝 **No Actions**\n\n{player['username']} has no recorded actions in the last {days} days.")
+                return
+
+            # Build embed
+            embed = discord.Embed(
+                title=f"📝 Actions for {player['username']}",
+                description=f"Last {days} days • {len(actions)} total actions",
+                color=discord.Color.blue(),
+                timestamp=datetime.now()
+            )
+
+            # Show up to 10 most recent actions
+            for action in actions[:10]:
+                action_type = action.get('action_type', 'unknown')
+                detail = action.get('action_detail', 'No details')
+                timestamp = action.get('timestamp')
+
+                if isinstance(timestamp, str):
+                    timestamp = datetime.fromisoformat(timestamp)
+                time_str = timestamp.strftime('%Y-%m-%d %H:%M') if timestamp else 'Unknown'
+
+                value = f"├ Player: {player['username']} ({player['player_id']})\n└ Detail: {detail}"
+                embed.add_field(
+                    name=f"{action_type} - {time_str}",
+                    value=value,
+                    inline=False
+                )
+
+            if len(actions) > 10:
+                embed.set_footer(text=f"Showing 10 of {len(actions)} actions")
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in actions command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+
+    @bot.tree.command(name="sessions", description="View player's gaming sessions")
+    @app_commands.describe(
+        identifier="Player ID or name",
+        days="Days to look back (default: 7, max: 30)"
+    )
+    @app_commands.checks.cooldown(1, 10)
+    async def sessions_command(interaction: discord.Interaction, identifier: str, days: Optional[int] = 7):
+        """View player's gaming sessions"""
+        await interaction.response.defer()
+
+        try:
+            if days < 1 or days > 30:
+                await interaction.followup.send("❌ Days must be between 1 and 30!")
+                return
+
+            scraper = await scraper_getter()
+            player = await resolve_player_info(db, scraper, identifier)
+
+            if not player:
+                await interaction.followup.send(f"🔍 **Not Found**\n\nNo player found with identifier: `{identifier}`")
+                return
+
+            sessions = await db.get_player_sessions(player['player_id'], days)
+
+            if not sessions:
+                await interaction.followup.send(f"📊 **No Sessions**\n\n{player['username']} has no recorded sessions in the last {days} days.")
+                return
+
+            # Calculate total playtime
+            total_seconds = sum(s.get('session_duration_seconds', 0) for s in sessions if s.get('session_duration_seconds'))
+            total_hours = total_seconds / 3600
+
+            embed = discord.Embed(
+                title=f"📊 Sessions for {player['username']}",
+                description=f"Last {days} days • {len(sessions)} sessions • {total_hours:.1f}h total",
+                color=discord.Color.blue(),
+                timestamp=datetime.now()
+            )
+
+            # Show up to 10 most recent sessions
+            for session in sessions[:10]:
+                login_time = session.get('login_time')
+                logout_time = session.get('logout_time')
+                duration = session.get('session_duration_seconds', 0)
+
+                if isinstance(login_time, str):
+                    login_time = datetime.fromisoformat(login_time)
+                if isinstance(logout_time, str):
+                    logout_time = datetime.fromisoformat(logout_time)
+
+                login_str = login_time.strftime('%Y-%m-%d %H:%M') if login_time else 'Unknown'
+                logout_str = logout_time.strftime('%H:%M') if logout_time else 'Still online'
+                duration_str = format_time_duration(duration) if duration else 'N/A'
+
+                value = f"Login: {login_str}\nLogout: {logout_str}\nDuration: {duration_str}"
+                embed.add_field(name=f"Session {len(sessions) - sessions.index(session)}", value=value, inline=True)
+
+            if len(sessions) > 10:
+                embed.set_footer(text=f"Showing 10 of {len(sessions)} sessions")
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in sessions command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    @bot.tree.command(name="rank_history", description="View player's faction rank history")
+    @app_commands.describe(identifier="Player ID or name")
+    @app_commands.checks.cooldown(1, 10)
+    async def rank_history_command(interaction: discord.Interaction, identifier: str):
+        """View player's faction rank history"""
+        await interaction.response.defer()
+
+        try:
+            scraper = await scraper_getter()
+            player = await resolve_player_info(db, scraper, identifier)
+
+            if not player:
+                await interaction.followup.send(f"🔍 **Not Found**\n\nNo player found with identifier: `{identifier}`")
+                return
+
+            rank_history = await db.get_player_rank_history(player['player_id'])
+
+            if not rank_history:
+                await interaction.followup.send(f"📊 **No Rank History**\n\n{player['username']} has no recorded rank changes.")
+                return
+
+            embed = discord.Embed(
+                title=f"📊 Rank History for {player['username']}",
+                description=f"{len(rank_history)} rank change(s)",
+                color=discord.Color.blue(),
+                timestamp=datetime.now()
+            )
+
+            for rank in rank_history:
+                faction = rank.get('faction', 'Unknown')
+                rank_name = rank.get('rank_name', 'Unknown')
+                obtained = rank.get('rank_obtained')
+                lost = rank.get('rank_lost')
+                is_current = rank.get('is_current', False)
+
+                if isinstance(obtained, str):
+                    obtained = datetime.fromisoformat(obtained)
+                if isinstance(lost, str):
+                    lost = datetime.fromisoformat(lost)
+
+                obtained_str = obtained.strftime('%Y-%m-%d') if obtained else 'Unknown'
+
+                if is_current:
+                    duration_str = "Current"
+                elif lost:
+                    duration = (lost - obtained).days if obtained else 0
+                    duration_str = f"{duration} days"
+                else:
+                    duration_str = "Unknown"
+
+                value = f"Faction: {faction}\nObtained: {obtained_str}\nDuration: {duration_str}"
+                title = f"{'🟢 ' if is_current else ''}{rank_name}"
+                embed.add_field(name=title, value=value, inline=True)
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in rank_history command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    # ========================================================================
+    # FACTION COMMANDS
+    # ========================================================================
+
+    @bot.tree.command(name="faction", description="List all members of a faction")
+    @app_commands.describe(faction_name="Name of faction")
+    @app_commands.checks.cooldown(1, 30)
+    async def faction_command(interaction: discord.Interaction, faction_name: str):
+        """List all members of a faction"""
+        await interaction.response.defer()
+
+        try:
+            members = await db.get_faction_members(faction_name)
+
+            if not members:
+                await interaction.followup.send(f"🔍 **Not Found**\n\nNo members found in faction: `{faction_name}`")
+                return
+
+            embed = discord.Embed(
+                title=f"👥 {faction_name}",
+                description=f"{len(members)} member(s)",
+                color=discord.Color.blue(),
+                timestamp=datetime.now()
+            )
+
+            # Show up to 20 members
+            for member in members[:20]:
+                status = "🟢" if member.get('is_online') else "⚪"
+                rank = member.get('faction_rank', 'No rank')
+                level = member.get('level', '?')
+
+                value = f"{status} Level {level} • {rank}"
+                embed.add_field(
+                    name=f"{member['username']} ({member['player_id']})",
+                    value=value,
+                    inline=False
+                )
+
+            if len(members) > 20:
+                embed.set_footer(text=f"Showing 20 of {len(members)} members")
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in faction command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    @bot.tree.command(name="promotions", description="Recent faction promotions")
+    @app_commands.describe(days="Days to look back (default: 7, max: 30)")
+    @app_commands.checks.cooldown(1, 30)
+    async def promotions_command(interaction: discord.Interaction, days: Optional[int] = 7):
+        """Recent faction promotions"""
+        await interaction.response.defer()
+
+        try:
+            if days < 1 or days > 30:
+                await interaction.followup.send("❌ Days must be between 1 and 30!")
+                return
+
+            promotions = await db.get_recent_promotions(days)
+
+            if not promotions:
+                await interaction.followup.send(f"📊 **No Promotions**\n\nNo promotions recorded in the last {days} days.")
+                return
+
+            embed = discord.Embed(
+                title=f"📊 Recent Promotions",
+                description=f"Last {days} days • {len(promotions)} promotion(s)",
+                color=discord.Color.blue(),
+                timestamp=datetime.now()
+            )
+
+            for promo in promotions[:15]:
+                player_name = promo.get('player_name', 'Unknown')
+                old_rank = promo.get('old_rank', 'None')
+                new_rank = promo.get('new_rank', 'Unknown')
+                faction = promo.get('faction', 'Unknown')
+                timestamp = promo.get('timestamp')
+
+                if isinstance(timestamp, str):
+                    timestamp = datetime.fromisoformat(timestamp)
+                time_str = timestamp.strftime('%Y-%m-%d') if timestamp else 'Unknown'
+
+                value = f"{faction}\n{old_rank} → {new_rank}\n{time_str}"
+                embed.add_field(name=player_name, value=value, inline=True)
+
+            if len(promotions) > 15:
+                embed.set_footer(text=f"Showing 15 of {len(promotions)} promotions")
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in promotions command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    # ========================================================================
+    # BAN COMMANDS
+    # ========================================================================
+
+    @bot.tree.command(name="bans", description="View banned players")
+    @app_commands.describe(show_expired="Include expired bans (default: false)")
+    @app_commands.checks.cooldown(1, 30)
+    async def bans_command(interaction: discord.Interaction, show_expired: Optional[bool] = False):
+        """View banned players"""
+        await interaction.response.defer()
+
+        try:
+            bans = await db.get_banned_players(show_expired)
+
+            if not bans:
+                await interaction.followup.send("📊 **No Bans**\n\nNo banned players found.")
+                return
+
+            embed = discord.Embed(
+                title="🚫 Banned Players",
+                description=f"{len(bans)} ban(s)",
+                color=discord.Color.red(),
+                timestamp=datetime.now()
+            )
+
+            for ban in bans[:15]:
+                player_name = ban.get('player_name', 'Unknown')
+                reason = ban.get('reason', 'No reason')
+                admin = ban.get('admin', 'Unknown')
+                duration = ban.get('duration', 'Unknown')
+                is_active = ban.get('is_active', False)
+
+                status = "🔴 Active" if is_active else "⚪ Expired"
+                value = f"{status}\nReason: {reason}\nAdmin: {admin}\nDuration: {duration}"
+
+                embed.add_field(name=player_name, value=value, inline=False)
+
+            if len(bans) > 15:
+                embed.set_footer(text=f"Showing 15 of {len(bans)} bans")
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in bans command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    # ========================================================================
+    # ONLINE COMMAND
+    # ========================================================================
+
+    @bot.tree.command(name="online", description="Current online players")
+    @app_commands.checks.cooldown(1, 10)
+    async def online_command(interaction: discord.Interaction):
+        """Current online players"""
+        await interaction.response.defer()
+
+        try:
+            online_players = await db.get_current_online_players()
+
+            if not online_players:
+                await interaction.followup.send("📊 **No Players Online**")
+                return
+
+            embed = discord.Embed(
+                title="🟢 Online Players",
+                description=f"{len(online_players)} player(s) online",
+                color=discord.Color.green(),
+                timestamp=datetime.now()
+            )
+
+            # Show up to 20 players
+            for player in online_players[:20]:
+                player_name = player.get('player_name', 'Unknown')
+                player_id = player.get('player_id', '?')
+
+                embed.add_field(
+                    name=f"{player_name}",
+                    value=f"ID: {player_id}",
+                    inline=True
+                )
+
+            if len(online_players) > 20:
+                embed.set_footer(text=f"Showing 20 of {len(online_players)} players")
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in online command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+
+    # ========================================================================
+    # ADMIN COMMANDS
+    # ========================================================================
+
+    @bot.tree.command(name="cleanup_old_data", description="Remove old data based on retention policy (Admin only)")
+    @app_commands.describe(
+        dry_run="Preview without deleting (default: true)",
+        confirm="Must be true to actually delete (default: false)"
+    )
+    @app_commands.checks.cooldown(1, 300)
+    async def cleanup_command(interaction: discord.Interaction, dry_run: Optional[bool] = True, confirm: Optional[bool] = False):
+        """Remove old data based on retention policy"""
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("❌ **Access Denied**\n\nThis command is restricted to bot administrators.", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        try:
+            # Safety check
+            if not dry_run and not confirm:
+                await interaction.followup.send("⚠️ **Safety Check**\n\nTo actually delete data, you must set both `dry_run=false` AND `confirm=true`")
+                return
+
+            # Perform cleanup
+            results = await db.cleanup_old_data(dry_run=dry_run)
+
+            if dry_run:
+                embed = discord.Embed(
+                    title="🗑️ DRY RUN - Data Cleanup Preview",
+                    description="No data was deleted. Set `dry_run=false confirm=true` to execute.",
+                    color=discord.Color.orange(),
+                    timestamp=datetime.now()
+                )
+            else:
+                embed = discord.Embed(
+                    title="🗑️ CLEANUP EXECUTED - Data Cleanup",
+                    description="✅ Data has been deleted.",
+                    color=discord.Color.green(),
+                    timestamp=datetime.now()
+                )
+
+            # Show what would be/was deleted
+            for category, count in results.items():
+                embed.add_field(name=category, value=f"{count:,} records", inline=True)
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in cleanup command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    @bot.tree.command(name="backup_database", description="Create database backup (Admin only)")
+    @app_commands.checks.cooldown(1, 300)
+    async def backup_command(interaction: discord.Interaction):
+        """Create database backup"""
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("❌ **Access Denied**\n\nThis command is restricted to bot administrators.", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        try:
+            import shutil
+            from pathlib import Path
+
+            # Create backup
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_dir = Path('backups')
+            backup_dir.mkdir(exist_ok=True)
+
+            backup_path = backup_dir / f"pro4kings_backup_{timestamp}.db"
+            shutil.copy2(db.db_path, backup_path)
+
+            # Get file size
+            file_size = backup_path.stat().st_size / (1024 * 1024)  # MB
+
+            embed = discord.Embed(
+                title="✅ Database Backup Created",
+                color=discord.Color.green(),
+                timestamp=datetime.now()
+            )
+
+            embed.add_field(name="Backup File", value=backup_path.name, inline=False)
+            embed.add_field(name="Size", value=f"{file_size:.2f} MB", inline=True)
+            embed.add_field(name="Location", value=str(backup_dir), inline=True)
+
+            # Count total backups
+            backup_count = len(list(backup_dir.glob('*.db')))
+            embed.set_footer(text=f"Total backups: {backup_count}")
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in backup command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    # ========================================================================
+    # SCAN MANAGEMENT COMMANDS
+    # ========================================================================
+
     scan_group = app_commands.Group(name="scan", description="Database scan management")
-    
+
     @scan_group.command(name="start", description="Start initial database scan")
     @app_commands.describe(
         start_id="Starting player ID (default: 1)",
@@ -230,16 +947,16 @@ def setup_commands(bot, db, scraper_getter):
     async def scan_start(interaction: discord.Interaction, start_id: int = 1, end_id: int = 100000):
         """Start database scan"""
         await interaction.response.defer()
-        
+
         try:
             if SCAN_STATE['is_scanning']:
                 await interaction.followup.send("❌ **A scan is already in progress!** Use `/scan status` to check progress or `/scan cancel` to stop it.")
                 return
-            
+
             if start_id < 1 or end_id < start_id:
                 await interaction.followup.send("❌ **Invalid ID range!** Start must be >= 1 and end must be >= start.")
                 return
-            
+
             # Initialize scan state
             SCAN_STATE['is_scanning'] = True
             SCAN_STATE['is_paused'] = False
@@ -249,41 +966,38 @@ def setup_commands(bot, db, scraper_getter):
             SCAN_STATE['found_count'] = 0
             SCAN_STATE['error_count'] = 0
             SCAN_STATE['start_time'] = datetime.now()
-            SCAN_STATE['status_message'] = None  # Reset status message
-            
+            SCAN_STATE['status_message'] = None
+
             # Start scan task
             async def run_scan():
                 try:
-                    # 🔧 HOTFIX: Pass max_concurrent from config
                     workers = SCAN_STATE['scan_config']['workers']
                     logger.info(f"🔧 Initializing scraper with {workers} workers for scan...")
                     scraper = await scraper_getter(max_concurrent=workers)
                     logger.info(f"✅ Scraper ready with {scraper.max_concurrent} workers")
-                    
+
                     total_ids = end_id - start_id + 1
                     batch_size = SCAN_STATE['scan_config']['batch_size']
-                    
                     logger.info(f"🚀 Starting scan: IDs {start_id}-{end_id} ({total_ids:,} total)")
                     logger.info(f"⚙️ Config: batch={batch_size}, workers={SCAN_STATE['scan_config']['workers']}, delay={SCAN_STATE['scan_config']['wave_delay']}s")
-                    
+
                     for batch_start in range(start_id, end_id + 1, batch_size):
                         # Check if paused
                         while SCAN_STATE['is_paused']:
                             await asyncio.sleep(1)
-                        
+
                         # Check if cancelled
                         if not SCAN_STATE['is_scanning']:
                             logger.info("🛑 Scan cancelled by user")
                             break
-                        
+
                         batch_end = min(batch_start + batch_size - 1, end_id)
                         batch_ids = [str(i) for i in range(batch_start, batch_end + 1)]
-                        
                         SCAN_STATE['current_id'] = batch_start
-                        
+
                         # Scan batch
                         profiles = await scraper.batch_get_profiles(batch_ids)
-                        
+
                         # Save profiles
                         for profile in profiles:
                             try:
@@ -304,193 +1018,191 @@ def setup_commands(bot, db, scraper_getter):
                                     'vehicles_count': profile.vehicles_count,
                                     'properties_count': profile.properties_count
                                 }
-                                db.save_player_profile(profile_dict)
+                                await db.save_player_profile(profile_dict)
                                 SCAN_STATE['found_count'] += 1
                             except Exception as e:
                                 logger.error(f"Error saving profile {profile.player_id}: {e}")
                                 SCAN_STATE['error_count'] += 1
-                        
+
                         # Update progress in database
-                        db.update_scan_progress(batch_end, SCAN_STATE['found_count'], SCAN_STATE['error_count'])
-                        
+                        await db.update_scan_progress(batch_end, SCAN_STATE['found_count'], SCAN_STATE['error_count'])
+
                         # Log progress every 100 IDs
                         if batch_start % 100 == 0:
                             progress = ((batch_start - start_id) / total_ids) * 100
                             elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
                             speed = (batch_start - start_id) / elapsed if elapsed > 0 else 0
                             logger.info(f"📊 Progress: {progress:.1f}% | ID: {batch_start}/{end_id} | Speed: {speed:.2f} IDs/s | Found: {SCAN_STATE['found_count']} | Errors: {SCAN_STATE['error_count']}")
-                        
+
                         # Add configured wave delay
                         await asyncio.sleep(SCAN_STATE['scan_config']['wave_delay'])
-                    
+
                     # Scan complete
                     SCAN_STATE['is_scanning'] = False
                     elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
                     avg_speed = (end_id - start_id) / elapsed if elapsed > 0 else 0
                     logger.info(f"✅ Scan complete! Found {SCAN_STATE['found_count']:,} players in {format_time_duration(elapsed)} (avg: {avg_speed:.2f} IDs/s)")
-                    
+
                 except Exception as e:
                     logger.error(f"❌ Scan error: {e}", exc_info=True)
                     SCAN_STATE['is_scanning'] = False
                     SCAN_STATE['error_count'] += 1
-            
+
             # Start scan in background
             SCAN_STATE['scan_task'] = asyncio.create_task(run_scan())
-            
+
             # Wait a moment to ensure scan task started
             await asyncio.sleep(0.5)
-            
+
             # Verify scan is actually running
             if not SCAN_STATE['is_scanning']:
                 await interaction.followup.send("❌ **Failed to start scan!** Check bot logs for errors.")
                 return
-            
-            # 🔥 OPTIMIZED: Show expected speed based on current settings
+
+            # Show expected speed based on current settings
             config = SCAN_STATE['scan_config']
             expected_speed = config['batch_size'] / (config['wave_delay'] + 0.5)
-            
+
             embed = discord.Embed(
                 title="🚀 Database Scan Started",
                 description=f"Scanning player IDs {start_id:,} to {end_id:,}\n\nUse `/scan status` to monitor progress with **real-time auto-refresh**!",
                 color=discord.Color.green(),
                 timestamp=datetime.now()
             )
-            
+
             embed.add_field(name="⚙️ Batch Size", value=f"{config['batch_size']} IDs", inline=True)
             embed.add_field(name="👷 Workers", value=str(config['workers']), inline=True)
             embed.add_field(name="⏱️ Wave Delay", value=f"{config['wave_delay']}s", inline=True)
             embed.add_field(name="⚡ Expected Speed", value=f"~{expected_speed:.1f} IDs/s", inline=True)
             embed.add_field(name="📊 Total IDs", value=f"{end_id - start_id + 1:,}", inline=True)
-            
+
             eta = (end_id - start_id + 1) / expected_speed
             embed.add_field(name="🕐 Est. Time", value=format_time_duration(eta), inline=True)
-            
             embed.set_footer(text="Tip: Use /scanconfig to adjust speed settings")
-            
+
             await interaction.followup.send(embed=embed)
-            
+
         except Exception as e:
             logger.error(f"Error starting scan: {e}", exc_info=True)
             SCAN_STATE['is_scanning'] = False
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
-    
+
     @scan_group.command(name="status", description="View real-time scan progress (auto-refreshing)")
     async def scan_status(interaction: discord.Interaction):
         """Check scan status with auto-refresh"""
         await interaction.response.defer()
-        
+
         try:
             if not SCAN_STATE['is_scanning'] and not SCAN_STATE['is_paused']:
-                await interaction.followup.send("ℹ️ **No scan in progress.** Use `/scan start <start> <end>` to begin scanning.")
+                await interaction.followup.send("ℹ️ **No scan in progress.** Use `/scan start <start_id> <end_id>` to begin scanning.")
                 return
-            
+
             # Build and send initial embed
             embed = build_status_embed()
             message = await interaction.followup.send(embed=embed)
-            
-            # 🔥 NEW: Store message and start auto-refresh
+
+            # Store message and start auto-refresh
             SCAN_STATE['status_message'] = message
-            
+
             # Cancel old refresh task if exists
             if SCAN_STATE['status_task'] and not SCAN_STATE['status_task'].done():
                 SCAN_STATE['status_task'].cancel()
-            
+
             # Start new refresh task
             SCAN_STATE['status_task'] = asyncio.create_task(auto_refresh_status())
-            
+
         except Exception as e:
             logger.error(f"Error checking scan status: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
-    
+
     @scan_group.command(name="pause", description="Pause ongoing scan")
     async def scan_pause(interaction: discord.Interaction):
         """Pause scan"""
         await interaction.response.defer()
-        
+
         try:
             if not SCAN_STATE['is_scanning']:
                 await interaction.followup.send("❌ **No scan in progress!**")
                 return
-            
+
             if SCAN_STATE['is_paused']:
                 await interaction.followup.send("⏸️ **Scan is already paused!** Use `/scan resume` to continue.")
                 return
-            
+
             SCAN_STATE['is_paused'] = True
             await interaction.followup.send("⏸️ **Scan paused!** Use `/scan resume` to continue or `/scan cancel` to stop.")
-            
+
         except Exception as e:
             logger.error(f"Error pausing scan: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
-    
+
     @scan_group.command(name="resume", description="Resume paused scan")
     async def scan_resume(interaction: discord.Interaction):
         """Resume scan"""
         await interaction.response.defer()
-        
+
         try:
             if not SCAN_STATE['is_scanning']:
                 await interaction.followup.send("❌ **No scan in progress!**")
                 return
-            
+
             if not SCAN_STATE['is_paused']:
                 await interaction.followup.send("ℹ️ **Scan is already running!**")
                 return
-            
+
             SCAN_STATE['is_paused'] = False
             await interaction.followup.send("▶️ **Scan resumed!** Use `/scan status` to check progress.")
-            
+
         except Exception as e:
             logger.error(f"Error resuming scan: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
-    
+
     @scan_group.command(name="cancel", description="Cancel ongoing scan")
     async def scan_cancel(interaction: discord.Interaction):
         """Cancel scan"""
         await interaction.response.defer()
-        
+
         try:
             if not SCAN_STATE['is_scanning']:
                 await interaction.followup.send("❌ **No scan in progress!**")
                 return
-            
+
             SCAN_STATE['is_scanning'] = False
             SCAN_STATE['is_paused'] = False
-            
+
             if SCAN_STATE['scan_task']:
                 SCAN_STATE['scan_task'].cancel()
-            
             if SCAN_STATE['status_task']:
                 SCAN_STATE['status_task'].cancel()
-            
+
             embed = discord.Embed(
                 title="🛑 Scan Cancelled",
                 description=f"Scan stopped at ID {SCAN_STATE['current_id']:,}",
                 color=discord.Color.red(),
                 timestamp=datetime.now()
             )
-            
+
             embed.add_field(name="✅ Found", value=f"{SCAN_STATE['found_count']:,} players", inline=True)
             embed.add_field(name="❌ Errors", value=f"{SCAN_STATE['error_count']:,}", inline=True)
-            
+
             if SCAN_STATE['start_time']:
                 elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
                 scanned = SCAN_STATE['current_id'] - SCAN_STATE['start_id']
                 avg_speed = scanned / elapsed if elapsed > 0 else 0
                 embed.add_field(name="⚡ Avg Speed", value=f"{avg_speed:.2f} IDs/s", inline=True)
-            
+
             await interaction.followup.send(embed=embed)
-            
+
         except Exception as e:
             logger.error(f"Error cancelling scan: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
-    
+
     bot.tree.add_command(scan_group)
-    
+
     # ========================================================================
-    # SCAN CONFIG COMMAND - OPTIMIZED VERSION
+    # SCAN CONFIG COMMAND
     # ========================================================================
-    
+
     @bot.tree.command(name="scanconfig", description="View or modify scan configuration")
     @app_commands.describe(
         batch_size="Number of IDs to scan per batch (5-30)",
@@ -499,17 +1211,17 @@ def setup_commands(bot, db, scraper_getter):
     )
     async def scanconfig_command(
         interaction: discord.Interaction,
-        batch_size: int = None,
-        workers: int = None,
-        wave_delay: float = None
+        batch_size: Optional[int] = None,
+        workers: Optional[int] = None,
+        wave_delay: Optional[float] = None
     ):
         """Configure scan parameters"""
         await interaction.response.defer()
-        
+
         try:
             # Update config if parameters provided
             updated = []
-            
+
             if batch_size is not None:
                 if 5 <= batch_size <= 30:
                     SCAN_STATE['scan_config']['batch_size'] = batch_size
@@ -517,7 +1229,7 @@ def setup_commands(bot, db, scraper_getter):
                 else:
                     await interaction.followup.send("❌ **Batch size must be between 5 and 30!**")
                     return
-            
+
             if workers is not None:
                 if 5 <= workers <= 30:
                     SCAN_STATE['scan_config']['workers'] = workers
@@ -525,7 +1237,7 @@ def setup_commands(bot, db, scraper_getter):
                 else:
                     await interaction.followup.send("❌ **Workers must be between 5 and 30!**")
                     return
-            
+
             if wave_delay is not None:
                 if 0.01 <= wave_delay <= 1.0:
                     SCAN_STATE['scan_config']['wave_delay'] = wave_delay
@@ -533,29 +1245,28 @@ def setup_commands(bot, db, scraper_getter):
                 else:
                     await interaction.followup.send("❌ **Wave delay must be between 0.01 and 1.0 seconds!**")
                     return
-            
+
             # Create embed
             embed = discord.Embed(
                 title="⚙️ Scan Configuration",
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
-            
+
             if updated:
                 embed.description = "**✅ Updated:** " + ", ".join(updated) + "\n\n⚠️ *Changes apply to NEW scans only!*"
             else:
                 embed.description = "**Current Configuration:**"
-            
+
             config = SCAN_STATE['scan_config']
-            
             embed.add_field(name="📦 Batch Size", value=f"{config['batch_size']} IDs", inline=True)
             embed.add_field(name="👷 Workers", value=f"{config['workers']} concurrent", inline=True)
             embed.add_field(name="⏱️ Wave Delay", value=f"{config['wave_delay']}s", inline=True)
-            
+
             # Calculate expected speed
             expected_speed = config['batch_size'] / (config['wave_delay'] + 0.5)
             embed.add_field(name="⚡ Expected Speed", value=f"~{expected_speed:.1f} IDs/second", inline=True)
-            
+
             # Add preset recommendations
             embed.add_field(
                 name="📋 Recommended Presets",
@@ -566,16 +1277,13 @@ def setup_commands(bot, db, scraper_getter):
                 ),
                 inline=False
             )
-            
+
             embed.set_footer(text="💡 Higher = faster but may trigger rate limits | Lower = safer but slower")
-            
+
             await interaction.followup.send(embed=embed)
-            
+
         except Exception as e:
             logger.error(f"Error in scanconfig command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
-    
-    # ... (keep all existing commands: player, actions, online, search, banned, stats, factions) ...
-    # [Previous command code remains unchanged]
-    
-    logger.info("✅ All slash commands registered (including /scan and /scanconfig)")
+
+    logger.info("✅ All slash commands registered successfully")
