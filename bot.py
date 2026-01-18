@@ -14,6 +14,7 @@ import psutil
 
 # 🔥 Import all slash commands
 from commands import setup_commands
+from faction_commands import setup_faction_commands
 
 # 🔥 Start memory tracking
 tracemalloc.start()
@@ -158,7 +159,10 @@ async def get_or_recreate_scraper():
 # ============================================================================
 
 setup_commands(bot, db, get_or_recreate_scraper)
-logger.info("✅ Slash commands module loaded")
+logger.info("✅ Core commands module loaded")
+
+setup_faction_commands(bot, db)
+logger.info("✅ Faction commands module loaded")
 
 @bot.event
 async def on_ready():
