@@ -4,35 +4,40 @@ from typing import List, Dict, Optional, Tuple
 import logging
 from contextlib import contextmanager
 import time
+import asyncio
 
 logger = logging.getLogger(__name__)
 
 class Database:
-    """Enhanced database manager with retry logic and better error handling"""
+    """Enhanced async-safe database manager with non-blocking operations"""
     
     def __init__(self, db_path: str = 'pro4kings.db'):
         self.db_path = db_path
-        self.init_database()
+        # Initialize database synchronously on startup (before event loop)
+        self._init_database_sync()
     
     @contextmanager
     def get_connection(self, retries: int = 3):
         """
         Context manager for database connections with retry logic
         
-        Handles SQLITE_BUSY errors by retrying with exponential backoff
+        ⚠️ WARNING: This is SYNCHRONOUS and should only be called via asyncio.to_thread()
         """
         conn = None
         last_error = None
         
         for attempt in range(retries):
             try:
-                # 🔥 Increased timeout from 30s to 60s
-                conn = sqlite3.connect(self.db_path, timeout=60.0)
+                # 🔥 Reduced timeout from 60s to 10s to prevent long blocks
+                conn = sqlite3.connect(self.db_path, timeout=10.0)
                 conn.row_factory = sqlite3.Row
                 
                 # 🔥 Enable WAL mode for better concurrency
                 conn.execute('PRAGMA journal_mode=WAL')
-                conn.execute('PRAGMA busy_timeout=60000')  # 60 second busy timeout
+                conn.execute('PRAGMA busy_timeout=10000')  # 10 second busy timeout
+                # 🔥 Optimize for speed
+                conn.execute('PRAGMA synchronous=NORMAL')  # Faster than FULL, still safe with WAL
+                conn.execute('PRAGMA cache_size=-64000')  # 64MB cache
                 
                 yield conn
                 conn.commit()
@@ -42,7 +47,7 @@ class Database:
                 last_error = e
                 if 'database is locked' in str(e).lower() or 'busy' in str(e).lower():
                     if attempt < retries - 1:
-                        wait_time = (2 ** attempt) * 0.1  # 0.1s, 0.2s, 0.4s
+                        wait_time = (2 ** attempt) * 0.05  # 50ms, 100ms, 200ms
                         logger.warning(f"Database busy, retrying in {wait_time}s... (attempt {attempt + 1}/{retries})")
                         time.sleep(wait_time)
                         continue
@@ -69,8 +74,8 @@ class Database:
             logger.error(f"Database operation failed after {retries} attempts: {last_error}")
             raise last_error
     
-    def init_database(self):
-        """Initialize database with complete schema"""
+    def _init_database_sync(self):
+        """Initialize database (called synchronously on startup)"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -208,7 +213,7 @@ class Database:
                     )
                 ''')
                 
-                # 🔧 FIX: Updated scan_progress table schema
+                # Scan progress table
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS scan_progress (
                         id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -255,8 +260,10 @@ class Database:
             logger.error(f"❌ Database initialization failed: {e}", exc_info=True)
             raise
     
-    def save_player_profile(self, profile) -> None:
-        """Save/update player profile with change tracking"""
+    # 🔥 ASYNC WRAPPER: All public methods now use asyncio.to_thread()
+    
+    def _save_player_profile_sync(self, profile) -> None:
+        """SYNC: Save/update player profile with change tracking"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -268,10 +275,7 @@ class Database:
                 ''', (profile['player_id'],))
                 old_data = cursor.fetchone()
                 
-                # 🔧 FIX: Handle both 'player_name' and 'username' field names
                 username = profile.get('player_name') or profile.get('username', f"Player_{profile['player_id']}")
-                
-                # 🔧 FIX: Handle both 'last_connection' and 'last_seen' field names
                 last_seen = profile.get('last_connection') or profile.get('last_seen', datetime.now())
                 
                 # Insert or update player
@@ -324,9 +328,7 @@ class Database:
                     new_faction = profile.get('faction')
                     new_rank = profile.get('faction_rank')
                     
-                    # Check if rank changed
                     if (old_faction != new_faction or old_rank != new_rank) and new_rank:
-                        # Mark old rank as lost
                         if old_rank:
                             cursor.execute('''
                                 UPDATE rank_history
@@ -334,7 +336,6 @@ class Database:
                                 WHERE player_id = ? AND is_current = TRUE
                             ''', (profile['player_id'],))
                         
-                        # Add new rank
                         cursor.execute('''
                             INSERT INTO rank_history (player_id, faction, rank_name, is_current)
                             VALUES (?, ?, ?, TRUE)
@@ -360,9 +361,12 @@ class Database:
             logger.error(f"Error saving player profile {profile.get('player_id')}: {e}", exc_info=True)
             raise
     
-    # 🔧 FIX: Added missing update_scan_progress method
-    def update_scan_progress(self, last_id: int, found: int, errors: int) -> None:
-        """Update scan progress in database (called by scan command)"""
+    async def save_player_profile(self, profile) -> None:
+        """ASYNC: Save/update player profile"""
+        await asyncio.to_thread(self._save_player_profile_sync, profile)
+    
+    def _update_scan_progress_sync(self, last_id: int, found: int, errors: int) -> None:
+        """SYNC: Update scan progress"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -378,9 +382,12 @@ class Database:
         except Exception as e:
             logger.error(f"Error updating scan progress: {e}", exc_info=True)
     
-    # 🔧 FIX: Added missing get_scan_progress method for scan command
-    def get_scan_progress(self) -> Optional[Dict]:
-        """Get last scan progress"""
+    async def update_scan_progress(self, last_id: int, found: int, errors: int) -> None:
+        """ASYNC: Update scan progress"""
+        await asyncio.to_thread(self._update_scan_progress_sync, last_id, found, errors)
+    
+    def _get_scan_progress_sync(self) -> Optional[Dict]:
+        """SYNC: Get scan progress"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -391,8 +398,12 @@ class Database:
             logger.error(f"Error getting scan progress: {e}")
             return None
     
-    def save_action(self, action) -> None:
-        """Save action to database (stored indefinitely)"""
+    async def get_scan_progress(self) -> Optional[Dict]:
+        """ASYNC: Get scan progress"""
+        return await asyncio.to_thread(self._get_scan_progress_sync)
+    
+    def _save_action_sync(self, action) -> None:
+        """SYNC: Save action to database"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -434,8 +445,12 @@ class Database:
             logger.error(f"Error saving action: {e}", exc_info=True)
             raise
     
-    def action_exists(self, timestamp: datetime, text: str) -> bool:
-        """Check if action already exists"""
+    async def save_action(self, action) -> None:
+        """ASYNC: Save action to database"""
+        await asyncio.to_thread(self._save_action_sync, action)
+    
+    def _action_exists_sync(self, timestamp: datetime, text: str) -> bool:
+        """SYNC: Check if action exists"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -449,8 +464,12 @@ class Database:
             logger.error(f"Error checking action existence: {e}")
             return False
     
-    def save_login(self, player_id: str, player_name: str, timestamp: datetime) -> None:
-        """Save login event"""
+    async def action_exists(self, timestamp: datetime, text: str) -> bool:
+        """ASYNC: Check if action exists"""
+        return await asyncio.to_thread(self._action_exists_sync, timestamp, text)
+    
+    def _save_login_sync(self, player_id: str, player_name: str, timestamp: datetime) -> None:
+        """SYNC: Save login event"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -459,86 +478,91 @@ class Database:
             ''', (player_id, player_name, timestamp))
             conn.commit()
     
-    def save_logout(self, player_id: str, timestamp: datetime) -> None:
-        """Save logout event with session duration calculation"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Find last login
-            cursor.execute('''
-                SELECT timestamp FROM login_events
-                WHERE player_id = ? AND event_type = 'login'
-                ORDER BY timestamp DESC LIMIT 1
-            ''', (player_id,))
-            
-            last_login = cursor.fetchone()
-            session_duration = None
-            
-            if last_login:
-                login_time = datetime.fromisoformat(last_login[0])
-                session_duration = int((timestamp - login_time).total_seconds())
-            
-            cursor.execute('''
-                INSERT INTO login_events (player_id, event_type, timestamp, session_duration_seconds)
-                VALUES (?, 'logout', ?, ?)
-            ''', (player_id, timestamp, session_duration))
-            
-            conn.commit()
+    async def save_login(self, player_id: str, player_name: str, timestamp: datetime) -> None:
+        """ASYNC: Save login event"""
+        await asyncio.to_thread(self._save_login_sync, player_id, player_name, timestamp)
     
-    def update_online_players(self, online_players: List[Dict]) -> None:
-        """Update online players snapshot"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            for player in online_players:
-                cursor.execute('''
-                    INSERT INTO online_players (player_id, player_name, detected_online_at)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(player_id) DO UPDATE SET
-                        detected_online_at = CURRENT_TIMESTAMP
-                ''', (player['player_id'], player['player_name']))
-                
-                # Also update main players table
-                cursor.execute('''
-                    UPDATE players
-                    SET is_online = TRUE, last_seen = CURRENT_TIMESTAMP
-                    WHERE player_id = ?
-                ''', (player['player_id'],))
-            
-            conn.commit()
-    
-    def mark_player_for_update(self, player_id: str, player_name: str) -> None:
-        """Mark player for priority profile update
-        
-        🔥 FIX: Handles UNIQUE constraint on username properly
-        """
+    def _save_logout_sync(self, player_id: str, timestamp: datetime) -> None:
+        """🔥 OPTIMIZED SYNC: Save logout event - FAST VERSION"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # 🔥 Check if username already exists with a different player_id
+                # 🔥 Single optimized query with subquery instead of separate SELECT
+                cursor.execute('''
+                    INSERT INTO login_events (player_id, event_type, timestamp, session_duration_seconds)
+                    SELECT ?, 'logout', ?,
+                           CAST((julianday(?) - julianday(timestamp)) * 86400 AS INTEGER)
+                    FROM login_events
+                    WHERE player_id = ? AND event_type = 'login'
+                    ORDER BY timestamp DESC LIMIT 1
+                ''', (player_id, timestamp, timestamp, player_id))
+                
+                # If no matching login found, insert without duration
+                if cursor.rowcount == 0:
+                    cursor.execute('''
+                        INSERT INTO login_events (player_id, event_type, timestamp, session_duration_seconds)
+                        VALUES (?, 'logout', ?, NULL)
+                    ''', (player_id, timestamp))
+                
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Error saving logout for {player_id}: {e}", exc_info=True)
+            # Don't raise - this shouldn't crash the bot
+    
+    async def save_logout(self, player_id: str, timestamp: datetime) -> None:
+        """🔥 ASYNC: Save logout event - NON-BLOCKING"""
+        await asyncio.to_thread(self._save_logout_sync, player_id, timestamp)
+    
+    def _update_online_players_sync(self, online_players: List[Dict]) -> None:
+        """🔥 OPTIMIZED SYNC: Batch update online players"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # 🔥 Batch insert with executemany for speed
+                cursor.executemany('''
+                    INSERT INTO online_players (player_id, player_name, detected_online_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(player_id) DO UPDATE SET
+                        detected_online_at = CURRENT_TIMESTAMP
+                ''', [(p['player_id'], p['player_name']) for p in online_players])
+                
+                # 🔥 Batch update players table
+                cursor.executemany('''
+                    UPDATE players
+                    SET is_online = TRUE, last_seen = CURRENT_TIMESTAMP
+                    WHERE player_id = ?
+                ''', [(p['player_id'],) for p in online_players])
+                
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Error updating online players: {e}", exc_info=True)
+    
+    async def update_online_players(self, online_players: List[Dict]) -> None:
+        """ASYNC: Update online players snapshot"""
+        await asyncio.to_thread(self._update_online_players_sync, online_players)
+    
+    def _mark_player_for_update_sync(self, player_id: str, player_name: str) -> None:
+        """SYNC: Mark player for priority update"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
                 cursor.execute('SELECT player_id FROM players WHERE username = ?', (player_name,))
                 existing = cursor.fetchone()
                 
                 if existing and existing[0] != player_id:
-                    # Username exists with different ID - this happens when:
-                    # 1. Player was deleted and recreated with same name
-                    # 2. Data inconsistency on server
-                    # 3. Username was changed but we found both versions
                     logger.warning(
                         f"Username '{player_name}' exists with different ID. "
-                        f"Existing: {existing[0]}, New: {player_id}. "
-                        f"Updating existing record."
+                        f"Existing: {existing[0]}, New: {player_id}. Updating existing record."
                     )
-                    
-                    # Update the existing record's player_id to the new one
                     cursor.execute('''
                         UPDATE players 
                         SET player_id = ?, priority_update = TRUE
                         WHERE username = ?
                     ''', (player_id, player_name))
                 else:
-                    # Safe to insert or update
                     cursor.execute('''
                         INSERT INTO players (player_id, username, priority_update)
                         VALUES (?, ?, TRUE)
@@ -550,20 +574,19 @@ class Database:
                 conn.commit()
                 
         except sqlite3.IntegrityError as e:
-            # Additional safety net
             if 'UNIQUE constraint' in str(e):
-                logger.error(
-                    f"UNIQUE constraint error for player_id={player_id}, username={player_name}. "
-                    f"Skipping this update. Error: {e}"
-                )
+                logger.error(f"UNIQUE constraint error for player_id={player_id}, username={player_name}. Skipping.")
             else:
                 raise
         except Exception as e:
             logger.error(f"Error in mark_player_for_update: {e}", exc_info=True)
-            raise
     
-    def get_players_pending_update(self, limit: int = 100) -> List[str]:
-        """Get player IDs pending profile update"""
+    async def mark_player_for_update(self, player_id: str, player_name: str) -> None:
+        """ASYNC: Mark player for priority update"""
+        await asyncio.to_thread(self._mark_player_for_update_sync, player_id, player_name)
+    
+    def _get_players_pending_update_sync(self, limit: int = 100) -> List[str]:
+        """SYNC: Get player IDs pending update"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -574,8 +597,12 @@ class Database:
             ''', (limit,))
             return [row[0] for row in cursor.fetchall()]
     
-    def reset_player_priority(self, player_id: str) -> None:
-        """Reset player priority after update"""
+    async def get_players_pending_update(self, limit: int = 100) -> List[str]:
+        """ASYNC: Get player IDs pending update"""
+        return await asyncio.to_thread(self._get_players_pending_update_sync, limit)
+    
+    def _reset_player_priority_sync(self, player_id: str) -> None:
+        """SYNC: Reset player priority"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -585,8 +612,12 @@ class Database:
             ''', (player_id,))
             conn.commit()
     
-    def get_current_online_players(self) -> List[Dict]:
-        """Get currently online players"""
+    async def reset_player_priority(self, player_id: str) -> None:
+        """ASYNC: Reset player priority"""
+        await asyncio.to_thread(self._reset_player_priority_sync, player_id)
+    
+    def _get_current_online_players_sync(self) -> List[Dict]:
+        """SYNC: Get currently online players"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -596,13 +627,16 @@ class Database:
             ''')
             return [dict(row) for row in cursor.fetchall()]
     
-    def get_player_actions(self, identifier: str, days: int = 7) -> List[Dict]:
-        """Get player actions - STRICT filtering"""
+    async def get_current_online_players(self) -> List[Dict]:
+        """ASYNC: Get currently online players"""
+        return await asyncio.to_thread(self._get_current_online_players_sync)
+    
+    def _get_player_actions_sync(self, identifier: str, days: int = 7) -> List[Dict]:
+        """SYNC: Get player actions"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cutoff = datetime.now() - timedelta(days=days)
             
-            # Strategy 1: Try exact player_id match first
             if identifier.isdigit():
                 cursor.execute('''
                     SELECT * FROM actions
@@ -614,7 +648,6 @@ class Database:
                 if results:
                     return [dict(row) for row in results]
             
-            # Strategy 2: Fuzzy name match
             cursor.execute('''
                 SELECT * FROM actions
                 WHERE player_name LIKE ? AND timestamp >= ?
@@ -623,8 +656,12 @@ class Database:
             
             return [dict(row) for row in cursor.fetchall()]
     
-    def save_banned_player(self, ban_data: Dict) -> None:
-        """Save banned player info"""
+    async def get_player_actions(self, identifier: str, days: int = 7) -> List[Dict]:
+        """ASYNC: Get player actions"""
+        return await asyncio.to_thread(self._get_player_actions_sync, identifier, days)
+    
+    def _save_banned_player_sync(self, ban_data: Dict) -> None:
+        """SYNC: Save banned player"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -647,16 +684,18 @@ class Database:
             ))
             conn.commit()
     
-    def mark_expired_bans(self, current_ban_ids: set) -> None:
-        """Mark bans as expired if they're no longer on the banlist"""
+    async def save_banned_player(self, ban_data: Dict) -> None:
+        """ASYNC: Save banned player"""
+        await asyncio.to_thread(self._save_banned_player_sync, ban_data)
+    
+    def _mark_expired_bans_sync(self, current_ban_ids: set) -> None:
+        """SYNC: Mark expired bans"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Get all active bans
             cursor.execute('SELECT player_id FROM banned_players WHERE is_active = TRUE')
             active_bans = {row[0] for row in cursor.fetchall()}
             
-            # Find expired bans
             expired = active_bans - current_ban_ids
             
             if expired:
@@ -670,8 +709,12 @@ class Database:
                 conn.commit()
                 logger.info(f"Marked {len(expired)} bans as expired")
     
-    def get_banned_players(self, include_expired: bool = False) -> List[Dict]:
-        """Get banned players"""
+    async def mark_expired_bans(self, current_ban_ids: set) -> None:
+        """ASYNC: Mark expired bans"""
+        await asyncio.to_thread(self._mark_expired_bans_sync, current_ban_ids)
+    
+    def _get_banned_players_sync(self, include_expired: bool = False) -> List[Dict]:
+        """SYNC: Get banned players"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
@@ -682,16 +725,24 @@ class Database:
             
             return [dict(row) for row in cursor.fetchall()]
     
-    def get_player_by_exact_id(self, player_id: str) -> Optional[Dict]:
-        """Get player by exact ID match"""
+    async def get_banned_players(self, include_expired: bool = False) -> List[Dict]:
+        """ASYNC: Get banned players"""
+        return await asyncio.to_thread(self._get_banned_players_sync, include_expired)
+    
+    def _get_player_by_exact_id_sync(self, player_id: str) -> Optional[Dict]:
+        """SYNC: Get player by exact ID"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM players WHERE player_id = ?', (player_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
     
-    def search_player_by_name(self, name: str) -> List[Dict]:
-        """Search players by name"""
+    async def get_player_by_exact_id(self, player_id: str) -> Optional[Dict]:
+        """ASYNC: Get player by exact ID"""
+        return await asyncio.to_thread(self._get_player_by_exact_id_sync, player_id)
+    
+    def _search_player_by_name_sync(self, name: str) -> List[Dict]:
+        """SYNC: Search players by name"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -703,8 +754,12 @@ class Database:
             
             return [dict(row) for row in cursor.fetchall()]
     
-    def save_scan_progress(self, last_player_id: str, total_scanned: int, completed: bool = False) -> None:
-        """Save scan progress (legacy method for compatibility)"""
+    async def search_player_by_name(self, name: str) -> List[Dict]:
+        """ASYNC: Search players by name"""
+        return await asyncio.to_thread(self._search_player_by_name_sync, name)
+    
+    def _save_scan_progress_sync(self, last_player_id: str, total_scanned: int, completed: bool = False) -> None:
+        """SYNC: Save scan progress (legacy)"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -715,3 +770,7 @@ class Database:
                 WHERE id = 1
             ''', (last_player_id, total_scanned))
             conn.commit()
+    
+    async def save_scan_progress(self, last_player_id: str, total_scanned: int, completed: bool = False) -> None:
+        """ASYNC: Save scan progress (legacy)"""
+        await asyncio.to_thread(self._save_scan_progress_sync, last_player_id, total_scanned, completed)
