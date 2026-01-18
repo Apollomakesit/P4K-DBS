@@ -18,10 +18,12 @@ SCAN_STATE = {
     'error_count': 0,
     'start_time': None,
     'scan_task': None,
+    'status_message': None,  # 🔥 NEW: Store message for auto-refresh
+    'status_task': None,  # 🔥 NEW: Auto-refresh task
     'scan_config': {
-        'batch_size': 10,
-        'workers': 10,
-        'wave_delay': 0.2
+        'batch_size': 20,  # 🔥 INCREASED: 10 → 20
+        'workers': 20,  # 🔥 INCREASED: 10 → 20
+        'wave_delay': 0.05  # 🔥 DECREASED: 0.2 → 0.05
     }
 }
 
@@ -120,6 +122,91 @@ def format_last_seen(last_seen_dt):
             months = days // 30
             return f"{months}mo ago"
 
+# 🔥 NEW: Helper function to build status embed
+def build_status_embed():
+    """Build real-time status embed"""
+    current = SCAN_STATE['current_id']
+    start = SCAN_STATE['start_id']
+    end = SCAN_STATE['end_id']
+    total = end - start + 1
+    scanned = max(0, current - start)
+    progress_pct = (scanned / total * 100) if total > 0 else 0
+    
+    # Calculate speed and ETA
+    if SCAN_STATE['start_time']:
+        elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
+        speed = scanned / elapsed if elapsed > 0 else 0
+        remaining = total - scanned
+        eta_seconds = remaining / speed if speed > 0 else 0
+        
+        elapsed_str = format_time_duration(elapsed)
+        eta_str = format_time_duration(eta_seconds) if eta_seconds > 0 else "Calculating..."
+    else:
+        speed = 0
+        elapsed_str = "0s"
+        eta_str = "Unknown"
+    
+    status_emoji = "⏸️" if SCAN_STATE['is_paused'] else "🔄"
+    status_text = "Paused" if SCAN_STATE['is_paused'] else "Running"
+    
+    embed = discord.Embed(
+        title=f"{status_emoji} Scan Status: {status_text}",
+        description=f"**Progress:** {progress_pct:.1f}% ({scanned:,}/{total:,} IDs)\n**Range:** {start:,} → {end:,}",
+        color=discord.Color.orange() if SCAN_STATE['is_paused'] else discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    
+    embed.add_field(name="📍 Current ID", value=f"{current:,}", inline=True)
+    embed.add_field(name="⚡ Speed", value=f"{speed:.2f} IDs/s", inline=True)
+    embed.add_field(name="⏱️ ETA", value=eta_str, inline=True)
+    
+    embed.add_field(name="✅ Found", value=f"{SCAN_STATE['found_count']:,}", inline=True)
+    embed.add_field(name="❌ Errors", value=f"{SCAN_STATE['error_count']:,}", inline=True)
+    embed.add_field(name="⏲️ Elapsed", value=elapsed_str, inline=True)
+    
+    # Progress bar
+    bar_length = 20
+    filled = int(progress_pct / 100 * bar_length)
+    bar = "█" * filled + "░" * (bar_length - filled)
+    embed.add_field(name="Progress Bar", value=f"`{bar}` {progress_pct:.1f}%", inline=False)
+    
+    embed.set_footer(text="🔄 Auto-refreshing every 3 seconds | Use /scan pause or /scan cancel")
+    
+    return embed
+
+# 🔥 NEW: Auto-refresh status task
+async def auto_refresh_status():
+    """Auto-refresh the status message every 3 seconds"""
+    try:
+        while SCAN_STATE['is_scanning']:
+            if SCAN_STATE['status_message']:
+                try:
+                    embed = build_status_embed()
+                    await SCAN_STATE['status_message'].edit(embed=embed)
+                except discord.NotFound:
+                    # Message was deleted
+                    SCAN_STATE['status_message'] = None
+                    break
+                except Exception as e:
+                    logger.error(f"Error refreshing status: {e}")
+            
+            await asyncio.sleep(3)  # Refresh every 3 seconds
+        
+        # Scan complete - one final update
+        if SCAN_STATE['status_message']:
+            try:
+                embed = build_status_embed()
+                embed.set_footer(text="✅ Scan complete!")
+                embed.color = discord.Color.green()
+                await SCAN_STATE['status_message'].edit(embed=embed)
+            except:
+                pass
+            
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.error(f"Auto-refresh error: {e}", exc_info=True)
+
 def setup_commands(bot, db, scraper_getter):
     """Setup all slash commands for the bot
     
@@ -130,7 +217,7 @@ def setup_commands(bot, db, scraper_getter):
     """
     
     # ========================================================================
-    # SCAN MANAGEMENT COMMANDS - FIXED VERSION
+    # SCAN MANAGEMENT COMMANDS - OPTIMIZED VERSION
     # ========================================================================
     
     scan_group = app_commands.Group(name="scan", description="Database scan management")
@@ -162,6 +249,7 @@ def setup_commands(bot, db, scraper_getter):
             SCAN_STATE['found_count'] = 0
             SCAN_STATE['error_count'] = 0
             SCAN_STATE['start_time'] = datetime.now()
+            SCAN_STATE['status_message'] = None  # Reset status message
             
             # Start scan task
             async def run_scan():
@@ -172,6 +260,7 @@ def setup_commands(bot, db, scraper_getter):
                     batch_size = SCAN_STATE['scan_config']['batch_size']
                     
                     logger.info(f"🚀 Starting scan: IDs {start_id}-{end_id} ({total_ids:,} total)")
+                    logger.info(f"⚙️ Config: batch={batch_size}, workers={SCAN_STATE['scan_config']['workers']}, delay={SCAN_STATE['scan_config']['wave_delay']}s")
                     
                     for batch_start in range(start_id, end_id + 1, batch_size):
                         # Check if paused
@@ -223,14 +312,18 @@ def setup_commands(bot, db, scraper_getter):
                         # Log progress every 100 IDs
                         if batch_start % 100 == 0:
                             progress = ((batch_start - start_id) / total_ids) * 100
-                            logger.info(f"📊 Scan progress: {progress:.1f}% ({batch_start}/{end_id}) - Found: {SCAN_STATE['found_count']}, Errors: {SCAN_STATE['error_count']}")
+                            elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
+                            speed = (batch_start - start_id) / elapsed if elapsed > 0 else 0
+                            logger.info(f"📊 Progress: {progress:.1f}% | ID: {batch_start}/{end_id} | Speed: {speed:.2f} IDs/s | Found: {SCAN_STATE['found_count']} | Errors: {SCAN_STATE['error_count']}")
                         
-                        # 🔧 FIX: Add configured wave delay
+                        # Add configured wave delay
                         await asyncio.sleep(SCAN_STATE['scan_config']['wave_delay'])
                     
                     # Scan complete
                     SCAN_STATE['is_scanning'] = False
-                    logger.info(f"✅ Scan complete! Found {SCAN_STATE['found_count']:,} players, {SCAN_STATE['error_count']:,} errors")
+                    elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
+                    avg_speed = (end_id - start_id) / elapsed if elapsed > 0 else 0
+                    logger.info(f"✅ Scan complete! Found {SCAN_STATE['found_count']:,} players in {format_time_duration(elapsed)} (avg: {avg_speed:.2f} IDs/s)")
                     
                 except Exception as e:
                     logger.error(f"❌ Scan error: {e}", exc_info=True)
@@ -240,16 +333,27 @@ def setup_commands(bot, db, scraper_getter):
             # Start scan in background
             SCAN_STATE['scan_task'] = asyncio.create_task(run_scan())
             
+            # 🔥 OPTIMIZED: Show expected speed based on current settings
+            config = SCAN_STATE['scan_config']
+            expected_speed = config['batch_size'] / (config['wave_delay'] + 0.5)
+            
             embed = discord.Embed(
                 title="🚀 Database Scan Started",
-                description=f"Scanning player IDs {start_id:,} to {end_id:,}\n\nUse `/scan status` to monitor progress.",
+                description=f"Scanning player IDs {start_id:,} to {end_id:,}\n\nUse `/scan status` to monitor progress with **real-time auto-refresh**!",
                 color=discord.Color.green(),
                 timestamp=datetime.now()
             )
             
-            embed.add_field(name="Batch Size", value=str(SCAN_STATE['scan_config']['batch_size']), inline=True)
-            embed.add_field(name="Workers", value=str(SCAN_STATE['scan_config']['workers']), inline=True)
-            embed.add_field(name="Expected Speed", value="4-6 IDs/second", inline=True)
+            embed.add_field(name="⚙️ Batch Size", value=f"{config['batch_size']} IDs", inline=True)
+            embed.add_field(name="👷 Workers", value=str(config['workers']), inline=True)
+            embed.add_field(name="⏱️ Wave Delay", value=f"{config['wave_delay']}s", inline=True)
+            embed.add_field(name="⚡ Expected Speed", value=f"~{expected_speed:.1f} IDs/s", inline=True)
+            embed.add_field(name="📊 Total IDs", value=f"{end_id - start_id + 1:,}", inline=True)
+            
+            eta = (end_id - start_id + 1) / expected_speed
+            embed.add_field(name="🕐 Est. Time", value=format_time_duration(eta), inline=True)
+            
+            embed.set_footer(text="Tip: Use /scanconfig to adjust speed settings")
             
             await interaction.followup.send(embed=embed)
             
@@ -257,9 +361,9 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error starting scan: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
     
-    @scan_group.command(name="status", description="View current scan progress")
+    @scan_group.command(name="status", description="View real-time scan progress (auto-refreshing)")
     async def scan_status(interaction: discord.Interaction):
-        """Check scan status"""
+        """Check scan status with auto-refresh"""
         await interaction.response.defer()
         
         try:
@@ -267,55 +371,19 @@ def setup_commands(bot, db, scraper_getter):
                 await interaction.followup.send("ℹ️ **No scan in progress.** Use `/scan start <start> <end>` to begin scanning.")
                 return
             
-            current = SCAN_STATE['current_id']
-            start = SCAN_STATE['start_id']
-            end = SCAN_STATE['end_id']
-            total = end - start + 1
-            scanned = current - start
-            progress_pct = (scanned / total * 100) if total > 0 else 0
+            # Build and send initial embed
+            embed = build_status_embed()
+            message = await interaction.followup.send(embed=embed)
             
-            # 🔧 FIX: Calculate speed and ETA with proper time formatting
-            if SCAN_STATE['start_time']:
-                elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
-                speed = scanned / elapsed if elapsed > 0 else 0
-                remaining = total - scanned
-                eta_seconds = remaining / speed if speed > 0 else 0
-                
-                # 🔧 FIX: Use format_time_duration instead of timedelta str
-                elapsed_str = format_time_duration(elapsed)
-                eta_str = format_time_duration(eta_seconds) if eta_seconds > 0 else "Calculating..."
-            else:
-                speed = 0
-                elapsed_str = "0s"
-                eta_str = "Unknown"
+            # 🔥 NEW: Store message and start auto-refresh
+            SCAN_STATE['status_message'] = message
             
-            status_emoji = "⏸️" if SCAN_STATE['is_paused'] else "🔄"
-            status_text = "Paused" if SCAN_STATE['is_paused'] else "Running"
+            # Cancel old refresh task if exists
+            if SCAN_STATE['status_task'] and not SCAN_STATE['status_task'].done():
+                SCAN_STATE['status_task'].cancel()
             
-            embed = discord.Embed(
-                title=f"{status_emoji} Scan Status: {status_text}",
-                description=f"**Progress:** {progress_pct:.1f}% ({scanned:,}/{total:,} IDs)\n**Range:** {start:,} → {end:,}",
-                color=discord.Color.orange() if SCAN_STATE['is_paused'] else discord.Color.blue(),
-                timestamp=datetime.now()
-            )
-            
-            embed.add_field(name="📍 Current ID", value=f"{current:,}", inline=True)
-            embed.add_field(name="⚡ Speed", value=f"{speed:.1f} IDs/s", inline=True)
-            embed.add_field(name="⏱️ ETA", value=eta_str, inline=True)
-            
-            embed.add_field(name="✅ Found", value=f"{SCAN_STATE['found_count']:,}", inline=True)
-            embed.add_field(name="❌ Errors", value=f"{SCAN_STATE['error_count']:,}", inline=True)
-            embed.add_field(name="⏲️ Elapsed", value=elapsed_str, inline=True)
-            
-            # Progress bar
-            bar_length = 20
-            filled = int(progress_pct / 100 * bar_length)
-            bar = "█" * filled + "░" * (bar_length - filled)
-            embed.add_field(name="Progress Bar", value=f"`{bar}` {progress_pct:.1f}%", inline=False)
-            
-            embed.set_footer(text="Use /scan pause to pause or /scan cancel to stop")
-            
-            await interaction.followup.send(embed=embed)
+            # Start new refresh task
+            SCAN_STATE['status_task'] = asyncio.create_task(auto_refresh_status())
             
         except Exception as e:
             logger.error(f"Error checking scan status: {e}", exc_info=True)
@@ -379,6 +447,9 @@ def setup_commands(bot, db, scraper_getter):
             if SCAN_STATE['scan_task']:
                 SCAN_STATE['scan_task'].cancel()
             
+            if SCAN_STATE['status_task']:
+                SCAN_STATE['status_task'].cancel()
+            
             embed = discord.Embed(
                 title="🛑 Scan Cancelled",
                 description=f"Scan stopped at ID {SCAN_STATE['current_id']:,}",
@@ -386,8 +457,14 @@ def setup_commands(bot, db, scraper_getter):
                 timestamp=datetime.now()
             )
             
-            embed.add_field(name="Found", value=f"{SCAN_STATE['found_count']:,} players", inline=True)
-            embed.add_field(name="Errors", value=f"{SCAN_STATE['error_count']:,}", inline=True)
+            embed.add_field(name="✅ Found", value=f"{SCAN_STATE['found_count']:,} players", inline=True)
+            embed.add_field(name="❌ Errors", value=f"{SCAN_STATE['error_count']:,}", inline=True)
+            
+            if SCAN_STATE['start_time']:
+                elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
+                scanned = SCAN_STATE['current_id'] - SCAN_STATE['start_id']
+                avg_speed = scanned / elapsed if elapsed > 0 else 0
+                embed.add_field(name="⚡ Avg Speed", value=f"{avg_speed:.2f} IDs/s", inline=True)
             
             await interaction.followup.send(embed=embed)
             
@@ -398,14 +475,14 @@ def setup_commands(bot, db, scraper_getter):
     bot.tree.add_command(scan_group)
     
     # ========================================================================
-    # SCAN CONFIG COMMAND - FIXED VERSION
+    # SCAN CONFIG COMMAND - OPTIMIZED VERSION
     # ========================================================================
     
     @bot.tree.command(name="scanconfig", description="View or modify scan configuration")
     @app_commands.describe(
-        batch_size="Number of IDs to scan per batch (1-20)",
-        workers="Number of concurrent workers (1-20)",
-        wave_delay="Delay between batches in seconds (0.1-2.0)"
+        batch_size="Number of IDs to scan per batch (5-30)",
+        workers="Number of concurrent workers (5-30)",
+        wave_delay="Delay between batches in seconds (0.01-1.0)"
     )
     async def scanconfig_command(
         interaction: discord.Interaction,
@@ -421,27 +498,27 @@ def setup_commands(bot, db, scraper_getter):
             updated = []
             
             if batch_size is not None:
-                if 1 <= batch_size <= 20:
+                if 5 <= batch_size <= 30:
                     SCAN_STATE['scan_config']['batch_size'] = batch_size
                     updated.append(f"Batch size: {batch_size}")
                 else:
-                    await interaction.followup.send("❌ **Batch size must be between 1 and 20!**")
+                    await interaction.followup.send("❌ **Batch size must be between 5 and 30!**")
                     return
             
             if workers is not None:
-                if 1 <= workers <= 20:
+                if 5 <= workers <= 30:
                     SCAN_STATE['scan_config']['workers'] = workers
                     updated.append(f"Workers: {workers}")
                 else:
-                    await interaction.followup.send("❌ **Workers must be between 1 and 20!**")
+                    await interaction.followup.send("❌ **Workers must be between 5 and 30!**")
                     return
             
             if wave_delay is not None:
-                if 0.1 <= wave_delay <= 2.0:
+                if 0.01 <= wave_delay <= 1.0:
                     SCAN_STATE['scan_config']['wave_delay'] = wave_delay
                     updated.append(f"Wave delay: {wave_delay}s")
                 else:
-                    await interaction.followup.send("❌ **Wave delay must be between 0.1 and 2.0 seconds!**")
+                    await interaction.followup.send("❌ **Wave delay must be between 0.01 and 1.0 seconds!**")
                     return
             
             # Create embed
@@ -452,19 +529,32 @@ def setup_commands(bot, db, scraper_getter):
             )
             
             if updated:
-                embed.description = "**Updated:** " + ", ".join(updated)
+                embed.description = "**✅ Updated:** " + ", ".join(updated) + "\n\n⚠️ *Changes apply to NEW scans only!*"
+            else:
+                embed.description = "**Current Configuration:**"
             
             config = SCAN_STATE['scan_config']
             
-            embed.add_field(name="Batch Size", value=f"{config['batch_size']} IDs per batch", inline=True)
-            embed.add_field(name="Workers", value=f"{config['workers']} concurrent", inline=True)
-            embed.add_field(name="Wave Delay", value=f"{config['wave_delay']}s", inline=True)
+            embed.add_field(name="📦 Batch Size", value=f"{config['batch_size']} IDs", inline=True)
+            embed.add_field(name="👷 Workers", value=f"{config['workers']} concurrent", inline=True)
+            embed.add_field(name="⏱️ Wave Delay", value=f"{config['wave_delay']}s", inline=True)
             
-            # 🔧 FIX: More accurate expected speed calculation
+            # Calculate expected speed
             expected_speed = config['batch_size'] / (config['wave_delay'] + 0.5)
-            embed.add_field(name="Expected Speed", value=f"~{expected_speed:.1f} IDs/second", inline=True)
+            embed.add_field(name="⚡ Expected Speed", value=f"~{expected_speed:.1f} IDs/second", inline=True)
             
-            embed.set_footer(text="These settings apply to new scans only")
+            # Add preset recommendations
+            embed.add_field(
+                name="📋 Recommended Presets",
+                value=(
+                    "**Aggressive:** `/scanconfig 20 20 0.05` (~30 IDs/s)\n"
+                    "**Balanced:** `/scanconfig 15 15 0.1` (~20 IDs/s)\n"
+                    "**Safe:** `/scanconfig 10 10 0.2` (~10 IDs/s)"
+                ),
+                inline=False
+            )
+            
+            embed.set_footer(text="💡 Higher = faster but may trigger rate limits | Lower = safer but slower")
             
             await interaction.followup.send(embed=embed)
             
