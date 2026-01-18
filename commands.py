@@ -213,7 +213,7 @@ def setup_commands(bot, db, scraper_getter):
     Args:
         bot: Discord bot instance
         db: Database instance
-        scraper_getter: Async function that returns scraper instance
+        scraper_getter: Async function that returns scraper instance (accepts max_concurrent param)
     """
     
     # ========================================================================
@@ -254,7 +254,11 @@ def setup_commands(bot, db, scraper_getter):
             # Start scan task
             async def run_scan():
                 try:
-                    scraper = await scraper_getter()
+                    # 🔧 HOTFIX: Pass max_concurrent from config
+                    workers = SCAN_STATE['scan_config']['workers']
+                    logger.info(f"🔧 Initializing scraper with {workers} workers for scan...")
+                    scraper = await scraper_getter(max_concurrent=workers)
+                    logger.info(f"✅ Scraper ready with {scraper.max_concurrent} workers")
                     
                     total_ids = end_id - start_id + 1
                     batch_size = SCAN_STATE['scan_config']['batch_size']
@@ -333,6 +337,14 @@ def setup_commands(bot, db, scraper_getter):
             # Start scan in background
             SCAN_STATE['scan_task'] = asyncio.create_task(run_scan())
             
+            # Wait a moment to ensure scan task started
+            await asyncio.sleep(0.5)
+            
+            # Verify scan is actually running
+            if not SCAN_STATE['is_scanning']:
+                await interaction.followup.send("❌ **Failed to start scan!** Check bot logs for errors.")
+                return
+            
             # 🔥 OPTIMIZED: Show expected speed based on current settings
             config = SCAN_STATE['scan_config']
             expected_speed = config['batch_size'] / (config['wave_delay'] + 0.5)
@@ -359,6 +371,7 @@ def setup_commands(bot, db, scraper_getter):
             
         except Exception as e:
             logger.error(f"Error starting scan: {e}", exc_info=True)
+            SCAN_STATE['is_scanning'] = False
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
     
     @scan_group.command(name="status", description="View real-time scan progress (auto-refreshing)")
