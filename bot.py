@@ -129,17 +129,32 @@ def verify_environment():
     return True
 
 # ============================================================================
-# 🔥 SCRAPER CLIENT MANAGEMENT
+# 🔥 SCRAPER CLIENT MANAGEMENT (HOTFIXED)
 # ============================================================================
 
-async def get_or_recreate_scraper():
-    """Get scraper instance, recreate if needed"""
+async def get_or_recreate_scraper(max_concurrent=None):
+    """🔧 HOTFIX: Get scraper instance with dynamic concurrency settings
+    
+    Args:
+        max_concurrent: Override concurrent workers (for scans). If None, uses default (5)
+    """
     global scraper
     
+    # 🔥 If max_concurrent specified and scraper exists with different setting, recreate
+    if max_concurrent and scraper and scraper.max_concurrent != max_concurrent:
+        logger.info(f"🔄 Recreating scraper with max_concurrent={max_concurrent} (was {scraper.max_concurrent})")
+        try:
+            await scraper.__aexit__(None, None, None)
+        except:
+            pass
+        scraper = None
+    
     if scraper is None:
-        logger.info("🔄 Creating new scraper instance...")
-        scraper = Pro4KingsScraper(max_concurrent=5)
+        concurrent = max_concurrent if max_concurrent else 5
+        logger.info(f"🔄 Creating new scraper instance (max_concurrent={concurrent})...")
+        scraper = Pro4KingsScraper(max_concurrent=concurrent)
         await scraper.__aenter__()
+        logger.info(f"✅ Scraper initialized with {concurrent} workers")
     
     # Check if client is still valid
     if scraper.client and scraper.client.is_closed:
@@ -148,7 +163,8 @@ async def get_or_recreate_scraper():
             await scraper.__aexit__(None, None, None)
         except:
             pass
-        scraper = Pro4KingsScraper(max_concurrent=5)
+        concurrent = max_concurrent if max_concurrent else 5
+        scraper = Pro4KingsScraper(max_concurrent=concurrent)
         await scraper.__aenter__()
     
     return scraper
@@ -276,7 +292,7 @@ async def scrape_actions():
     TASK_HEALTH['scrape_actions']['is_running'] = True
     
     try:
-        scraper_instance = await get_or_recreate_scraper()
+        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
         
         logger.info("🔍 Fetching latest actions...")
         actions = await scraper_instance.get_latest_actions(limit=200)
@@ -371,7 +387,7 @@ async def scrape_online_players():
     TASK_HEALTH['scrape_online_players']['is_running'] = True
     
     try:
-        scraper_instance = await get_or_recreate_scraper()
+        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
         
         online_players = await scraper_instance.get_online_players()
         current_time = datetime.now()
@@ -426,7 +442,7 @@ async def update_pending_profiles():
     TASK_HEALTH['update_pending_profiles']['is_running'] = True
     
     try:
-        scraper_instance = await get_or_recreate_scraper()
+        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
         
         pending_ids = db.get_players_pending_update(limit=200)
         
@@ -483,7 +499,7 @@ async def check_banned_players():
     TASK_HEALTH['check_banned_players']['is_running'] = True
     
     try:
-        scraper_instance = await get_or_recreate_scraper()
+        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
         
         banned = await scraper_instance.get_banned_players()
         current_ban_ids = {ban['player_id'] for ban in banned if ban.get('player_id')}
