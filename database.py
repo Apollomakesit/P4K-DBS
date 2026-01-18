@@ -463,16 +463,59 @@ class Database:
             conn.commit()
     
     def mark_player_for_update(self, player_id: str, player_name: str) -> None:
-        """Mark player for priority profile update"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO players (player_id, username, priority_update)
-                VALUES (?, ?, TRUE)
-                ON CONFLICT(player_id) DO UPDATE SET
-                    priority_update = TRUE
-            ''', (player_id, player_name))
-            conn.commit()
+        """Mark player for priority profile update
+        
+        🔥 FIX: Handles UNIQUE constraint on username properly
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # 🔥 Check if username already exists with a different player_id
+                cursor.execute('SELECT player_id FROM players WHERE username = ?', (player_name,))
+                existing = cursor.fetchone()
+                
+                if existing and existing[0] != player_id:
+                    # Username exists with different ID - this happens when:
+                    # 1. Player was deleted and recreated with same name
+                    # 2. Data inconsistency on server
+                    # 3. Username was changed but we found both versions
+                    logger.warning(
+                        f"Username '{player_name}' exists with different ID. "
+                        f"Existing: {existing[0]}, New: {player_id}. "
+                        f"Updating existing record."
+                    )
+                    
+                    # Update the existing record's player_id to the new one
+                    cursor.execute('''
+                        UPDATE players 
+                        SET player_id = ?, priority_update = TRUE
+                        WHERE username = ?
+                    ''', (player_id, player_name))
+                else:
+                    # Safe to insert or update
+                    cursor.execute('''
+                        INSERT INTO players (player_id, username, priority_update)
+                        VALUES (?, ?, TRUE)
+                        ON CONFLICT(player_id) DO UPDATE SET
+                            username = excluded.username,
+                            priority_update = TRUE
+                    ''', (player_id, player_name))
+                
+                conn.commit()
+                
+        except sqlite3.IntegrityError as e:
+            # Additional safety net
+            if 'UNIQUE constraint' in str(e):
+                logger.error(
+                    f"UNIQUE constraint error for player_id={player_id}, username={player_name}. "
+                    f"Skipping this update. Error: {e}"
+                )
+            else:
+                raise
+        except Exception as e:
+            logger.error(f"Error in mark_player_for_update: {e}", exc_info=True)
+            raise
     
     def get_players_pending_update(self, limit: int = 100) -> List[str]:
         """Get player IDs pending profile update"""
