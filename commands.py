@@ -48,6 +48,44 @@ async def resolve_player_info(db, scraper, identifier):
     players = db.search_player_by_name(identifier)
     return players[0] if players else None
 
+def format_last_seen(last_seen_dt):
+    """Format last seen time in human readable format"""
+    if not last_seen_dt:
+        return "Never"
+    
+    if isinstance(last_seen_dt, str):
+        try:
+            last_seen_dt = datetime.fromisoformat(last_seen_dt)
+        except:
+            return "Unknown"
+    
+    if not isinstance(last_seen_dt, datetime):
+        return "Unknown"
+    
+    time_diff = datetime.now() - last_seen_dt
+    seconds = int(time_diff.total_seconds())
+    
+    if seconds < 60:
+        return "Just now"
+    elif seconds < 3600:
+        minutes = seconds // 60
+        return f"{minutes}m ago"
+    elif seconds < 86400:
+        hours = seconds // 3600
+        return f"{hours}h ago"
+    else:
+        days = seconds // 86400
+        if days == 1:
+            return "Yesterday"
+        elif days < 7:
+            return f"{days}d ago"
+        elif days < 30:
+            weeks = days // 7
+            return f"{weeks}w ago"
+        else:
+            months = days // 30
+            return f"{months}mo ago"
+
 def setup_commands(bot, db, scraper_getter):
     """Setup all slash commands for the bot
     
@@ -88,7 +126,6 @@ def setup_commands(bot, db, scraper_getter):
             if player.get('last_seen'):
                 last_seen = player['last_seen']
                 if isinstance(last_seen, str):
-                    from datetime import datetime
                     try:
                         last_seen = datetime.fromisoformat(last_seen)
                     except:
@@ -97,12 +134,8 @@ def setup_commands(bot, db, scraper_getter):
                     time_diff = datetime.now() - last_seen
                     if time_diff.total_seconds() < 300:
                         status = "🟢 Online"
-                    elif time_diff.total_seconds() < 3600:
-                        status = f"⚫ Last seen {int(time_diff.total_seconds() / 60)}m ago"
-                    elif time_diff.total_seconds() < 86400:
-                        status = f"⚫ Last seen {int(time_diff.total_seconds() / 3600)}h ago"
                     else:
-                        status = f"⚫ Last seen {int(time_diff.total_seconds() / 86400)}d ago"
+                        status = f"⚫ {format_last_seen(last_seen)}"
             
             embed.add_field(name="Status", value=status, inline=True)
             
@@ -499,4 +532,262 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in stats command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
     
-    logger.info("✅ All slash commands registered")
+    # ========================================================================
+    # FACTIONS COMMAND - COMPREHENSIVE FACTION OVERVIEW
+    # ========================================================================
+    
+    @bot.tree.command(name="factions", description="View factions, members, and activity rankings")
+    @app_commands.describe(faction_name="Specific faction to view (optional)")
+    async def factions_command(interaction: discord.Interaction, faction_name: str = None):
+        """View comprehensive faction information with activity tracking"""
+        await interaction.response.defer()
+        
+        try:
+            with db.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # If specific faction requested
+                if faction_name:
+                    # Get faction members
+                    cursor.execute("""
+                        SELECT player_id, username, faction, faction_rank, is_online, last_seen, level, respect_points
+                        FROM players
+                        WHERE faction LIKE ? AND faction NOT IN ('Civil', 'Fără', 'None', '-')
+                        ORDER BY 
+                            CASE 
+                                WHEN faction_rank LIKE '%Lider%' THEN 1
+                                WHEN faction_rank LIKE '%Sublider%' THEN 2
+                                WHEN faction_rank LIKE '%6%' THEN 3
+                                WHEN faction_rank LIKE '%5%' THEN 4
+                                WHEN faction_rank LIKE '%4%' THEN 5
+                                WHEN faction_rank LIKE '%3%' THEN 6
+                                WHEN faction_rank LIKE '%2%' THEN 7
+                                WHEN faction_rank LIKE '%1%' THEN 8
+                                ELSE 9
+                            END,
+                            is_online DESC,
+                            level DESC
+                    """, (f'%{faction_name}%',))
+                    
+                    members = cursor.fetchall()
+                    
+                    if not members:
+                        await interaction.followup.send(f"❌ **Faction not found:** `{faction_name}`")
+                        return
+                    
+                    # Get faction activity (last 7 days)
+                    player_ids = [m['player_id'] for m in members]
+                    placeholders = ','.join('?' * len(player_ids))
+                    cursor.execute(f"""
+                        SELECT COUNT(*) FROM actions
+                        WHERE player_id IN ({placeholders})
+                        AND timestamp >= datetime('now', '-7 days')
+                    """, player_ids)
+                    activity_count = cursor.fetchone()[0]
+                    
+                    # Get action breakdown by type
+                    cursor.execute(f"""
+                        SELECT action_type, COUNT(*) as count
+                        FROM actions
+                        WHERE player_id IN ({placeholders})
+                        AND timestamp >= datetime('now', '-7 days')
+                        GROUP BY action_type
+                        ORDER BY count DESC
+                        LIMIT 5
+                    """, player_ids)
+                    top_actions = cursor.fetchall()
+                    
+                    # Create detailed faction embed
+                    faction_display_name = members[0]['faction']
+                    online_members = [m for m in members if m['is_online']]
+                    offline_members = [m for m in members if not m['is_online']]
+                    
+                    embed = discord.Embed(
+                        title=f"🛡️ {faction_display_name}",
+                        description=f"**Total Members:** {len(members)} | **Online:** {len(online_members)} | **Activity (7d):** {activity_count:,} actions",
+                        color=discord.Color.gold(),
+                        timestamp=datetime.now()
+                    )
+                    
+                    # Online members
+                    if online_members:
+                        online_list = []
+                        for member in online_members[:15]:  # Max 15 to avoid hitting limits
+                            rank = member['faction_rank'] or 'No Rank'
+                            level = member['level'] or '?'
+                            online_list.append(f"🟢 `{member['player_id']:>6}` **{member['username']}**\n   ├─ {rank} | Lvl {level}")
+                        
+                        embed.add_field(
+                            name=f"🟢 Online Members ({len(online_members)})",
+                            value="\n".join(online_list) if online_list else "None",
+                            inline=False
+                        )
+                    
+                    # Offline members (show last 10)
+                    if offline_members:
+                        offline_list = []
+                        for member in offline_members[:10]:
+                            rank = member['faction_rank'] or 'No Rank'
+                            level = member['level'] or '?'
+                            last_seen = format_last_seen(member['last_seen'])
+                            offline_list.append(f"⚫ `{member['player_id']:>6}` **{member['username']}**\n   ├─ {rank} | Lvl {level} | Last: {last_seen}")
+                        
+                        remaining = len(offline_members) - 10
+                        if remaining > 0:
+                            offline_list.append(f"\n*...and {remaining} more offline members*")
+                        
+                        embed.add_field(
+                            name=f"⚫ Offline Members ({len(offline_members)})",
+                            value="\n".join(offline_list) if offline_list else "None",
+                            inline=False
+                        )
+                    
+                    # Top action types
+                    if top_actions:
+                        action_list = []
+                        for action in top_actions:
+                            action_emoji = {
+                                'warning_received': '⚠️',
+                                'chest_deposit': '📦',
+                                'chest_withdraw': '📤',
+                                'item_given': '🎁',
+                                'item_received': '💰'
+                            }.get(action['action_type'], '📌')
+                            action_list.append(f"{action_emoji} {action['action_type'].replace('_', ' ').title()}: {action['count']:,}")
+                        
+                        embed.add_field(
+                            name="📊 Top Actions (7 days)",
+                            value="\n".join(action_list),
+                            inline=False
+                        )
+                    
+                    embed.set_footer(text=f"Pro4Kings Database • Requested by {interaction.user.display_name}")
+                    await interaction.followup.send(embed=embed)
+                    return
+                
+                # Get all factions with statistics
+                cursor.execute("""
+                    SELECT 
+                        faction,
+                        COUNT(*) as total_members,
+                        SUM(CASE WHEN is_online = 1 THEN 1 ELSE 0 END) as online_members,
+                        AVG(level) as avg_level,
+                        SUM(respect_points) as total_respect
+                    FROM players
+                    WHERE faction IS NOT NULL AND faction NOT IN ('Civil', 'Fără', 'None', '-')
+                    GROUP BY faction
+                    ORDER BY total_members DESC
+                """)
+                
+                factions = cursor.fetchall()
+                
+                if not factions:
+                    embed = discord.Embed(
+                        title="🛡️ Server Factions",
+                        description="No faction data available.",
+                        color=discord.Color.orange()
+                    )
+                    await interaction.followup.send(embed=embed)
+                    return
+                
+                # Calculate activity for all factions (last 7 days)
+                faction_activity = {}
+                for faction_row in factions:
+                    faction_name_db = faction_row['faction']
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM actions a
+                        JOIN players p ON a.player_id = p.player_id
+                        WHERE p.faction = ?
+                        AND a.timestamp >= datetime('now', '-7 days')
+                    """, (faction_name_db,))
+                    faction_activity[faction_name_db] = cursor.fetchone()[0]
+                
+                # Create main factions overview embed
+                embed = discord.Embed(
+                    title="🛡️ Server Factions Overview",
+                    description=f"Total factions: {len(factions)}\n\nUse `/factions <faction_name>` for detailed member roster and actions",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now()
+                )
+                
+                # Top 10 factions by member count
+                top_factions = factions[:10]
+                
+                faction_list = []
+                for i, faction_row in enumerate(top_factions, 1):
+                    fname = faction_row['faction']
+                    total = faction_row['total_members']
+                    online = faction_row['online_members']
+                    avg_lvl = faction_row['avg_level'] or 0
+                    activity = faction_activity.get(fname, 0)
+                    
+                    rank_emoji = {1: '🥇', 2: '🥈', 3: '🥉'}.get(i, f'{i}.')
+                    
+                    faction_list.append(
+                        f"{rank_emoji} **{fname}**\n"
+                        f"   👥 {total} members | 🟢 {online} online\n"
+                        f"   🎖️ Avg Lvl {avg_lvl:.1f} | 📊 {activity:,} actions (7d)"
+                    )
+                
+                embed.add_field(
+                    name="🏆 Top Factions by Size",
+                    value="\n\n".join(faction_list),
+                    inline=False
+                )
+                
+                # Most active factions (by total actions)
+                active_factions = sorted(
+                    [(fname, faction_activity[fname], next(f['total_members'] for f in factions if f['faction'] == fname)) 
+                     for fname in faction_activity.keys()],
+                    key=lambda x: x[1],
+                    reverse=True
+                )[:5]
+                
+                if active_factions:
+                    activity_list = []
+                    for i, (fname, actions, members) in enumerate(active_factions, 1):
+                        activity_per_member = actions / members if members > 0 else 0
+                        activity_list.append(
+                            f"{i}. **{fname}** - {actions:,} actions ({activity_per_member:.1f} per member)"
+                        )
+                    
+                    embed.add_field(
+                        name="🔥 Most Active Factions (7 days)",
+                        value="\n".join(activity_list),
+                        inline=False
+                    )
+                
+                # Calculate average online rate per faction
+                online_rate_factions = []
+                for faction_row in factions:
+                    fname = faction_row['faction']
+                    total = faction_row['total_members']
+                    online = faction_row['online_members']
+                    online_rate = (online / total * 100) if total > 0 else 0
+                    if total >= 5:  # Only consider factions with 5+ members
+                        online_rate_factions.append((fname, online_rate, online, total))
+                
+                # Sort by online rate
+                online_rate_factions.sort(key=lambda x: x[1], reverse=True)
+                
+                if online_rate_factions[:5]:
+                    online_rate_list = []
+                    for i, (fname, rate, online, total) in enumerate(online_rate_factions[:5], 1):
+                        online_rate_list.append(
+                            f"{i}. **{fname}** - {rate:.1f}% ({online}/{total} online)"
+                        )
+                    
+                    embed.add_field(
+                        name="⚡ Highest Online Activity Rate",
+                        value="\n".join(online_rate_list),
+                        inline=False
+                    )
+                
+                embed.set_footer(text=f"Pro4Kings Database • Requested by {interaction.user.display_name}")
+                await interaction.followup.send(embed=embed)
+                
+        except Exception as e:
+            logger.error(f"Error in factions command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+    
+    logger.info("✅ All slash commands registered (including /factions)")
