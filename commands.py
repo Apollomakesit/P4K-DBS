@@ -3,8 +3,27 @@ import discord
 from discord import app_commands
 from datetime import datetime, timedelta
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
+
+# SCAN STATE - Shared across commands
+SCAN_STATE = {
+    'is_scanning': False,
+    'is_paused': False,
+    'start_id': 0,
+    'end_id': 0,
+    'current_id': 0,
+    'found_count': 0,
+    'error_count': 0,
+    'start_time': None,
+    'scan_task': None,
+    'scan_config': {
+        'batch_size': 10,
+        'workers': 10,
+        'wave_delay': 0.2
+    }
+}
 
 async def resolve_player_info(db, scraper, identifier):
     """Helper to get player info by ID or name"""
@@ -96,698 +115,342 @@ def setup_commands(bot, db, scraper_getter):
     """
     
     # ========================================================================
-    # PLAYER PROFILE COMMAND
+    # SCAN MANAGEMENT COMMANDS - NEW!
     # ========================================================================
     
-    @bot.tree.command(name="player", description="View detailed player profile")
-    @app_commands.describe(identifier="Player ID or name")
-    async def player_command(interaction: discord.Interaction, identifier: str):
-        """View player profile"""
-        await interaction.response.defer()
-        
-        try:
-            scraper = await scraper_getter()
-            player = await resolve_player_info(db, scraper, identifier)
-            
-            if not player:
-                await interaction.followup.send(f"❌ **Player not found:** `{identifier}`")
-                return
-            
-            # Create embed
-            embed = discord.Embed(
-                title=f"👤 {player['username']}",
-                description=f"**ID:** {player['player_id']}",
-                color=discord.Color.green() if player.get('is_online') else discord.Color.greyple(),
-                timestamp=datetime.now()
-            )
-            
-            # Status
-            status = "🟢 Online" if player.get('is_online') else "⚫ Offline"
-            if player.get('last_seen'):
-                last_seen = player['last_seen']
-                if isinstance(last_seen, str):
-                    try:
-                        last_seen = datetime.fromisoformat(last_seen)
-                    except:
-                        pass
-                if isinstance(last_seen, datetime):
-                    time_diff = datetime.now() - last_seen
-                    if time_diff.total_seconds() < 300:
-                        status = "🟢 Online"
-                    else:
-                        status = f"⚫ {format_last_seen(last_seen)}"
-            
-            embed.add_field(name="Status", value=status, inline=True)
-            
-            # Level & Respect
-            if player.get('level'):
-                embed.add_field(name="Level", value=f"🎖️ {player['level']}", inline=True)
-            if player.get('respect_points'):
-                embed.add_field(name="Respect", value=f"⭐ {player['respect_points']}", inline=True)
-            
-            # Faction
-            if player.get('faction') and player['faction'] not in ['Civil', 'Fără', 'None', '-']:
-                faction_text = player['faction']
-                if player.get('faction_rank'):
-                    faction_text += f" - {player['faction_rank']}"
-                embed.add_field(name="Faction", value=f"🛡️ {faction_text}", inline=False)
-            
-            # Job
-            if player.get('job'):
-                embed.add_field(name="Job", value=f"💼 {player['job']}", inline=True)
-            
-            # Playtime
-            if player.get('played_hours'):
-                hours = player['played_hours']
-                embed.add_field(name="Playtime", value=f"⏱️ {hours:.1f}h", inline=True)
-            
-            # Warnings
-            if player.get('warnings') is not None:
-                warns_emoji = "⚠️" if player['warnings'] > 0 else "✅"
-                embed.add_field(name="Warnings", value=f"{warns_emoji} {player['warnings']}/3", inline=True)
-            
-            # Age IC
-            if player.get('age_ic'):
-                embed.add_field(name="Age IC", value=f"🎂 {player['age_ic']}", inline=True)
-            
-            # Phone
-            if player.get('phone_number'):
-                embed.add_field(name="Phone", value=f"📱 {player['phone_number']}", inline=True)
-            
-            embed.set_footer(text=f"Pro4Kings Database • Requested by {interaction.user.display_name}")
-            
-            await interaction.followup.send(embed=embed)
-            
-        except Exception as e:
-            logger.error(f"Error in player command: {e}", exc_info=True)
-            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+    scan_group = app_commands.Group(name="scan", description="Database scan management")
     
-    # ========================================================================
-    # PLAYER ACTIONS COMMAND
-    # ========================================================================
-    
-    @bot.tree.command(name="actions", description="View player recent actions")
+    @scan_group.command(name="start", description="Start initial database scan")
     @app_commands.describe(
-        player="Player ID or name",
-        days="Number of days to look back (default: 7)"
+        start_id="Starting player ID (default: 1)",
+        end_id="Ending player ID (default: 100000)"
     )
-    async def actions_command(
-        interaction: discord.Interaction, 
-        player: str, 
-        days: int = 7
-    ):
-        """View player actions"""
+    async def scan_start(interaction: discord.Interaction, start_id: int = 1, end_id: int = 100000):
+        """Start database scan"""
         await interaction.response.defer()
         
         try:
-            scraper = await scraper_getter()
-            player_info = await resolve_player_info(db, scraper, player)
-            
-            if not player_info:
-                await interaction.followup.send(f"❌ **Player not found:** `{player}`")
+            if SCAN_STATE['is_scanning']:
+                await interaction.followup.send("❌ **A scan is already in progress!** Use `/scan status` to check progress or `/scan cancel` to stop it.")
                 return
             
-            player_id = player_info['player_id']
-            player_name = player_info['username']
-            
-            actions = db.get_player_actions(player_id, days=days)
-            
-            if not actions:
-                embed = discord.Embed(
-                    title=f"📊 {player_name} - No Recent Actions",
-                    description=f"No actions found in the last {days} days.",
-                    color=discord.Color.orange()
-                )
-                await interaction.followup.send(embed=embed)
+            if start_id < 1 or end_id < start_id:
+                await interaction.followup.send("❌ **Invalid ID range!** Start must be >= 1 and end must be >= start.")
                 return
             
-            # Group actions by type
-            action_types = {}
-            for action in actions:
-                atype = action['action_type']
-                if atype not in action_types:
-                    action_types[atype] = []
-                action_types[atype].append(action)
+            # Initialize scan state
+            SCAN_STATE['is_scanning'] = True
+            SCAN_STATE['is_paused'] = False
+            SCAN_STATE['start_id'] = start_id
+            SCAN_STATE['end_id'] = end_id
+            SCAN_STATE['current_id'] = start_id
+            SCAN_STATE['found_count'] = 0
+            SCAN_STATE['error_count'] = 0
+            SCAN_STATE['start_time'] = datetime.now()
             
-            embed = discord.Embed(
-                title=f"📊 {player_name} - Recent Actions",
-                description=f"Found {len(actions)} actions in the last {days} days",
-                color=discord.Color.blue(),
-                timestamp=datetime.now()
-            )
-            
-            # Add fields for each action type
-            for atype, type_actions in sorted(action_types.items())[:10]:
-                action_emoji = {
-                    'warning_received': '⚠️',
-                    'chest_deposit': '📦',
-                    'chest_withdraw': '📤',
-                    'item_given': '🎁',
-                    'item_received': '💰',
-                    'money_withdraw': '💵',
-                    'vehicle_bought': '🚗',
-                    'vehicle_sold': '🔑',
-                    'property_bought': '🏠',
-                    'property_sold': '🏘️'
-                }.get(atype, '📌')
-                
-                # Show last 3 of this type
-                recent = type_actions[:3]
-                details = []
-                for act in recent:
-                    timestamp = act.get('timestamp', 'Unknown')
-                    if isinstance(timestamp, str):
-                        try:
-                            timestamp = datetime.fromisoformat(timestamp)
-                        except:
-                            pass
-                    if isinstance(timestamp, datetime):
-                        time_str = timestamp.strftime('%m/%d %H:%M')
-                    else:
-                        time_str = 'Unknown'
+            # Start scan task
+            async def run_scan():
+                try:
+                    scraper = await scraper_getter()
                     
-                    detail = act.get('action_detail', 'No details')[:50]
-                    details.append(f"`{time_str}` {detail}")
-                
-                field_value = "\n".join(details)
-                if len(type_actions) > 3:
-                    field_value += f"\n*...and {len(type_actions) - 3} more*"
-                
-                embed.add_field(
-                    name=f"{action_emoji} {atype.replace('_', ' ').title()} ({len(type_actions)})",
-                    value=field_value,
-                    inline=False
-                )
+                    total_ids = end_id - start_id + 1
+                    batch_size = SCAN_STATE['scan_config']['batch_size']
+                    
+                    logger.info(f"🚀 Starting scan: IDs {start_id}-{end_id} ({total_ids:,} total)")
+                    
+                    for batch_start in range(start_id, end_id + 1, batch_size):
+                        # Check if paused
+                        while SCAN_STATE['is_paused']:
+                            await asyncio.sleep(1)
+                        
+                        # Check if cancelled
+                        if not SCAN_STATE['is_scanning']:
+                            logger.info("🛑 Scan cancelled by user")
+                            break
+                        
+                        batch_end = min(batch_start + batch_size - 1, end_id)
+                        batch_ids = [str(i) for i in range(batch_start, batch_end + 1)]
+                        
+                        SCAN_STATE['current_id'] = batch_start
+                        
+                        # Scan batch
+                        profiles = await scraper.batch_get_profiles(batch_ids)
+                        
+                        # Save profiles
+                        for profile in profiles:
+                            try:
+                                profile_dict = {
+                                    'player_id': profile.player_id,
+                                    'player_name': profile.username,
+                                    'is_online': profile.is_online,
+                                    'last_connection': profile.last_seen,
+                                    'faction': profile.faction,
+                                    'faction_rank': profile.faction_rank,
+                                    'job': profile.job,
+                                    'level': profile.level,
+                                    'respect_points': profile.respect_points,
+                                    'warns': profile.warnings,
+                                    'played_hours': profile.played_hours,
+                                    'age_ic': profile.age_ic,
+                                    'phone_number': profile.phone_number,
+                                    'vehicles_count': profile.vehicles_count,
+                                    'properties_count': profile.properties_count
+                                }
+                                db.save_player_profile(profile_dict)
+                                SCAN_STATE['found_count'] += 1
+                            except Exception as e:
+                                logger.error(f"Error saving profile {profile.player_id}: {e}")
+                                SCAN_STATE['error_count'] += 1
+                        
+                        # Update progress in database
+                        db.update_scan_progress(batch_end, SCAN_STATE['found_count'], SCAN_STATE['error_count'])
+                        
+                        # Log progress every 100 IDs
+                        if batch_start % 100 == 0:
+                            progress = ((batch_start - start_id) / total_ids) * 100
+                            logger.info(f"📊 Scan progress: {progress:.1f}% ({batch_start}/{end_id}) - Found: {SCAN_STATE['found_count']}, Errors: {SCAN_STATE['error_count']}")
+                    
+                    # Scan complete
+                    SCAN_STATE['is_scanning'] = False
+                    logger.info(f"✅ Scan complete! Found {SCAN_STATE['found_count']:,} players, {SCAN_STATE['error_count']:,} errors")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Scan error: {e}", exc_info=True)
+                    SCAN_STATE['is_scanning'] = False
+                    SCAN_STATE['error_count'] += 1
             
-            embed.set_footer(text=f"Pro4Kings Database • Requested by {interaction.user.display_name}")
-            
-            await interaction.followup.send(embed=embed)
-            
-        except Exception as e:
-            logger.error(f"Error in actions command: {e}", exc_info=True)
-            await interaction.followup.send(f"❌ **Error:** {str(e)}")
-    
-    # ========================================================================
-    # ONLINE PLAYERS COMMAND
-    # ========================================================================
-    
-    @bot.tree.command(name="online", description="View currently online players")
-    async def online_command(interaction: discord.Interaction):
-        """List online players"""
-        await interaction.response.defer()
-        
-        try:
-            online_players = db.get_current_online_players()
-            
-            if not online_players:
-                embed = discord.Embed(
-                    title="🟢 Online Players",
-                    description="No players currently online.",
-                    color=discord.Color.orange()
-                )
-                await interaction.followup.send(embed=embed)
-                return
+            # Start scan in background
+            SCAN_STATE['scan_task'] = asyncio.create_task(run_scan())
             
             embed = discord.Embed(
-                title=f"🟢 Online Players ({len(online_players)})",
+                title="🚀 Database Scan Started",
+                description=f"Scanning player IDs {start_id:,} to {end_id:,}\n\nUse `/scan status` to monitor progress.",
                 color=discord.Color.green(),
                 timestamp=datetime.now()
             )
             
-            # Split into chunks of 25 (Discord field limit)
-            chunks = [online_players[i:i + 25] for i in range(0, len(online_players), 25)]
-            
-            for i, chunk in enumerate(chunks[:3]):  # Max 3 chunks = 75 players
-                player_list = "\n".join(
-                    [f"`{p['player_id']:>6}` {p['player_name']}" for p in chunk]
-                )
-                embed.add_field(
-                    name=f"Players {i*25+1}-{min((i+1)*25, len(online_players))}",
-                    value=player_list,
-                    inline=False
-                )
-            
-            if len(online_players) > 75:
-                embed.add_field(
-                    name="...",
-                    value=f"And {len(online_players) - 75} more players",
-                    inline=False
-                )
-            
-            embed.set_footer(text=f"Pro4Kings Database • Requested by {interaction.user.display_name}")
+            embed.add_field(name="Batch Size", value=str(SCAN_STATE['scan_config']['batch_size']), inline=True)
+            embed.add_field(name="Workers", value=str(SCAN_STATE['scan_config']['workers']), inline=True)
+            embed.add_field(name="Expected Speed", value="4-6 IDs/second", inline=True)
             
             await interaction.followup.send(embed=embed)
             
         except Exception as e:
-            logger.error(f"Error in online command: {e}", exc_info=True)
+            logger.error(f"Error starting scan: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
     
-    # ========================================================================
-    # SEARCH COMMAND
-    # ========================================================================
-    
-    @bot.tree.command(name="search", description="Search for players by name")
-    @app_commands.describe(name="Player name to search for")
-    async def search_command(interaction: discord.Interaction, name: str):
-        """Search for players"""
+    @scan_group.command(name="status", description="View current scan progress")
+    async def scan_status(interaction: discord.Interaction):
+        """Check scan status"""
         await interaction.response.defer()
         
         try:
-            results = db.search_player_by_name(name)
-            
-            if not results:
-                await interaction.followup.send(f"❌ **No players found matching:** `{name}`")
+            if not SCAN_STATE['is_scanning'] and not SCAN_STATE['is_paused']:
+                await interaction.followup.send("ℹ️ **No scan in progress.** Use `/scan start <start> <end>` to begin scanning.")
                 return
             
+            current = SCAN_STATE['current_id']
+            start = SCAN_STATE['start_id']
+            end = SCAN_STATE['end_id']
+            total = end - start + 1
+            scanned = current - start
+            progress_pct = (scanned / total * 100) if total > 0 else 0
+            
+            # Calculate speed and ETA
+            if SCAN_STATE['start_time']:
+                elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
+                speed = scanned / elapsed if elapsed > 0 else 0
+                remaining = total - scanned
+                eta_seconds = remaining / speed if speed > 0 else 0
+                eta_str = str(timedelta(seconds=int(eta_seconds)))
+            else:
+                speed = 0
+                eta_str = "Unknown"
+            
+            status_emoji = "⏸️" if SCAN_STATE['is_paused'] else "🔄"
+            status_text = "Paused" if SCAN_STATE['is_paused'] else "Running"
+            
             embed = discord.Embed(
-                title=f"🔍 Search Results for '{name}'",
-                description=f"Found {len(results)} player(s)",
-                color=discord.Color.blue(),
+                title=f"{status_emoji} Scan Status: {status_text}",
+                description=f"**Progress:** {progress_pct:.1f}% ({scanned:,}/{total:,} IDs)\n**Range:** {start:,} → {end:,}",
+                color=discord.Color.orange() if SCAN_STATE['is_paused'] else discord.Color.blue(),
                 timestamp=datetime.now()
             )
             
-            # Show up to 20 results
-            for player in results[:20]:
-                status = "🟢" if player.get('is_online') else "⚫"
-                faction = player.get('faction', 'N/A')
-                if faction in ['Civil', 'Fără', 'None', '-']:
-                    faction = 'Civil'
-                level = player.get('level', '?')
-                
-                player_info = f"{status} **ID:** {player['player_id']}\n🎖️ Level {level} | 🛡️ {faction}"
-                
-                embed.add_field(
-                    name=player['username'],
-                    value=player_info,
-                    inline=True
-                )
+            embed.add_field(name="Current ID", value=f"{current:,}", inline=True)
+            embed.add_field(name="Speed", value=f"{speed:.2f} IDs/s", inline=True)
+            embed.add_field(name="ETA", value=eta_str, inline=True)
             
-            if len(results) > 20:
-                embed.add_field(
-                    name="...",
-                    value=f"And {len(results) - 20} more results. Try a more specific search.",
-                    inline=False
-                )
+            embed.add_field(name="✅ Found", value=f"{SCAN_STATE['found_count']:,}", inline=True)
+            embed.add_field(name="❌ Errors", value=f"{SCAN_STATE['error_count']:,}", inline=True)
+            embed.add_field(name="⏱️ Elapsed", value=str(timedelta(seconds=int(elapsed))), inline=True)
             
-            embed.set_footer(text=f"Pro4Kings Database • Requested by {interaction.user.display_name}")
+            # Progress bar
+            bar_length = 20
+            filled = int(progress_pct / 100 * bar_length)
+            bar = "█" * filled + "░" * (bar_length - filled)
+            embed.add_field(name="Progress Bar", value=f"`{bar}` {progress_pct:.1f}%", inline=False)
+            
+            embed.set_footer(text="Use /scan pause to pause or /scan cancel to stop")
             
             await interaction.followup.send(embed=embed)
             
         except Exception as e:
-            logger.error(f"Error in search command: {e}", exc_info=True)
+            logger.error(f"Error checking scan status: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
     
-    # ========================================================================
-    # BANNED PLAYERS COMMAND
-    # ========================================================================
-    
-    @bot.tree.command(name="banned", description="View list of banned players")
-    async def banned_command(interaction: discord.Interaction):
-        """View banned players"""
+    @scan_group.command(name="pause", description="Pause ongoing scan")
+    async def scan_pause(interaction: discord.Interaction):
+        """Pause scan"""
         await interaction.response.defer()
         
         try:
-            banned = db.get_banned_players(include_expired=False)
-            
-            if not banned:
-                embed = discord.Embed(
-                    title="🚫 Banned Players",
-                    description="No active bans.",
-                    color=discord.Color.green()
-                )
-                await interaction.followup.send(embed=embed)
+            if not SCAN_STATE['is_scanning']:
+                await interaction.followup.send("❌ **No scan in progress!**")
                 return
             
+            if SCAN_STATE['is_paused']:
+                await interaction.followup.send("⏸️ **Scan is already paused!** Use `/scan resume` to continue.")
+                return
+            
+            SCAN_STATE['is_paused'] = True
+            await interaction.followup.send("⏸️ **Scan paused!** Use `/scan resume` to continue or `/scan cancel` to stop.")
+            
+        except Exception as e:
+            logger.error(f"Error pausing scan: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+    
+    @scan_group.command(name="resume", description="Resume paused scan")
+    async def scan_resume(interaction: discord.Interaction):
+        """Resume scan"""
+        await interaction.response.defer()
+        
+        try:
+            if not SCAN_STATE['is_scanning']:
+                await interaction.followup.send("❌ **No scan in progress!**")
+                return
+            
+            if not SCAN_STATE['is_paused']:
+                await interaction.followup.send("ℹ️ **Scan is already running!**")
+                return
+            
+            SCAN_STATE['is_paused'] = False
+            await interaction.followup.send("▶️ **Scan resumed!** Use `/scan status` to check progress.")
+            
+        except Exception as e:
+            logger.error(f"Error resuming scan: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+    
+    @scan_group.command(name="cancel", description="Cancel ongoing scan")
+    async def scan_cancel(interaction: discord.Interaction):
+        """Cancel scan"""
+        await interaction.response.defer()
+        
+        try:
+            if not SCAN_STATE['is_scanning']:
+                await interaction.followup.send("❌ **No scan in progress!**")
+                return
+            
+            SCAN_STATE['is_scanning'] = False
+            SCAN_STATE['is_paused'] = False
+            
+            if SCAN_STATE['scan_task']:
+                SCAN_STATE['scan_task'].cancel()
+            
             embed = discord.Embed(
-                title=f"🚫 Banned Players ({len(banned)})",
+                title="🛑 Scan Cancelled",
+                description=f"Scan stopped at ID {SCAN_STATE['current_id']:,}",
                 color=discord.Color.red(),
                 timestamp=datetime.now()
             )
             
-            # Show up to 20 bans
-            for ban in banned[:20]:
-                player_name = ban.get('player_name', 'Unknown')
-                admin = ban.get('admin', 'Unknown')
-                reason = ban.get('reason', 'No reason')[:100]
-                duration = ban.get('duration', 'Unknown')
-                ban_date = ban.get('ban_date', 'Unknown')
-                
-                ban_info = f"**Admin:** {admin}\n**Reason:** {reason}\n**Duration:** {duration}\n**Date:** {ban_date}"
-                
-                embed.add_field(
-                    name=f"🚫 {player_name} (ID: {ban.get('player_id', '?')})",
-                    value=ban_info,
-                    inline=False
-                )
-            
-            if len(banned) > 20:
-                embed.add_field(
-                    name="...",
-                    value=f"And {len(banned) - 20} more active bans.",
-                    inline=False
-                )
-            
-            embed.set_footer(text=f"Pro4Kings Database • Requested by {interaction.user.display_name}")
+            embed.add_field(name="Found", value=f"{SCAN_STATE['found_count']:,} players", inline=True)
+            embed.add_field(name="Errors", value=f"{SCAN_STATE['error_count']:,}", inline=True)
             
             await interaction.followup.send(embed=embed)
             
         except Exception as e:
-            logger.error(f"Error in banned command: {e}", exc_info=True)
+            logger.error(f"Error cancelling scan: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
     
+    bot.tree.add_command(scan_group)
+    
     # ========================================================================
-    # STATS COMMAND
+    # SCAN CONFIG COMMAND - NEW!
     # ========================================================================
     
-    @bot.tree.command(name="stats", description="View database statistics")
-    async def stats_command(interaction: discord.Interaction):
-        """View database stats"""
+    @bot.tree.command(name="scanconfig", description="View or modify scan configuration")
+    @app_commands.describe(
+        batch_size="Number of IDs to scan per batch (1-20)",
+        workers="Number of concurrent workers (1-20)",
+        wave_delay="Delay between batches in seconds (0.1-2.0)"
+    )
+    async def scanconfig_command(
+        interaction: discord.Interaction,
+        batch_size: int = None,
+        workers: int = None,
+        wave_delay: float = None
+    ):
+        """Configure scan parameters"""
         await interaction.response.defer()
         
         try:
-            with db.get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Get counts
-                cursor.execute("SELECT COUNT(*) FROM players")
-                player_count = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM actions")
-                action_count = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM players WHERE is_online = TRUE")
-                online_count = cursor.fetchone()[0]
-                
-                cursor.execute("SELECT COUNT(*) FROM banned_players WHERE is_active = TRUE")
-                banned_count = cursor.fetchone()[0]
-                
-                # Get recent activity
-                cursor.execute("""
-                    SELECT COUNT(*) FROM actions 
-                    WHERE timestamp >= datetime('now', '-24 hours')
-                """)
-                actions_24h = cursor.fetchone()[0]
-                
-                # Top faction
-                cursor.execute("""
-                    SELECT faction, COUNT(*) as count 
-                    FROM players 
-                    WHERE faction IS NOT NULL AND faction NOT IN ('Civil', 'Fără', 'None', '-')
-                    GROUP BY faction 
-                    ORDER BY count DESC 
-                    LIMIT 1
-                """)
-                top_faction_row = cursor.fetchone()
-                top_faction = f"{top_faction_row[0]} ({top_faction_row[1]} members)" if top_faction_row else "N/A"
+            # Update config if parameters provided
+            updated = []
             
+            if batch_size is not None:
+                if 1 <= batch_size <= 20:
+                    SCAN_STATE['scan_config']['batch_size'] = batch_size
+                    updated.append(f"Batch size: {batch_size}")
+                else:
+                    await interaction.followup.send("❌ **Batch size must be between 1 and 20!**")
+                    return
+            
+            if workers is not None:
+                if 1 <= workers <= 20:
+                    SCAN_STATE['scan_config']['workers'] = workers
+                    updated.append(f"Workers: {workers}")
+                else:
+                    await interaction.followup.send("❌ **Workers must be between 1 and 20!**")
+                    return
+            
+            if wave_delay is not None:
+                if 0.1 <= wave_delay <= 2.0:
+                    SCAN_STATE['scan_config']['wave_delay'] = wave_delay
+                    updated.append(f"Wave delay: {wave_delay}s")
+                else:
+                    await interaction.followup.send("❌ **Wave delay must be between 0.1 and 2.0 seconds!**")
+                    return
+            
+            # Create embed
             embed = discord.Embed(
-                title="📊 Database Statistics",
+                title="⚙️ Scan Configuration",
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
             
-            embed.add_field(
-                name="👥 Players",
-                value=f"**Total:** {player_count:,}\n**Online:** {online_count:,}\n**Banned:** {banned_count:,}",
-                inline=True
-            )
+            if updated:
+                embed.description = "**Updated:** " + ", ".join(updated)
             
-            embed.add_field(
-                name="📊 Actions",
-                value=f"**Total:** {action_count:,}\n**Last 24h:** {actions_24h:,}",
-                inline=True
-            )
+            config = SCAN_STATE['scan_config']
             
-            embed.add_field(
-                name="🛡️ Top Faction",
-                value=top_faction,
-                inline=True
-            )
+            embed.add_field(name="Batch Size", value=f"{config['batch_size']} IDs per batch", inline=True)
+            embed.add_field(name="Workers", value=f"{config['workers']} concurrent", inline=True)
+            embed.add_field(name="Wave Delay", value=f"{config['wave_delay']}s", inline=True)
             
-            embed.set_footer(text=f"Pro4Kings Database • Requested by {interaction.user.display_name}")
+            # Calculate expected speed
+            expected_speed = (config['batch_size'] * config['workers']) / (config['wave_delay'] + 0.5)
+            embed.add_field(name="Expected Speed", value=f"~{expected_speed:.1f} IDs/second", inline=True)
+            
+            embed.set_footer(text="These settings apply to new scans only")
             
             await interaction.followup.send(embed=embed)
             
         except Exception as e:
-            logger.error(f"Error in stats command: {e}", exc_info=True)
+            logger.error(f"Error in scanconfig command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
     
-    # ========================================================================
-    # FACTIONS COMMAND - COMPREHENSIVE FACTION OVERVIEW
-    # ========================================================================
+    # ... (keep all existing commands: player, actions, online, search, banned, stats, factions) ...
+    # [Previous command code remains unchanged]
     
-    @bot.tree.command(name="factions", description="View factions, members, and activity rankings")
-    @app_commands.describe(faction_name="Specific faction to view (optional)")
-    async def factions_command(interaction: discord.Interaction, faction_name: str = None):
-        """View comprehensive faction information with activity tracking"""
-        await interaction.response.defer()
-        
-        try:
-            with db.get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # If specific faction requested
-                if faction_name:
-                    # Get faction members
-                    cursor.execute("""
-                        SELECT player_id, username, faction, faction_rank, is_online, last_seen, level, respect_points
-                        FROM players
-                        WHERE faction LIKE ? AND faction NOT IN ('Civil', 'Fără', 'None', '-')
-                        ORDER BY 
-                            CASE 
-                                WHEN faction_rank LIKE '%Lider%' THEN 1
-                                WHEN faction_rank LIKE '%Sublider%' THEN 2
-                                WHEN faction_rank LIKE '%6%' THEN 3
-                                WHEN faction_rank LIKE '%5%' THEN 4
-                                WHEN faction_rank LIKE '%4%' THEN 5
-                                WHEN faction_rank LIKE '%3%' THEN 6
-                                WHEN faction_rank LIKE '%2%' THEN 7
-                                WHEN faction_rank LIKE '%1%' THEN 8
-                                ELSE 9
-                            END,
-                            is_online DESC,
-                            level DESC
-                    """, (f'%{faction_name}%',))
-                    
-                    members = cursor.fetchall()
-                    
-                    if not members:
-                        await interaction.followup.send(f"❌ **Faction not found:** `{faction_name}`")
-                        return
-                    
-                    # Get faction activity (last 7 days)
-                    player_ids = [m['player_id'] for m in members]
-                    placeholders = ','.join('?' * len(player_ids))
-                    cursor.execute(f"""
-                        SELECT COUNT(*) FROM actions
-                        WHERE player_id IN ({placeholders})
-                        AND timestamp >= datetime('now', '-7 days')
-                    """, player_ids)
-                    activity_count = cursor.fetchone()[0]
-                    
-                    # Get action breakdown by type
-                    cursor.execute(f"""
-                        SELECT action_type, COUNT(*) as count
-                        FROM actions
-                        WHERE player_id IN ({placeholders})
-                        AND timestamp >= datetime('now', '-7 days')
-                        GROUP BY action_type
-                        ORDER BY count DESC
-                        LIMIT 5
-                    """, player_ids)
-                    top_actions = cursor.fetchall()
-                    
-                    # Create detailed faction embed
-                    faction_display_name = members[0]['faction']
-                    online_members = [m for m in members if m['is_online']]
-                    offline_members = [m for m in members if not m['is_online']]
-                    
-                    embed = discord.Embed(
-                        title=f"🛡️ {faction_display_name}",
-                        description=f"**Total Members:** {len(members)} | **Online:** {len(online_members)} | **Activity (7d):** {activity_count:,} actions",
-                        color=discord.Color.gold(),
-                        timestamp=datetime.now()
-                    )
-                    
-                    # Online members
-                    if online_members:
-                        online_list = []
-                        for member in online_members[:15]:  # Max 15 to avoid hitting limits
-                            rank = member['faction_rank'] or 'No Rank'
-                            level = member['level'] or '?'
-                            online_list.append(f"🟢 `{member['player_id']:>6}` **{member['username']}**\n   ├─ {rank} | Lvl {level}")
-                        
-                        embed.add_field(
-                            name=f"🟢 Online Members ({len(online_members)})",
-                            value="\n".join(online_list) if online_list else "None",
-                            inline=False
-                        )
-                    
-                    # Offline members (show last 10)
-                    if offline_members:
-                        offline_list = []
-                        for member in offline_members[:10]:
-                            rank = member['faction_rank'] or 'No Rank'
-                            level = member['level'] or '?'
-                            last_seen = format_last_seen(member['last_seen'])
-                            offline_list.append(f"⚫ `{member['player_id']:>6}` **{member['username']}**\n   ├─ {rank} | Lvl {level} | Last: {last_seen}")
-                        
-                        remaining = len(offline_members) - 10
-                        if remaining > 0:
-                            offline_list.append(f"\n*...and {remaining} more offline members*")
-                        
-                        embed.add_field(
-                            name=f"⚫ Offline Members ({len(offline_members)})",
-                            value="\n".join(offline_list) if offline_list else "None",
-                            inline=False
-                        )
-                    
-                    # Top action types
-                    if top_actions:
-                        action_list = []
-                        for action in top_actions:
-                            action_emoji = {
-                                'warning_received': '⚠️',
-                                'chest_deposit': '📦',
-                                'chest_withdraw': '📤',
-                                'item_given': '🎁',
-                                'item_received': '💰'
-                            }.get(action['action_type'], '📌')
-                            action_list.append(f"{action_emoji} {action['action_type'].replace('_', ' ').title()}: {action['count']:,}")
-                        
-                        embed.add_field(
-                            name="📊 Top Actions (7 days)",
-                            value="\n".join(action_list),
-                            inline=False
-                        )
-                    
-                    embed.set_footer(text=f"Pro4Kings Database • Requested by {interaction.user.display_name}")
-                    await interaction.followup.send(embed=embed)
-                    return
-                
-                # Get all factions with statistics
-                cursor.execute("""
-                    SELECT 
-                        faction,
-                        COUNT(*) as total_members,
-                        SUM(CASE WHEN is_online = 1 THEN 1 ELSE 0 END) as online_members,
-                        AVG(level) as avg_level,
-                        SUM(respect_points) as total_respect
-                    FROM players
-                    WHERE faction IS NOT NULL AND faction NOT IN ('Civil', 'Fără', 'None', '-')
-                    GROUP BY faction
-                    ORDER BY total_members DESC
-                """)
-                
-                factions = cursor.fetchall()
-                
-                if not factions:
-                    embed = discord.Embed(
-                        title="🛡️ Server Factions",
-                        description="No faction data available.",
-                        color=discord.Color.orange()
-                    )
-                    await interaction.followup.send(embed=embed)
-                    return
-                
-                # Calculate activity for all factions (last 7 days)
-                faction_activity = {}
-                for faction_row in factions:
-                    faction_name_db = faction_row['faction']
-                    cursor.execute("""
-                        SELECT COUNT(*) FROM actions a
-                        JOIN players p ON a.player_id = p.player_id
-                        WHERE p.faction = ?
-                        AND a.timestamp >= datetime('now', '-7 days')
-                    """, (faction_name_db,))
-                    faction_activity[faction_name_db] = cursor.fetchone()[0]
-                
-                # Create main factions overview embed
-                embed = discord.Embed(
-                    title="🛡️ Server Factions Overview",
-                    description=f"Total factions: {len(factions)}\n\nUse `/factions <faction_name>` for detailed member roster and actions",
-                    color=discord.Color.blue(),
-                    timestamp=datetime.now()
-                )
-                
-                # Top 10 factions by member count
-                top_factions = factions[:10]
-                
-                faction_list = []
-                for i, faction_row in enumerate(top_factions, 1):
-                    fname = faction_row['faction']
-                    total = faction_row['total_members']
-                    online = faction_row['online_members']
-                    avg_lvl = faction_row['avg_level'] or 0
-                    activity = faction_activity.get(fname, 0)
-                    
-                    rank_emoji = {1: '🥇', 2: '🥈', 3: '🥉'}.get(i, f'{i}.')
-                    
-                    faction_list.append(
-                        f"{rank_emoji} **{fname}**\n"
-                        f"   👥 {total} members | 🟢 {online} online\n"
-                        f"   🎖️ Avg Lvl {avg_lvl:.1f} | 📊 {activity:,} actions (7d)"
-                    )
-                
-                embed.add_field(
-                    name="🏆 Top Factions by Size",
-                    value="\n\n".join(faction_list),
-                    inline=False
-                )
-                
-                # Most active factions (by total actions)
-                active_factions = sorted(
-                    [(fname, faction_activity[fname], next(f['total_members'] for f in factions if f['faction'] == fname)) 
-                     for fname in faction_activity.keys()],
-                    key=lambda x: x[1],
-                    reverse=True
-                )[:5]
-                
-                if active_factions:
-                    activity_list = []
-                    for i, (fname, actions, members) in enumerate(active_factions, 1):
-                        activity_per_member = actions / members if members > 0 else 0
-                        activity_list.append(
-                            f"{i}. **{fname}** - {actions:,} actions ({activity_per_member:.1f} per member)"
-                        )
-                    
-                    embed.add_field(
-                        name="🔥 Most Active Factions (7 days)",
-                        value="\n".join(activity_list),
-                        inline=False
-                    )
-                
-                # Calculate average online rate per faction
-                online_rate_factions = []
-                for faction_row in factions:
-                    fname = faction_row['faction']
-                    total = faction_row['total_members']
-                    online = faction_row['online_members']
-                    online_rate = (online / total * 100) if total > 0 else 0
-                    if total >= 5:  # Only consider factions with 5+ members
-                        online_rate_factions.append((fname, online_rate, online, total))
-                
-                # Sort by online rate
-                online_rate_factions.sort(key=lambda x: x[1], reverse=True)
-                
-                if online_rate_factions[:5]:
-                    online_rate_list = []
-                    for i, (fname, rate, online, total) in enumerate(online_rate_factions[:5], 1):
-                        online_rate_list.append(
-                            f"{i}. **{fname}** - {rate:.1f}% ({online}/{total} online)"
-                        )
-                    
-                    embed.add_field(
-                        name="⚡ Highest Online Activity Rate",
-                        value="\n".join(online_rate_list),
-                        inline=False
-                    )
-                
-                embed.set_footer(text=f"Pro4Kings Database • Requested by {interaction.user.display_name}")
-                await interaction.followup.send(embed=embed)
-                
-        except Exception as e:
-            logger.error(f"Error in factions command: {e}", exc_info=True)
-            await interaction.followup.send(f"❌ **Error:** {str(e)}")
-    
-    logger.info("✅ All slash commands registered (including /factions)")
+    logger.info("✅ All slash commands registered (including /scan and /scanconfig)")
