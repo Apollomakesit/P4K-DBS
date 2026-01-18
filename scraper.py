@@ -101,6 +101,14 @@ class Pro4KingsScraper:
         self.success_count = 0
         self.adaptive_delay = 0.02  # 🔥 Redus la 20ms
         
+        # 🔥 ACTION SCRAPING STATS
+        self.action_scraping_stats = {
+            'total_attempts': 0,
+            'successful_parses': 0,
+            'failed_parses': 0,
+            'total_actions_found': 0
+        }
+        
         self.last_request_time = {}  # Track per-worker
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -267,80 +275,140 @@ class Pro4KingsScraper:
         return all_players
     
     async def get_latest_actions(self, limit: int = 200) -> List[PlayerAction]:
-        """🔥 COMPLETELY REWRITTEN: Direct, simple, effective action scraping"""
+        """🔥 COMPLETELY REWRITTEN: More robust action detection with extensive logging"""
+        self.action_scraping_stats['total_attempts'] += 1
+        
         url = f"{self.base_url}/"
         html = await self.fetch_page(url)
         
         if not html:
             logger.error("❌ Failed to fetch homepage!")
+            self.action_scraping_stats['failed_parses'] += 1
             return []
         
-        soup = BeautifulSoup(html, 'html.parser')
+        soup = BeautifulSoup(html, 'lxml')
         actions = []
         
-        logger.info("🔍 Searching for action entries...")
+        logger.info("🔍 STEP 1: Searching for 'Ultimele acțiuni' or 'Activitate' section...")
         
-        # 🔥 STRATEGY 1: Find ALL list items on the page
-        all_list_items = soup.find_all('li')
-        logger.info(f"📋 Found {len(all_list_items)} total <li> elements")
+        # 🔥 METHOD 1: Find ALL list items first, then filter
+        all_lists = soup.find_all(['ul', 'ol', 'div'])
+        logger.info(f"   Found {len(all_lists)} total list/div containers")
         
-        action_candidates = []
+        candidate_lists = []
+        for lst in all_lists:
+            items = lst.find_all(['li', 'div'], recursive=False)
+            if len(items) >= 5:  # Must have at least 5 items
+                candidate_lists.append((lst, items))
         
-        for li in all_list_items:
-            text = li.get_text(strip=True)
-            
-            # Filter: Must contain "Jucatorul" or "jucatorul"
-            if 'ucatorul' not in text.lower():
-                continue
-            
-            # Filter: Must be long enough (real actions are detailed)
-            if len(text) < 40:
-                continue
-            
-            # Filter: Must contain action verbs
-            if not any(verb in text for verb in ['a primit', 'a dat', 'a pus', 'a scos', 'a retras', 'a cumparat', 'a vandut']):
-                continue
-            
-            # Filter: Must NOT be homepage stats
-            if any(stat in text for stat in ['Server', 'Conectați', 'Banați', 'JUCATE']):
-                continue
-            
-            action_candidates.append(li)
+        logger.info(f"🔍 STEP 2: Found {len(candidate_lists)} candidate lists with 5+ items")
         
-        logger.info(f"✅ Found {len(action_candidates)} potential action entries")
+        # 🔥 METHOD 2: Score each list by action patterns
+        best_list = None
+        best_score = 0
         
-        # Parse each candidate
-        for li in action_candidates[:limit]:
-            action = self.parse_action_entry(li)
-            if action:
-                actions.append(action)
-                logger.debug(f"✓ Parsed: {action.action_type} - {action.player_name}")
+        for lst, items in candidate_lists:
+            score = 0
+            action_items = 0
+            
+            # Sample first 10 items
+            for item in items[:10]:
+                text = item.get_text()
+                
+                # Check for action verbs
+                if any(verb in text for verb in ['a primit', 'a dat', 'a pus', 'a retras', 'a scos']):
+                    score += 10
+                    action_items += 1
+                
+                # Check for player reference
+                if 'Jucatorul' in text or 'jucatorul' in text:
+                    score += 5
+                
+                # Check for ID pattern (123)
+                if re.search(r'\(\d+\)', text):
+                    score += 3
+                
+                # Penalize homepage stats
+                if any(kw in text for kw in ['Conectați', 'Banați', 'JUCATE', 'Server']):
+                    score -= 50
+            
+            if score > best_score:
+                best_score = score
+                best_list = (lst, items)
         
-        # 🔥 STRATEGY 2: If no actions found, try alternative selectors
-        if len(actions) == 0:
-            logger.warning("⚠️ No actions found with primary strategy, trying alternatives...")
+        if best_list and best_score > 0:
+            logger.info(f"✅ FOUND best list with score {best_score}")
+            lst, items = best_list
+            logger.info(f"   List has {len(items)} total entries")
             
-            # Try divs with class containing "action" or "activity"
-            action_divs = soup.find_all('div', class_=re.compile(r'action|activity', re.IGNORECASE))
-            logger.info(f"Found {len(action_divs)} divs with action/activity classes")
+            # Parse entries
+            for entry in items[:limit * 2]:  # Check extra entries
+                text = entry.get_text(strip=True)
+                
+                # MINIMUM requirements
+                if len(text) < 40:
+                    continue
+                
+                if 'Jucatorul' not in text and 'jucatorul' not in text:
+                    continue
+                
+                # Parse action
+                action = self.parse_action_entry(entry)
+                if action:
+                    actions.append(action)
+                    
+                    if len(actions) >= limit:
+                        break
+        else:
+            logger.warning(f"❌ No suitable action list found! Best score was {best_score}")
             
-            for div in action_divs[:50]:
-                text = div.get_text(strip=True)
-                if 'ucatorul' in text.lower() and len(text) > 40:
-                    action = self.parse_action_entry(div)
+            # 🔥 FALLBACK: Try to find ANY text with player actions
+            logger.info("🔍 STEP 3: FALLBACK - Searching entire page text...")
+            page_text = soup.get_text()
+            
+            # Split by common separators
+            lines = page_text.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                
+                if len(line) < 40:
+                    continue
+                
+                if 'Jucatorul' not in line:
+                    continue
+                
+                # Try to parse as action
+                if any(verb in line for verb in ['a primit', 'a dat', 'a pus', 'a retras']):
+                    # Create a fake BeautifulSoup element
+                    fake_element = BeautifulSoup(f'<div>{line}</div>', 'lxml').div
+                    action = self.parse_action_entry(fake_element)
                     if action:
                         actions.append(action)
+                        
+                        if len(actions) >= limit:
+                            break
         
-        if len(actions) == 0:
-            logger.error(f"❌ NO ACTIONS FOUND! This is a critical issue.")
-            logger.error(f"📄 Page has {len(soup.find_all())} total HTML elements")
-            logger.error(f"📋 Examined {len(action_candidates)} candidate elements")
-            
-            # Debug: Show a sample of page content
-            sample_text = soup.get_text()[:500]
-            logger.error(f"📝 Page sample: {sample_text}...")
+        # Update stats
+        if actions:
+            self.action_scraping_stats['successful_parses'] += 1
+            self.action_scraping_stats['total_actions_found'] += len(actions)
+            logger.info(f"✅ Successfully extracted {len(actions)} actions!")
+            logger.info(f"📊 Scraping stats: {self.action_scraping_stats['successful_parses']}/{self.action_scraping_stats['total_attempts']} successful")
         else:
-            logger.info(f"✅ Successfully extracted {len(actions)} actions from homepage")
+            self.action_scraping_stats['failed_parses'] += 1
+            logger.error(f"❌ ZERO actions extracted! This is a critical issue!")
+            logger.error(f"📊 Failure rate: {self.action_scraping_stats['failed_parses']}/{self.action_scraping_stats['total_attempts']}")
+            
+            # Emergency dump for debugging
+            if self.action_scraping_stats['failed_parses'] % 5 == 0:
+                logger.error("🚨 EMERGENCY DUMP: Saving page HTML to action_debug.html")
+                try:
+                    with open('action_debug.html', 'w', encoding='utf-8') as f:
+                        f.write(html)
+                    logger.error("   → Saved to action_debug.html for manual inspection")
+                except Exception as e:
+                    logger.error(f"   → Failed to save debug file: {e}")
         
         return actions
     
