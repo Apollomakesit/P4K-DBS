@@ -1,12 +1,19 @@
 import discord
 from discord.ext import commands, tasks
 import os
+import signal
+import sys
 from datetime import datetime, timedelta
 from database import Database
 from scraper import Pro4KingsScraper
 import asyncio
 import logging
 import re
+import tracemalloc
+import psutil
+
+# 🔥 Start memory tracking
+tracemalloc.start()
 
 # Discord command sync tracking
 COMMANDS_SYNCED = False
@@ -22,6 +29,17 @@ SCAN_STATS = {
     'current_id': 0,
     'last_saved_id': 0
 }
+
+# 🔥 Task health tracking
+TASK_HEALTH = {
+    'scrape_actions': {'last_run': None, 'error_count': 0, 'is_running': False},
+    'scrape_online_players': {'last_run': None, 'error_count': 0, 'is_running': False},
+    'update_pending_profiles': {'last_run': None, 'error_count': 0, 'is_running': False},
+    'check_banned_players': {'last_run': None, 'error_count': 0, 'is_running': False}
+}
+
+# 🔥 Graceful shutdown flag
+SHUTDOWN_REQUESTED = False
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,12 +60,81 @@ bot = commands.Bot(command_prefix='!p4k ', intents=intents)
 db = Database(os.getenv('DATABASE_PATH', 'pro4kings.db'))
 scraper = None  # Will be initialized in setup_hook
 
+# 🔥 GRACEFUL SHUTDOWN HANDLER
+def signal_handler(sig, frame):
+    """Handle shutdown signals gracefully"""
+    global SHUTDOWN_REQUESTED
+    logger.info(f"\n🛑 Shutdown signal received ({sig}), cleaning up...")
+    SHUTDOWN_REQUESTED = True
+    
+    # Stop background tasks
+    if scrape_actions.is_running():
+        scrape_actions.cancel()
+    if scrape_online_players.is_running():
+        scrape_online_players.cancel()
+    if update_pending_profiles.is_running():
+        update_pending_profiles.cancel()
+    if check_banned_players.is_running():
+        check_banned_players.cancel()
+    
+    logger.info("✅ Background tasks stopped")
+    
+    # Close bot
+    asyncio.create_task(bot.close())
+
+# Register signal handlers
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# 🔥 VERIFY VOLUME MOUNT ON STARTUP
+def verify_environment():
+    """Verify Railway environment is properly configured"""
+    issues = []
+    
+    # Check database directory
+    db_path = os.getenv('DATABASE_PATH', 'pro4kings.db')
+    db_dir = os.path.dirname(db_path) or '.'
+    
+    if not os.path.exists(db_dir):
+        try:
+            os.makedirs(db_dir, exist_ok=True)
+            logger.info(f"✅ Created database directory: {db_dir}")
+        except Exception as e:
+            issues.append(f"Cannot create database directory {db_dir}: {e}")
+    
+    if not os.access(db_dir, os.W_OK):
+        issues.append(f"Database directory {db_dir} is not writable!")
+    
+    # Check Discord token
+    if not os.getenv('DISCORD_TOKEN'):
+        issues.append("DISCORD_TOKEN environment variable not set!")
+    
+    # Log system info
+    try:
+        memory = psutil.virtual_memory()
+        logger.info(f"📊 System: {memory.total / 1024**3:.1f}GB RAM, {memory.available / 1024**3:.1f}GB available")
+    except:
+        pass
+    
+    if issues:
+        logger.error("❌ ENVIRONMENT ISSUES:")
+        for issue in issues:
+            logger.error(f"  - {issue}")
+        return False
+    
+    logger.info("✅ Environment verification passed")
+    return True
+
 @bot.event
 async def on_ready():
     """Bot startup with proper slash command registration"""
     global COMMANDS_SYNCED
     
     logger.info(f'✅ {bot.user} is now running!')
+    
+    # Verify environment
+    if not verify_environment():
+        logger.error("❌ Environment verification failed! Bot may not work correctly.")
     
     # Sync slash commands (only once)
     async with SYNC_LOCK:
@@ -79,63 +166,114 @@ async def on_ready():
         check_banned_players.start()
         logger.info('✓ Started: check_banned_players (1h interval)')
     
+    # 🔥 Start task watchdog
+    if not task_watchdog.is_running():
+        task_watchdog.start()
+        logger.info('✓ Started: task_watchdog (5min interval)')
+    
     logger.info('🚀 All systems operational!')
     print(f'\n{"="*60}')
     print(f'✅ {bot.user} is ONLINE and monitoring Pro4Kings!')
     print(f'{"="*60}\n')
 
 # ============================================================================
-# PREFIX COMMAND FOR EMERGENCY COMMAND SYNC
+# 🔥 TASK WATCHDOG - Detects and restarts crashed tasks
 # ============================================================================
 
-@bot.command(name='sync')
-async def force_sync(ctx):
-    """EMERGENCY: Force sync slash commands if they don't appear"""
-    global COMMANDS_SYNCED
+@tasks.loop(minutes=5)
+async def task_watchdog():
+    """Monitor background tasks and restart if crashed"""
+    if SHUTDOWN_REQUESTED:
+        return
     
-    try:
-        await ctx.send("🔄 **Sincronizare forțată comenzi slash...**")
-        
-        # Force resync
-        COMMANDS_SYNCED = False
-        synced = await bot.tree.sync()
-        COMMANDS_SYNCED = True
-        
-        cmd_list = "\n".join([f"• `/{cmd.name}`: {cmd.description}" for cmd in synced])
-        
-        await ctx.send(
-            f"✅ **Succes! Sincronizate {len(synced)} comenzi:**\n{cmd_list}\n\n"
-            f"**Notă**: Discord poate dura 1-5 minute să afișeze comenzile noi. Așteaptă și reîncearcă `/scan_all`.\n\n"
-            f"Dacă nu apar după 5 minute:\n"
-            f"1. Ieși complet din Discord (închide aplicația)\n"
-            f"2. Reintră în Discord\n"
-            f"3. Comenzile ar trebui să apară acum"
-        )
-        
-        logger.info(f"✅ Force sync completed by {ctx.author}: {len(synced)} commands")
-        
-    except Exception as e:
-        await ctx.send(f"❌ **Eroare la sincronizare**: {str(e)}")
-        logger.error(f"Force sync error: {e}", exc_info=True)
+    now = datetime.now()
+    issues = []
+    
+    # Check scrape_actions (should run every 30s)
+    if TASK_HEALTH['scrape_actions']['last_run']:
+        elapsed = (now - TASK_HEALTH['scrape_actions']['last_run']).total_seconds()
+        if elapsed > 120:  # No run in 2 minutes
+            issues.append("scrape_actions hasn't run in 2+ minutes")
+            if not scrape_actions.is_running():
+                logger.warning("🔄 Restarting crashed task: scrape_actions")
+                scrape_actions.restart()
+    
+    # Check scrape_online_players (should run every 60s)
+    if TASK_HEALTH['scrape_online_players']['last_run']:
+        elapsed = (now - TASK_HEALTH['scrape_online_players']['last_run']).total_seconds()
+        if elapsed > 180:  # No run in 3 minutes
+            issues.append("scrape_online_players hasn't run in 3+ minutes")
+            if not scrape_online_players.is_running():
+                logger.warning("🔄 Restarting crashed task: scrape_online_players")
+                scrape_online_players.restart()
+    
+    # Check update_pending_profiles (should run every 2min)
+    if TASK_HEALTH['update_pending_profiles']['last_run']:
+        elapsed = (now - TASK_HEALTH['update_pending_profiles']['last_run']).total_seconds()
+        if elapsed > 360:  # No run in 6 minutes
+            issues.append("update_pending_profiles hasn't run in 6+ minutes")
+            if not update_pending_profiles.is_running():
+                logger.warning("🔄 Restarting crashed task: update_pending_profiles")
+                update_pending_profiles.restart()
+    
+    if issues:
+        logger.warning(f"⚠️ Task health issues detected: {', '.join(issues)}")
+    else:
+        logger.info("✅ All background tasks healthy")
+
+@task_watchdog.before_loop
+async def before_task_watchdog():
+    await bot.wait_until_ready()
+    # Wait 2 minutes before first check
+    await asyncio.sleep(120)
 
 # ============================================================================
-# BACKGROUND MONITORING TASKS
+# 🔥 SCRAPER CLIENT MANAGEMENT
+# ============================================================================
+
+async def get_or_recreate_scraper():
+    """Get scraper instance, recreate if needed"""
+    global scraper
+    
+    if scraper is None:
+        logger.info("🔄 Creating new scraper instance...")
+        scraper = Pro4KingsScraper(max_concurrent=5)
+        await scraper.__aenter__()
+    
+    # Check if client is still valid
+    if scraper.client and scraper.client.is_closed:
+        logger.warning("⚠️ Scraper client was closed, recreating...")
+        try:
+            await scraper.__aexit__(None, None, None)
+        except:
+            pass
+        scraper = Pro4KingsScraper(max_concurrent=5)
+        await scraper.__aenter__()
+    
+    return scraper
+
+# ============================================================================
+# BACKGROUND MONITORING TASKS WITH ERROR RECOVERY
 # ============================================================================
 
 @tasks.loop(seconds=30)
 async def scrape_actions():
     """Scrape latest actions - WITH ENHANCED ERROR HANDLING"""
+    if SHUTDOWN_REQUESTED:
+        return
+    
+    TASK_HEALTH['scrape_actions']['last_run'] = datetime.now()
+    TASK_HEALTH['scrape_actions']['is_running'] = True
+    
     try:
-        global scraper
-        if not scraper:
-            scraper = Pro4KingsScraper(max_concurrent=5)
-            await scraper.__aenter__()
+        scraper_instance = await get_or_recreate_scraper()
         
         logger.info("🔍 Fetching latest actions...")
-        actions = await scraper.get_latest_actions(limit=200)
+        actions = await scraper_instance.get_latest_actions(limit=200)
         
         if not actions:
             logger.warning("⚠️ No actions retrieved this cycle")
+            TASK_HEALTH['scrape_actions']['error_count'] += 1
             return
         
         new_count = 0
@@ -175,11 +313,28 @@ async def scrape_actions():
         
         if new_count > 0:
             logger.info(f"✅ Saved {new_count} new actions, marked {len(new_player_ids)} players for update")
+            TASK_HEALTH['scrape_actions']['error_count'] = 0  # Reset on success
         else:
             logger.info(f"ℹ️  No new actions (checked {len(actions)} entries)")
             
     except Exception as e:
-        logger.error(f"❌ Error in scrape_actions: {e}", exc_info=True)
+        TASK_HEALTH['scrape_actions']['error_count'] += 1
+        logger.error(f"❌ Error in scrape_actions (count: {TASK_HEALTH['scrape_actions']['error_count']}): {e}", exc_info=True)
+        
+        # If too many errors, recreate scraper
+        if TASK_HEALTH['scrape_actions']['error_count'] >= 5:
+            logger.warning("⚠️ Too many errors, recreating scraper client...")
+            global scraper
+            try:
+                if scraper:
+                    await scraper.__aexit__(None, None, None)
+            except:
+                pass
+            scraper = None
+            TASK_HEALTH['scrape_actions']['error_count'] = 0
+    
+    finally:
+        TASK_HEALTH['scrape_actions']['is_running'] = False
 
 @scrape_actions.before_loop
 async def before_scrape_actions():
@@ -187,29 +342,34 @@ async def before_scrape_actions():
     await bot.wait_until_ready()
     logger.info("✓ scrape_actions task ready")
 
+@scrape_actions.error
+async def scrape_actions_error(error):
+    """Handle task loop errors"""
+    logger.error(f"❌ scrape_actions task error: {error}", exc_info=error)
+    TASK_HEALTH['scrape_actions']['error_count'] += 1
+
 
 @tasks.loop(seconds=60)
 async def scrape_online_players():
     """
     Scrape online players every 60 seconds
-    ACCURATE detection from https://panel.pro4kings.ro/online
     """
+    if SHUTDOWN_REQUESTED:
+        return
+    
+    TASK_HEALTH['scrape_online_players']['last_run'] = datetime.now()
+    TASK_HEALTH['scrape_online_players']['is_running'] = True
+    
     try:
-        global scraper
-        if not scraper:
-            scraper = Pro4KingsScraper()
-            await scraper.__aenter__()
+        scraper_instance = await get_or_recreate_scraper()
         
-        # Get online players from actual panel
-        online_players = await scraper.get_online_players()
+        online_players = await scraper_instance.get_online_players()
         current_time = datetime.now()
         
-        # Get previously detected online players
         previous_online = db.get_current_online_players()
         previous_ids = {p['player_id'] for p in previous_online}
         current_ids = {p['player_id'] for p in online_players}
         
-        # Detect new logins
         new_logins = current_ids - previous_ids
         for player in online_players:
             if player['player_id'] in new_logins:
@@ -217,16 +377,13 @@ async def scrape_online_players():
                 db.mark_player_for_update(player['player_id'], player['player_name'])
                 logger.info(f"🟢 Login detected: {player['player_name']} ({player['player_id']})")
         
-        # Detect logouts
         logouts = previous_ids - current_ids
         for player_id in logouts:
             db.save_logout(player_id, current_time)
             logger.info(f"🔴 Logout detected: Player {player_id}")
         
-        # Update online players snapshot (upsert method)
         db.update_online_players(online_players)
         
-        # Mark all online players as priority for profile updates
         for player in online_players:
             db.mark_player_for_update(player['player_id'], player['player_name'])
         
@@ -235,17 +392,31 @@ async def scrape_online_players():
         else:
             logger.info(f"👥 Online players: {len(online_players)}")
         
+        TASK_HEALTH['scrape_online_players']['error_count'] = 0
+        
     except Exception as e:
+        TASK_HEALTH['scrape_online_players']['error_count'] += 1
         logger.error(f"✗ Error scraping online players: {e}", exc_info=True)
+    
+    finally:
+        TASK_HEALTH['scrape_online_players']['is_running'] = False
+
+@scrape_online_players.error
+async def scrape_online_players_error(error):
+    logger.error(f"❌ scrape_online_players task error: {error}", exc_info=error)
+    TASK_HEALTH['scrape_online_players']['error_count'] += 1
 
 @tasks.loop(minutes=2)
 async def update_pending_profiles():
     """Update profiles for detected players - 200 per run"""
+    if SHUTDOWN_REQUESTED:
+        return
+    
+    TASK_HEALTH['update_pending_profiles']['last_run'] = datetime.now()
+    TASK_HEALTH['update_pending_profiles']['is_running'] = True
+    
     try:
-        global scraper
-        if not scraper:
-            scraper = Pro4KingsScraper()
-            await scraper.__aenter__()
+        scraper_instance = await get_or_recreate_scraper()
         
         pending_ids = db.get_players_pending_update(limit=200)
         
@@ -254,7 +425,7 @@ async def update_pending_profiles():
         
         logger.info(f"🔄 Updating {len(pending_ids)} pending profiles...")
         
-        results = await scraper.batch_get_profiles(pending_ids)
+        results = await scraper_instance.batch_get_profiles(pending_ids)
         
         for profile in results:
             profile_dict = {
@@ -278,195 +449,203 @@ async def update_pending_profiles():
             db.reset_player_priority(profile.player_id)
         
         logger.info(f"✓ Updated {len(results)}/{len(pending_ids)} profiles")
+        TASK_HEALTH['update_pending_profiles']['error_count'] = 0
         
     except Exception as e:
+        TASK_HEALTH['update_pending_profiles']['error_count'] += 1
         logger.error(f"✗ Error updating profiles: {e}", exc_info=True)
+    
+    finally:
+        TASK_HEALTH['update_pending_profiles']['is_running'] = False
+
+@update_pending_profiles.error
+async def update_pending_profiles_error(error):
+    logger.error(f"❌ update_pending_profiles task error: {error}", exc_info=error)
+    TASK_HEALTH['update_pending_profiles']['error_count'] += 1
 
 @tasks.loop(hours=1)
 async def check_banned_players():
-    """Check banned players list hourly and mark expired bans"""
+    """Check banned players list hourly"""
+    if SHUTDOWN_REQUESTED:
+        return
+    
+    TASK_HEALTH['check_banned_players']['last_run'] = datetime.now()
+    TASK_HEALTH['check_banned_players']['is_running'] = True
+    
     try:
-        global scraper
-        if not scraper:
-            scraper = Pro4KingsScraper()
-            await scraper.__aenter__()
+        scraper_instance = await get_or_recreate_scraper()
         
-        banned = await scraper.get_banned_players()
+        banned = await scraper_instance.get_banned_players()
         current_ban_ids = {ban['player_id'] for ban in banned if ban.get('player_id')}
         
-        # Save current bans
         for ban_data in banned:
             db.save_banned_player(ban_data)
         
-        # Mark bans as expired if they're no longer on the list
         db.mark_expired_bans(current_ban_ids)
         
-        logger.info(f"✓ Updated {len(banned)} banned players, marked expired bans")
+        logger.info(f"✓ Updated {len(banned)} banned players")
+        TASK_HEALTH['check_banned_players']['error_count'] = 0
         
     except Exception as e:
+        TASK_HEALTH['check_banned_players']['error_count'] += 1
         logger.error(f"✗ Error checking banned players: {e}", exc_info=True)
-
-# ============================================================================
-# INITIAL SCAN FUNCTION (Background) - 🔥 SEQUENTIAL WITH 50-ID CHECKPOINTS
-# ============================================================================
-
-async def run_initial_scan(interaction: discord.Interaction, start_id: int = 1, end_id: int = 230000, workers: int = 30):
-    """🔥 SEQUENTIAL scan with better checkpointing"""
-    global SCAN_IN_PROGRESS, SCAN_STATS
-    
-    if SCAN_IN_PROGRESS:
-        await interaction.followup.send("⚠️ Un scan este deja în curs!")
-        return
-    
-    SCAN_IN_PROGRESS = True
-    SCAN_STATS = {
-        'start_time': datetime.now(),
-        'scanned': 0,
-        'found': 0,
-        'errors': 0,
-        'current_id': start_id,
-        'last_saved_id': start_id
-    }
-    
-    await interaction.followup.send(
-        f"🚀 **Scan secvențial pornit!**\n"
-        f"📊 Range: **{start_id:,} → {end_id:,}**\n"
-        f"⚙️ Workers: {workers}\n"
-        f"💾 **Checkpoint la fiecare 50 ID-uri**\n\n"
-        f"✅ Dacă se întrerupe, reluează cu `/scan_resume`\n"
-        f"📊 Vezi progres live cu `/scan_status`"
-    )
-    
-    try:
-        scan_scraper = Pro4KingsScraper(max_concurrent=workers)
-        await scan_scraper.__aenter__()
-        
-        # 🔥 SEQUENTIAL scanning cu checkpoint frecvent
-        batch_size = 50  # Smaller batches for frequent checkpoints
-        checkpoint_interval = 50  # Save every 50 IDs
-        
-        current_id = start_id
-        
-        while current_id <= end_id and SCAN_IN_PROGRESS:
-            # Create batch of sequential IDs
-            batch_end = min(current_id + batch_size - 1, end_id)
-            batch_ids = [str(i) for i in range(current_id, batch_end + 1)]
-            
-            # Fetch profiles
-            profiles = await scan_scraper.batch_get_profiles(batch_ids)
-            
-            # Save profiles
-            for profile in profiles:
-                try:
-                    profile_dict = {
-                        'player_id': profile.player_id,
-                        'player_name': profile.username,
-                        'is_online': profile.is_online,
-                        'last_connection': profile.last_seen,
-                        'faction': profile.faction,
-                        'faction_rank': profile.faction_rank,
-                        'job': profile.job,
-                        'level': profile.level,
-                        'respect_points': profile.respect_points,
-                        'warns': profile.warnings,
-                        'played_hours': profile.played_hours,
-                        'age_ic': profile.age_ic,
-                        'phone_number': profile.phone_number,
-                        'vehicles_count': profile.vehicles_count,
-                        'properties_count': profile.properties_count
-                    }
-                    db.save_player_profile(profile_dict)
-                    SCAN_STATS['found'] += 1
-                except Exception as e:
-                    logger.error(f"Error saving profile {profile.player_id}: {e}")
-                    SCAN_STATS['errors'] += 1
-            
-            SCAN_STATS['scanned'] += len(batch_ids)
-            SCAN_STATS['current_id'] = batch_end
-            
-            # 🔥 SAVE CHECKPOINT every 50 IDs
-            if (batch_end - start_id) % checkpoint_interval == 0 or batch_end == end_id:
-                db.save_scan_progress(
-                    last_player_id=str(batch_end),
-                    total_scanned=SCAN_STATS['found'],
-                    completed=(batch_end >= end_id)
-                )
-                SCAN_STATS['last_saved_id'] = batch_end
-                logger.info(f"💾 Checkpoint: ID {batch_end:,} | Găsiți: {SCAN_STATS['found']:,}")
-            
-            # Log progress
-            if SCAN_STATS['scanned'] % 500 == 0:
-                elapsed = (datetime.now() - SCAN_STATS['start_time']).total_seconds()
-                rate = SCAN_STATS['scanned'] / elapsed if elapsed > 0 else 0
-                logger.info(
-                    f"📊 Progress: {SCAN_STATS['scanned']:,}/{end_id:,} "
-                    f"({SCAN_STATS['scanned']/end_id*100:.1f}%) | "
-                    f"Rate: {rate:.1f}/s | "
-                    f"Last saved: {SCAN_STATS['last_saved_id']:,}"
-                )
-            
-            # Move to next batch
-            current_id = batch_end + 1
-            
-        await scan_scraper.__aexit__(None, None, None)
-        
-        # Final report
-        elapsed = (datetime.now() - SCAN_STATS['start_time']).total_seconds()
-        db.save_scan_progress(
-            last_player_id=str(end_id),
-            total_scanned=SCAN_STATS['found'],
-            completed=True
-        )
-        
-        try:
-            await interaction.channel.send(
-                f"✅ **Scan complet!**\n"
-                f"⏱️ Durată: {elapsed/60:.1f} min\n"
-                f"📊 Scanați: {SCAN_STATS['scanned']:,}\n"
-                f"👥 Găsiți: {SCAN_STATS['found']:,}\n"
-                f"⚡ Viteză: {SCAN_STATS['scanned']/elapsed:.1f} ID/s"
-            )
-        except:
-            pass
-        
-    except Exception as e:
-        logger.error(f"❌ Scan error: {e}", exc_info=True)
-        db.save_scan_progress(
-            last_player_id=str(SCAN_STATS['current_id']),
-            total_scanned=SCAN_STATS['found'],
-            completed=False
-        )
-        try:
-            await interaction.channel.send(
-                f"❌ **Eroare la ID {SCAN_STATS['current_id']:,}**\n"
-                f"Ultimul salvat: **{SCAN_STATS['last_saved_id']:,}**\n"
-                f"Folosește `/scan_resume`"
-            )
-        except:
-            pass
     
     finally:
-        SCAN_IN_PROGRESS = False
+        TASK_HEALTH['check_banned_players']['is_running'] = False
+
+@check_banned_players.error
+async def check_banned_players_error(error):
+    logger.error(f"❌ check_banned_players task error: {error}", exc_info=error)
+    TASK_HEALTH['check_banned_players']['error_count'] += 1
+
+# ============================================================================
+# 🔥 HEALTH MONITORING COMMAND
+# ============================================================================
+
+@bot.tree.command(name="health", description="Check bot health status")
+async def health_check(interaction: discord.Interaction):
+    """Comprehensive health check"""
+    await interaction.response.defer()
+    
+    embed = discord.Embed(
+        title="🏥 Bot Health Status",
+        color=discord.Color.green(),
+        timestamp=datetime.now()
+    )
+    
+    # Task status
+    now = datetime.now()
+    task_status = []
+    all_healthy = True
+    
+    for task_name, health in TASK_HEALTH.items():
+        if health['last_run']:
+            elapsed = (now - health['last_run']).total_seconds()
+            status = "🟢" if elapsed < 300 else "🟡" if elapsed < 600 else "🔴"
+            if elapsed >= 300:
+                all_healthy = False
+            task_status.append(
+                f"{status} **{task_name}**\n"
+                f"   Last run: {int(elapsed)}s ago\n"
+                f"   Errors: {health['error_count']}"
+            )
+        else:
+            task_status.append(f"⚪ **{task_name}**: Not started yet")
+    
+    embed.add_field(
+        name="Background Tasks",
+        value="\n\n".join(task_status),
+        inline=False
+    )
+    
+    # Memory usage
+    try:
+        process = psutil.Process()
+        mem_info = process.memory_info()
+        mem_mb = mem_info.rss / 1024 / 1024
+        
+        # Get tracemalloc snapshot
+        snapshot = tracemalloc.take_snapshot()
+        top_stats = snapshot.statistics('lineno')[:3]
+        
+        mem_lines = [f"**Current**: {mem_mb:.1f} MB"]
+        for stat in top_stats:
+            mem_lines.append(f"• {stat.filename}:{stat.lineno}: {stat.size / 1024:.1f} KB")
+        
+        embed.add_field(
+            name="Memory Usage",
+            value="\n".join(mem_lines),
+            inline=True
+        )
+    except Exception as e:
+        embed.add_field(
+            name="Memory Usage",
+            value=f"Error: {e}",
+            inline=True
+        )
+    
+    # Database status
+    try:
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM actions")
+            action_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM players")
+            player_count = cursor.fetchone()[0]
+        
+        embed.add_field(
+            name="Database",
+            value=f"✅ Connected\n**Actions**: {action_count:,}\n**Players**: {player_count:,}",
+            inline=True
+        )
+    except Exception as e:
+        embed.add_field(
+            name="Database",
+            value=f"❌ Error: {str(e)[:50]}",
+            inline=True
+        )
+        all_healthy = False
+    
+    # Scraper status
+    scraper_status = "✅ Active" if scraper and scraper.client and not scraper.client.is_closed else "⚠️ Inactive"
+    embed.add_field(
+        name="Scraper Client",
+        value=scraper_status,
+        inline=True
+    )
+    
+    # Set overall color
+    if all_healthy:
+        embed.color = discord.Color.green()
+        embed.set_footer(text="✅ All systems operational")
+    else:
+        embed.color = discord.Color.orange()
+        embed.set_footer(text="⚠️ Some issues detected")
+    
+    await interaction.followup.send(embed=embed)
+
+# ============================================================================
+# PREFIX COMMAND FOR EMERGENCY COMMAND SYNC
+# ============================================================================
+
+@bot.command(name='sync')
+async def force_sync(ctx):
+    """EMERGENCY: Force sync slash commands"""
+    global COMMANDS_SYNCED
+    
+    try:
+        await ctx.send("🔄 **Sincronizare forțată comenzi slash...**")
+        
+        COMMANDS_SYNCED = False
+        synced = await bot.tree.sync()
+        COMMANDS_SYNCED = True
+        
+        cmd_list = "\n".join([f"• `/{cmd.name}`: {cmd.description}" for cmd in synced])
+        
+        await ctx.send(
+            f"✅ **Succes! Sincronizate {len(synced)} comenzi:**\n{cmd_list}"
+        )
+        
+        logger.info(f"✅ Force sync completed by {ctx.author}: {len(synced)} commands")
+        
+    except Exception as e:
+        await ctx.send(f"❌ **Eroare la sincronizare**: {str(e)}")
+        logger.error(f"Force sync error: {e}", exc_info=True)
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
 async def resolve_player_info(identifier):
-    """Helper to get player info - FIXED to prioritize ID lookup"""
-    global scraper
-    if not scraper:
-        scraper = Pro4KingsScraper()
-        await scraper.__aenter__()
+    """Helper to get player info"""
+    scraper_instance = await get_or_recreate_scraper()
     
-    # PRIORITY 1: Try as exact player ID
     if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
         player_id = str(identifier)
         profile = db.get_player_by_exact_id(player_id)
         
         if not profile:
-            # Fetch from website
-            profile_obj = await scraper.get_player_profile(player_id)
+            profile_obj = await scraper_instance.get_player_profile(player_id)
             if profile_obj:
                 profile = {
                     'player_id': profile_obj.player_id,
@@ -489,715 +668,13 @@ async def resolve_player_info(identifier):
         
         return profile
     
-    # PRIORITY 2: Extract ID from "Name(ID)" format
     id_match = re.search(r'\((\d+)\)', str(identifier))
     if id_match:
         player_id = id_match.group(1)
         return await resolve_player_info(player_id)
     
-    # PRIORITY 3: Search by name as last resort
     players = db.search_player_by_name(identifier)
     return players[0] if players else None
-
-# ============================================================================
-# DISCORD SLASH COMMANDS - SCAN MANAGEMENT
-# ============================================================================
-
-@bot.tree.command(name="scan_all", description="[ADMIN] Pornește scanarea inițială a tuturor jucătorilor (1-230K)")
-async def scan_all_players(interaction: discord.Interaction, start_id: int = 1, end_id: int = 230000, workers: int = 30):
-    """🔥 UPDATED: Trigger initial scan with resume support"""
-    await interaction.response.defer()
-    
-    if SCAN_IN_PROGRESS:
-        await interaction.followup.send(
-            f"⚠️ **Un scan este deja activ!**\n"
-            f"Progres: {SCAN_STATS['scanned']:,}/{end_id:,} ({SCAN_STATS['scanned']/end_id*100:.1f}%)\n"
-            f"Găsiți: {SCAN_STATS['found']:,} jucători\n"
-            f"Ultimul ID salvat: {SCAN_STATS['last_saved_id']:,}\n\n"
-            f"Folosește `/scan_status` pentru detalii live."
-        )
-        return
-    
-    # 🔥 Check for saved progress
-    progress = db.get_scan_progress()
-    if progress.get('last_scan'):
-        last_id = int(progress.get('last_scanned_id', 0)) if progress.get('last_scanned_id') else 0
-        if last_id > 0 and last_id < end_id:
-            await interaction.followup.send(
-                f"📊 **Progress salvat găsit!**\n"
-                f"Ultimul ID scanat: **{last_id:,}**\n"
-                f"Jucători găsiți: {progress['total_scanned']:,}\n\n"
-                f"Vrei să continui de la ID {last_id + 1}?\n"
-                f"Folosește `/scan_resume` sau\n"
-                f"`/scan_all start_id:{last_id + 1}` pentru a continua."
-            )
-            return
-    
-    # Start scan in background
-    asyncio.create_task(run_initial_scan(interaction, start_id, end_id, workers))
-
-@bot.tree.command(name="scan_resume", description="Reia scanarea întreruptă de la ultimul checkpoint")
-async def scan_resume(interaction: discord.Interaction, workers: int = 30):
-    """🔥 NEW: Resume interrupted scan from last checkpoint"""
-    await interaction.response.defer()
-    
-    if SCAN_IN_PROGRESS:
-        await interaction.followup.send("⚠️ Un scan este deja activ!")
-        return
-    
-    # Get last saved progress
-    progress = db.get_scan_progress()
-    last_id = int(progress.get('last_scanned_id', 0)) if progress.get('last_scanned_id') else 0
-    
-    if last_id == 0:
-        await interaction.followup.send(
-            "❌ **Nu există progress salvat!**\n"
-            "Folosește `/scan_all` pentru a porni un scan nou."
-        )
-        return
-    
-    if last_id >= 230000:
-        await interaction.followup.send(
-            "✅ **Scanarea este completă!**\n"
-            f"Total jucători: {progress['total_scanned']:,}"
-        )
-        return
-    
-    # Resume from last checkpoint
-    await interaction.followup.send(
-        f"🔄 **Reluare scan de la checkpoint!**\n"
-        f"📊 Ultimul ID salvat: **{last_id:,}**\n"
-        f"👥 Jucători găsiți până acum: {progress['total_scanned']:,}\n"
-        f"📈 Rămân: {230000 - last_id:,} ID-uri\n\n"
-        f"Pornire..."
-    )
-    
-    # Start from next ID after last saved
-    asyncio.create_task(run_initial_scan(interaction, last_id + 1, 230000, workers))
-
-@bot.tree.command(name="scan_status", description="Vezi progresul scanării (actualizare continuă)")
-async def scan_status(interaction: discord.Interaction, continuous: bool = True):
-    """🔥 CONTINUOUS real-time updates until scan completes"""
-    await interaction.response.defer()
-    
-    if not SCAN_IN_PROGRESS:
-        progress = db.get_scan_progress()
-        total_players = progress['total_scanned']
-        last_id = progress.get('last_scanned_id', 'N/A')
-        
-        await interaction.followup.send(
-            f"ℹ️ **Nu este scan activ**\n"
-            f"👥 Jucători: **{total_players:,}**\n"
-            f"📊 Ultimul ID: **{last_id}**"
-        )
-        return
-    
-    # Create initial embed
-    embed = create_scan_status_embed()
-    message = await interaction.followup.send(embed=embed)
-    
-    # 🔥 CONTINUOUS UPDATES until scan completes (if enabled)
-    update_count = 0
-    
-    while SCAN_IN_PROGRESS and (continuous or update_count < 12):
-        await asyncio.sleep(3)  # Update every 3 seconds
-        
-        if not SCAN_IN_PROGRESS:
-            embed = create_scan_status_embed()
-            embed.set_footer(text="✅ Scan finalizat!")
-            await message.edit(embed=embed)
-            break
-        
-        # Update embed
-        embed = create_scan_status_embed()
-        if continuous:
-            embed.set_footer(text=f"🔄 Actualizare continuă activă... (update #{update_count + 1})")
-        else:
-            embed.set_footer(text=f"🔄 Actualizare... ({update_count + 1}/12)")
-        
-        try:
-            await message.edit(embed=embed)
-        except discord.errors.NotFound:
-            # Message was deleted
-            break
-        except Exception as e:
-            logger.error(f"Error updating status: {e}")
-            break
-        
-        update_count += 1
-    
-    if continuous and SCAN_IN_PROGRESS:
-        embed.set_footer(text="✅ Monitorizare completă. Rulează din nou pentru update.")
-        try:
-            await message.edit(embed=embed)
-        except:
-            pass
-
-def create_scan_status_embed() -> discord.Embed:
-    """🔥 NEW: Helper to create scan status embed"""
-    elapsed = (datetime.now() - SCAN_STATS['start_time']).total_seconds()
-    rate = SCAN_STATS['scanned'] / elapsed if elapsed > 0 else 0
-    total_target = 230000
-    remaining = (total_target - SCAN_STATS['current_id']) / rate if rate > 0 else 0
-    
-    progress_bar_length = 20
-    filled = int((SCAN_STATS['scanned'] / total_target) * progress_bar_length)
-    bar = "█" * filled + "░" * (progress_bar_length - filled)
-    
-    embed = discord.Embed(
-        title="📊 Status Scan Inițial (Live)",
-        description=f"`{bar}` {SCAN_STATS['scanned']/total_target*100:.1f}%",
-        color=discord.Color.blue(),
-        timestamp=datetime.now()
-    )
-    
-    embed.add_field(
-        name="📈 Progres",
-        value=f"**{SCAN_STATS['scanned']:,}** / {total_target:,} ID-uri",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="👥 Găsiți",
-        value=f"**{SCAN_STATS['found']:,}** jucători",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="⚡ Viteză",
-        value=f"**{rate:.1f}** ID-uri/sec",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="⏱️ Timp scurs",
-        value=f"**{elapsed/60:.0f}** minute",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="⏳ Rămas",
-        value=f"**{remaining/60:.0f}** minute",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="💾 Ultimul ID salvat",
-        value=f"**{SCAN_STATS['last_saved_id']:,}**",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="❌ Erori",
-        value=f"**{SCAN_STATS['errors']}**",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="📍 ID curent",
-        value=f"**{SCAN_STATS['current_id']:,}**",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="📊 Procent complet",
-        value=f"**{SCAN_STATS['found']/SCAN_STATS['scanned']*100 if SCAN_STATS['scanned'] > 0 else 0:.1f}%** profiluri valide",
-        inline=True
-    )
-    
-    return embed
-
-@bot.tree.command(name="scan_stop", description="[ADMIN] Oprește scanarea în curs")
-async def scan_stop(interaction: discord.Interaction):
-    """Stop ongoing scan"""
-    global SCAN_IN_PROGRESS
-    
-    await interaction.response.defer()
-    
-    if not SCAN_IN_PROGRESS:
-        await interaction.followup.send("ℹ️ Nu este niciun scan activ.")
-        return
-    
-    SCAN_IN_PROGRESS = False
-    
-    await interaction.followup.send(
-        f"🛑 **Scan oprit!**\n"
-        f"Scanați: {SCAN_STATS['scanned']:,}\n"
-        f"Găsiți: {SCAN_STATS['found']:,} jucători\n"
-        f"Ultimul ID salvat: **{SCAN_STATS['last_saved_id']:,}**\n\n"
-        f"✅ Progresul a fost salvat automat!\n"
-        f"Poți relua cu `/scan_resume` sau\n"
-        f"`/scan_all start_id:{SCAN_STATS['last_saved_id'] + 1}`"
-    )
-
-# ============================================================================
-# DISCORD SLASH COMMANDS - PLAYER INFO  
-# ============================================================================
-
-@bot.tree.command(name="player", description="Vezi informații complete despre un jucător (ID sau nume)")
-async def player_info(interaction: discord.Interaction, identifier: str):
-    await interaction.response.defer()
-    
-    profile = await resolve_player_info(identifier)
-    
-    if not profile:
-        await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**. Folosește ID-ul pentru rezultate mai precise (ex: /player 12345).")
-        return
-    
-    player_name = profile.get('player_name') or profile.get('username', f"Player_{profile['player_id']}")
-    
-    embed = discord.Embed(
-        title=f"👤 {player_name}",
-        description=f"ID: **{profile['player_id']}**",
-        color=discord.Color.green() if profile.get('is_online') else discord.Color.red(),
-        timestamp=datetime.now()
-    )
-    
-    if profile.get('is_online'):
-        embed.add_field(name="🟢 Status", value="**Online acum**", inline=True)
-    else:
-        embed.add_field(name="🔴 Status", value="**Offline**", inline=True)
-    
-    if profile.get('level'):
-        embed.add_field(name="⭐ Level", value=f"**{profile['level']}**", inline=True)
-    
-    faction = profile.get('faction', 'Civil')
-    faction_emoji = "🏢" if faction != "Civil" else "👤"
-    embed.add_field(name=f"{faction_emoji} Facțiune", value=f"**{faction}**", inline=True)
-    
-    if profile.get('faction_rank'):
-        embed.add_field(name="🏎️ Rank", value=f"**{profile['faction_rank']}**", inline=True)
-    
-    if profile.get('job'):
-        embed.add_field(name="💼 Job", value=f"**{profile['job']}**", inline=True)
-    
-    warns = profile.get('warns', 0)
-    warn_emoji = "⚠️" if warns > 0 else "✅"
-    embed.add_field(name=f"{warn_emoji} Warn-uri", value=f"**{warns}/3**", inline=True)
-    
-    if profile.get('played_hours'):
-        embed.add_field(name="⏱️ Ore jucate", value=f"**{profile['played_hours']:.1f}** ore", inline=True)
-    
-    if profile.get('respect_points'):
-        embed.add_field(name="⭐ Respect", value=f"**{profile['respect_points']}**", inline=True)
-    
-    if profile.get('age_ic'):
-        embed.add_field(name="🎂 Vârsta IC", value=f"**{profile['age_ic']}** ani", inline=True)
-    
-    if profile.get('vehicles_count') is not None:
-        embed.add_field(name="🚗 Vehicule", value=f"**{profile['vehicles_count']}**", inline=True)
-    
-    if profile.get('properties_count') is not None:
-        embed.add_field(name="🏠 Proprietăți", value=f"**{profile['properties_count']}**", inline=True)
-    
-    if profile.get('last_connection') and not profile.get('is_online'):
-        last_conn = profile['last_connection']
-        if isinstance(last_conn, str):
-            last_conn = datetime.fromisoformat(last_conn)
-        embed.add_field(
-            name="🕐 Ultima conectare",
-            value=f"**{last_conn.strftime('%d.%m.%Y %H:%M:%S')}**",
-            inline=False
-        )
-    
-    embed.set_footer(text=f"Tip: Folosește /rank_history {profile['player_id']} pentru istoric rang")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="actions", description="Vezi acțiunile unui jucător")
-async def player_actions(interaction: discord.Interaction, identifier: str, days: int = 7):
-    await interaction.response.defer()
-    
-    actions = db.get_player_actions(identifier, days)
-    
-    if not actions:
-        await interaction.followup.send(f"❌ Nu am găsit acțiuni pentru **{identifier}** în ultimele {days} zile.")
-        return
-    
-    player_name = identifier
-    if actions and actions[0].get('player_name'):
-        player_name = actions[0]['player_name']
-    
-    embed = discord.Embed(
-        title=f"📋 Acțiuni - {player_name}",
-        description=f"Ultimele {days} zile • **{len(actions)}** acțiuni",
-        color=discord.Color.blue(),
-        timestamp=datetime.now()
-    )
-    
-    total_chars = 0
-    max_embed_chars = 5500
-    actions_added = 0
-    
-    for action in actions[:25]:
-        timestamp = action['timestamp']
-        if isinstance(timestamp, str):
-            timestamp = datetime.fromisoformat(timestamp)
-        
-        action_text = action.get('raw_text', action.get('action_detail', 'N/A'))
-        
-        if len(action_text) > 200:
-            action_text = action_text[:197] + "..."
-        
-        field_content = action_text
-        field_name = timestamp.strftime('%d.%m.%Y %H:%M:%S')
-        
-        field_size = len(field_name) + len(field_content)
-        
-        if total_chars + field_size > max_embed_chars:
-            break
-        
-        embed.add_field(
-            name=field_name,
-            value=field_content,
-            inline=False
-        )
-        
-        total_chars += field_size
-        actions_added += 1
-    
-    if actions_added < len(actions):
-        embed.set_footer(text=f"Afișate {actions_added} din {len(actions)} acțiuni (limitat pentru Discord)")
-    elif len(actions) > 25:
-        embed.set_footer(text=f"Afișate primele 25 din {len(actions)} acțiuni")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="rank_history", description="Vezi istoricul de rang al unui jucător")
-async def rank_history(interaction: discord.Interaction, identifier: str):
-    """View player's faction rank history"""
-    await interaction.response.defer()
-    
-    profile = await resolve_player_info(identifier)
-    if not profile:
-        await interaction.followup.send(f"❌ Nu am găsit jucătorul **{identifier}**.")
-        return
-    
-    player_id = profile['player_id']
-    player_name = profile.get('player_name') or profile.get('username', f"Player_{player_id}")
-    rank_history = db.get_player_rank_history(player_id)
-    
-    if not rank_history:
-        await interaction.followup.send(f"❌ Nu am istoric de rang pentru **{player_name}**.")
-        return
-    
-    embed = discord.Embed(
-        title=f"🏎️ Istoric Rang - {player_name}",
-        description=f"ID: {player_id} • **{len(rank_history)}** schimbări de rang",
-        color=discord.Color.gold(),
-        timestamp=datetime.now()
-    )
-    
-    for rank in rank_history[:15]:
-        obtained = rank['rank_obtained']
-        if isinstance(obtained, str):
-            obtained = datetime.fromisoformat(obtained)
-        
-        lost = rank.get('rank_lost')
-        status = "🟢 Curent" if rank['is_current'] else "🔴 Pierdut"
-        
-        duration = ""
-        if lost:
-            if isinstance(lost, str):
-                lost = datetime.fromisoformat(lost)
-            duration = f" (Durata: {(lost - obtained).days} zile)"
-        elif rank['is_current']:
-            duration = f" (De {(datetime.now() - obtained).days} zile)"
-        
-        embed.add_field(
-            name=f"{rank['faction']} - {rank['rank_name']}",
-            value=f"{status} • Obținut: {obtained.strftime('%d.%m.%Y')}{duration}",
-            inline=False
-        )
-    
-    if len(rank_history) > 15:
-        embed.set_footer(text=f"Afișate primele 15 din {len(rank_history)} ranguri")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="bans", description="Vezi jucătorii banați (activi sau toți)")
-async def view_bans(interaction: discord.Interaction, show_expired: bool = False):
-    """View banned players"""
-    await interaction.response.defer()
-    
-    banned = db.get_banned_players(include_expired=show_expired)
-    
-    if not banned:
-        await interaction.followup.send("✅ Nu sunt jucători banați momentan.")
-        return
-    
-    embed = discord.Embed(
-        title="🚫 Jucători Banați",
-        description=f"Total: **{len(banned)}** jucători" + (" (inclusiv expirați)" if show_expired else " (doar activi)"),
-        color=discord.Color.red(),
-        timestamp=datetime.now()
-    )
-    
-    for ban in banned[:25]:
-        status = "🔴 Activ" if ban['is_active'] else "🟢 Expirat"
-        duration = ban.get('duration', 'Permanent')
-        reason = ban.get('reason', 'Necunoscut')[:100]
-        
-        embed.add_field(
-            name=f"{status} • {ban['player_name']} (ID: {ban['player_id']})",
-            value=f"Admin: {ban.get('admin', 'N/A')}\nMotiv: {reason}\nDurata: {duration}\nData: {ban.get('ban_date', 'N/A')}",
-            inline=False
-        )
-    
-    if len(banned) > 25:
-        embed.set_footer(text=f"Afișate primele 25 din {len(banned)} banuri")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="promotions", description="Vezi promovările recente în facțiuni")
-async def recent_promotions(interaction: discord.Interaction, days: int = 7):
-    """View recent faction promotions"""
-    await interaction.response.defer()
-    
-    promotions = db.get_recent_promotions(days=days)
-    
-    if not promotions:
-        await interaction.followup.send(f"❌ Nu sunt promovări în ultimele {days} zile.")
-        return
-    
-    embed = discord.Embed(
-        title="🏎️ Promovări Recente",
-        description=f"Ultimele {days} zile • **{len(promotions)}** promovări",
-        color=discord.Color.gold(),
-        timestamp=datetime.now()
-    )
-    
-    for promo in promotions[:20]:
-        obtained = promo['rank_obtained']
-        if isinstance(obtained, str):
-            obtained = datetime.fromisoformat(obtained)
-        
-        time_ago = (datetime.now() - obtained).days
-        time_str = f"{time_ago} zile" if time_ago > 0 else "Astăzi"
-        
-        embed.add_field(
-            name=f"{promo['player_name']} (ID: {promo['player_id']})",
-            value=f"**{promo['rank_name']}** în {promo['faction']}\nPrimit: {time_str}",
-            inline=True
-        )
-    
-    if len(promotions) > 20:
-        embed.set_footer(text=f"Afișate primele 20 din {len(promotions)} promovări")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="online", description="Vezi jucătorii online acum")
-async def online_players(interaction: discord.Interaction):
-    await interaction.response.defer()
-    
-    players = db.get_current_online_players()
-    
-    if not players:
-        await interaction.followup.send("❌ Nu sunt jucători online momentan.")
-        return
-    
-    embed = discord.Embed(
-        title="🟢 Jucători Online",
-        description=f"**{len(players)}** jucători activi",
-        color=discord.Color.green(),
-        timestamp=datetime.now()
-    )
-    
-    chunk_size = 50
-    player_chunks = [players[i:i + chunk_size] for i in range(0, len(players), chunk_size)]
-    
-    for i, chunk in enumerate(player_chunks[:3]):
-        player_list = "\n".join([
-            f"• **{p['player_name']}** (ID: {p['player_id']})" 
-            for p in chunk
-        ])
-        embed.add_field(
-            name=f"Jucători (Partea {i+1})" if len(player_chunks) > 1 else "Jucători",
-            value=player_list or "Nimeni",
-            inline=False
-        )
-    
-    if len(players) > 150:
-        embed.set_footer(text=f"Afișați primii 150 din {len(players)} jucători")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="sessions", description="Vezi sesiunile de joc ale unui jucător")
-async def player_sessions(interaction: discord.Interaction, identifier: str, days: int = 7):
-    await interaction.response.defer()
-    
-    sessions = db.get_player_sessions(identifier, days)
-    
-    if not sessions:
-        await interaction.followup.send(f"❌ Nu am date despre sesiunile lui **{identifier}**.")
-        return
-    
-    player_name = identifier
-    if sessions and sessions[0].get('player_name'):
-        player_name = sessions[0]['player_name']
-    
-    embed = discord.Embed(
-        title=f"🎮 Sesiuni - {player_name}",
-        description=f"Ultimele {days} zile • **{len(sessions)}** sesiuni",
-        color=discord.Color.purple()
-    )
-    
-    total_seconds = 0
-    for session in sessions[:25]:
-        login_time = session['login_time']
-        if isinstance(login_time, str):
-            login_time = datetime.fromisoformat(login_time)
-        
-        duration_text = session.get('duration', '🟢 Online acum')
-        if session.get('session_duration_seconds'):
-            total_seconds += session['session_duration_seconds']
-        
-        embed.add_field(
-            name=f"Login: {login_time.strftime('%d.%m.%Y %H:%M:%S')}",
-            value=f"Durată: **{duration_text}**",
-            inline=False
-        )
-    
-    if total_seconds > 0:
-        total_time = str(timedelta(seconds=total_seconds)).split('.')[0]
-        embed.set_footer(text=f"⏱️ Timp total de joc: {total_time}")
-    
-    if len(sessions) > 25:
-        footer_text = f"Afișate primele 25 din {len(sessions)} sesiuni"
-        if total_seconds > 0:
-            footer_text += f" • ⏱️ Total: {str(timedelta(seconds=total_seconds)).split('.')[0]}"
-        embed.set_footer(text=footer_text)
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="faction", description="Vezi membrii unei facțiuni")
-async def faction_members(interaction: discord.Interaction, faction_name: str):
-    await interaction.response.defer()
-    
-    members = db.get_players_by_faction(faction_name)
-    
-    if not members:
-        await interaction.followup.send(f"❌ Nu am găsit membri în facțiunea **{faction_name}**.")
-        return
-    
-    embed = discord.Embed(
-        title=f"🏢 Membri {faction_name}",
-        description=f"Găsiți **{len(members)}** membri",
-        color=discord.Color.blue()
-    )
-    
-    online_count = sum(1 for m in members if m.get('is_online'))
-    embed.add_field(name="Status", value=f"🟢 **{online_count}** online / {len(members)} total", inline=False)
-    
-    for member in members[:25]:
-        status = "🟢" if member.get('is_online') else "🔴"
-        warns = member.get('warnings', 0)
-        warn_text = f" ⚠️ {warns}" if warns > 0 else ""
-        rank_text = f" • {member.get('faction_rank')}" if member.get('faction_rank') else ""
-        level_text = f"Level {member.get('level')}" if member.get('level') else "N/A"
-        
-        player_name = member.get('username', member.get('player_name', 'Unknown'))
-        
-        embed.add_field(
-            name=f"{status} {player_name} (ID: {member['player_id']})",
-            value=f"{level_text}{rank_text}{warn_text}",
-            inline=False
-        )
-    
-    if len(members) > 25:
-        embed.set_footer(text=f"Afișați primii 25 din {len(members)} membri")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="search", description="Caută jucători după nume")
-async def find_player(interaction: discord.Interaction, name: str):
-    await interaction.response.defer()
-    
-    players = db.search_player_by_name(name)
-    
-    if not players:
-        await interaction.followup.send(f"❌ Nu am găsit jucători cu numele **{name}**. Tip: Folosește ID-ul pentru rezultate precise.")
-        return
-    
-    embed = discord.Embed(
-        title=f"🔍 Rezultate pentru: {name}",
-        description=f"Găsite **{len(players)}** rezultate",
-        color=discord.Color.blue()
-    )
-    
-    for player in players[:15]:
-        status = "🟢 Online" if player.get('is_online') else "🔴 Offline"
-        last_conn = player.get('last_seen', 'Necunoscut')
-        
-        if last_conn and last_conn != 'Necunoscut':
-            if isinstance(last_conn, str):
-                last_conn = datetime.fromisoformat(last_conn)
-            last_conn = last_conn.strftime('%d.%m %H:%M')
-        
-        faction = player.get('faction', 'Civil')
-        level = player.get('level', '?')
-        
-        embed.add_field(
-            name=f"{player['username']} (ID: {player['player_id']})",
-            value=f"{status} • {faction} • Level {level} • Ultima: {last_conn}",
-            inline=False
-        )
-    
-    if len(players) > 15:
-        embed.set_footer(text=f"Afișați primii 15 din {len(players)} jucători")
-    
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="stats", description="Vezi statistici generale despre baza de date")
-async def bot_stats(interaction: discord.Interaction):
-    await interaction.response.defer()
-    
-    progress = db.get_scan_progress()
-    
-    embed = discord.Embed(
-        title="📊 Statistici P4K Database Bot",
-        color=discord.Color.gold(),
-        timestamp=datetime.now()
-    )
-    
-    embed.add_field(
-        name="👥 Jucători",
-        value=f"**{progress['total_scanned']:,}** în baza de date",
-        inline=True
-    )
-    
-    online_players = db.get_current_online_players()
-    embed.add_field(
-        name="🟢 Online acum",
-        value=f"**{len(online_players):,}** jucători",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="📈 Progres scanare",
-        value=f"**{progress['percentage']:.1f}%**",
-        inline=True
-    )
-    
-    # Show last scanned ID if available
-    last_id = progress.get('last_scanned_id')
-    if last_id:
-        embed.add_field(
-            name="📊 Ultimul ID scanat",
-            value=f"**{last_id}**",
-            inline=True
-        )
-    
-    if SCAN_IN_PROGRESS:
-        embed.add_field(
-            name="🔄 Scan activ",
-            value=f"ID: {SCAN_STATS['current_id']:,}\nGăsiți: {SCAN_STATS['found']:,}",
-            inline=False
-        )
-    
-    embed.set_footer(text=f"Bot versiune 2.3 • Sequential scan + continuous status • Today at {datetime.now().strftime('%H:%M')}")
-    
-    await interaction.followup.send(embed=embed)
 
 # ============================================================================
 # RUN BOT
@@ -1209,4 +686,13 @@ if __name__ == '__main__':
         logger.error("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
         exit(1)
     
-    bot.run(TOKEN)
+    logger.info("🚀 Starting Pro4Kings Database Bot...")
+    
+    try:
+        bot.run(TOKEN)
+    except KeyboardInterrupt:
+        logger.info("\n👋 Bot stopped by user")
+    except Exception as e:
+        logger.error(f"❌ Fatal error: {e}", exc_info=True)
+    finally:
+        logger.info("🛑 Bot shutdown complete")
