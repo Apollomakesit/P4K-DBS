@@ -12,6 +12,9 @@ import re
 import tracemalloc
 import psutil
 
+# 🔥 Import all slash commands
+from commands import setup_commands
+
 # 🔥 Start memory tracking
 tracemalloc.start()
 
@@ -125,6 +128,38 @@ def verify_environment():
     logger.info("✅ Environment verification passed")
     return True
 
+# ============================================================================
+# 🔥 SCRAPER CLIENT MANAGEMENT
+# ============================================================================
+
+async def get_or_recreate_scraper():
+    """Get scraper instance, recreate if needed"""
+    global scraper
+    
+    if scraper is None:
+        logger.info("🔄 Creating new scraper instance...")
+        scraper = Pro4KingsScraper(max_concurrent=5)
+        await scraper.__aenter__()
+    
+    # Check if client is still valid
+    if scraper.client and scraper.client.is_closed:
+        logger.warning("⚠️ Scraper client was closed, recreating...")
+        try:
+            await scraper.__aexit__(None, None, None)
+        except:
+            pass
+        scraper = Pro4KingsScraper(max_concurrent=5)
+        await scraper.__aenter__()
+    
+    return scraper
+
+# ============================================================================
+# 🔥 REGISTER ALL SLASH COMMANDS
+# ============================================================================
+
+setup_commands(bot, db, get_or_recreate_scraper)
+logger.info("✅ Slash commands module loaded")
+
 @bot.event
 async def on_ready():
     """Bot startup with proper slash command registration"""
@@ -226,31 +261,6 @@ async def before_task_watchdog():
     await bot.wait_until_ready()
     # Wait 2 minutes before first check
     await asyncio.sleep(120)
-
-# ============================================================================
-# 🔥 SCRAPER CLIENT MANAGEMENT
-# ============================================================================
-
-async def get_or_recreate_scraper():
-    """Get scraper instance, recreate if needed"""
-    global scraper
-    
-    if scraper is None:
-        logger.info("🔄 Creating new scraper instance...")
-        scraper = Pro4KingsScraper(max_concurrent=5)
-        await scraper.__aenter__()
-    
-    # Check if client is still valid
-    if scraper.client and scraper.client.is_closed:
-        logger.warning("⚠️ Scraper client was closed, recreating...")
-        try:
-            await scraper.__aexit__(None, None, None)
-        except:
-            pass
-        scraper = Pro4KingsScraper(max_concurrent=5)
-        await scraper.__aenter__()
-    
-    return scraper
 
 # ============================================================================
 # BACKGROUND MONITORING TASKS WITH ERROR RECOVERY
@@ -499,112 +509,6 @@ async def check_banned_players_error(error):
     TASK_HEALTH['check_banned_players']['error_count'] += 1
 
 # ============================================================================
-# 🔥 HEALTH MONITORING COMMAND
-# ============================================================================
-
-@bot.tree.command(name="health", description="Check bot health status")
-async def health_check(interaction: discord.Interaction):
-    """Comprehensive health check"""
-    await interaction.response.defer()
-    
-    embed = discord.Embed(
-        title="🏥 Bot Health Status",
-        color=discord.Color.green(),
-        timestamp=datetime.now()
-    )
-    
-    # Task status
-    now = datetime.now()
-    task_status = []
-    all_healthy = True
-    
-    for task_name, health in TASK_HEALTH.items():
-        if health['last_run']:
-            elapsed = (now - health['last_run']).total_seconds()
-            status = "🟢" if elapsed < 300 else "🟡" if elapsed < 600 else "🔴"
-            if elapsed >= 300:
-                all_healthy = False
-            task_status.append(
-                f"{status} **{task_name}**\n"
-                f"   Last run: {int(elapsed)}s ago\n"
-                f"   Errors: {health['error_count']}"
-            )
-        else:
-            task_status.append(f"⚪ **{task_name}**: Not started yet")
-    
-    embed.add_field(
-        name="Background Tasks",
-        value="\n\n".join(task_status),
-        inline=False
-    )
-    
-    # Memory usage
-    try:
-        process = psutil.Process()
-        mem_info = process.memory_info()
-        mem_mb = mem_info.rss / 1024 / 1024
-        
-        # Get tracemalloc snapshot
-        snapshot = tracemalloc.take_snapshot()
-        top_stats = snapshot.statistics('lineno')[:3]
-        
-        mem_lines = [f"**Current**: {mem_mb:.1f} MB"]
-        for stat in top_stats:
-            mem_lines.append(f"• {stat.filename}:{stat.lineno}: {stat.size / 1024:.1f} KB")
-        
-        embed.add_field(
-            name="Memory Usage",
-            value="\n".join(mem_lines),
-            inline=True
-        )
-    except Exception as e:
-        embed.add_field(
-            name="Memory Usage",
-            value=f"Error: {e}",
-            inline=True
-        )
-    
-    # Database status
-    try:
-        with db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM actions")
-            action_count = cursor.fetchone()[0]
-            cursor.execute("SELECT COUNT(*) FROM players")
-            player_count = cursor.fetchone()[0]
-        
-        embed.add_field(
-            name="Database",
-            value=f"✅ Connected\n**Actions**: {action_count:,}\n**Players**: {player_count:,}",
-            inline=True
-        )
-    except Exception as e:
-        embed.add_field(
-            name="Database",
-            value=f"❌ Error: {str(e)[:50]}",
-            inline=True
-        )
-        all_healthy = False
-    
-    # Scraper status
-    scraper_status = "✅ Active" if scraper and scraper.client and not scraper.client.is_closed else "⚠️ Inactive"
-    embed.add_field(
-        name="Scraper Client",
-        value=scraper_status,
-        inline=True
-    )
-    
-    # Set overall color
-    if all_healthy:
-        embed.color = discord.Color.green()
-        embed.set_footer(text="✅ All systems operational")
-    else:
-        embed.color = discord.Color.orange()
-        embed.set_footer(text="⚠️ Some issues detected")
-    
-    await interaction.followup.send(embed=embed)
-
-# ============================================================================
 # PREFIX COMMAND FOR EMERGENCY COMMAND SYNC
 # ============================================================================
 
@@ -631,50 +535,6 @@ async def force_sync(ctx):
     except Exception as e:
         await ctx.send(f"❌ **Eroare la sincronizare**: {str(e)}")
         logger.error(f"Force sync error: {e}", exc_info=True)
-
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-
-async def resolve_player_info(identifier):
-    """Helper to get player info"""
-    scraper_instance = await get_or_recreate_scraper()
-    
-    if isinstance(identifier, int) or (isinstance(identifier, str) and identifier.isdigit()):
-        player_id = str(identifier)
-        profile = db.get_player_by_exact_id(player_id)
-        
-        if not profile:
-            profile_obj = await scraper_instance.get_player_profile(player_id)
-            if profile_obj:
-                profile = {
-                    'player_id': profile_obj.player_id,
-                    'player_name': profile_obj.username,
-                    'is_online': profile_obj.is_online,
-                    'last_connection': profile_obj.last_seen,
-                    'faction': profile_obj.faction,
-                    'faction_rank': profile_obj.faction_rank,
-                    'job': profile_obj.job,
-                    'level': profile_obj.level,
-                    'respect_points': profile_obj.respect_points,
-                    'warns': profile_obj.warnings,
-                    'played_hours': profile_obj.played_hours,
-                    'age_ic': profile_obj.age_ic,
-                    'phone_number': profile_obj.phone_number,
-                    'vehicles_count': profile_obj.vehicles_count,
-                    'properties_count': profile_obj.properties_count
-                }
-                db.save_player_profile(profile)
-        
-        return profile
-    
-    id_match = re.search(r'\((\d+)\)', str(identifier))
-    if id_match:
-        player_id = id_match.group(1)
-        return await resolve_player_info(player_id)
-    
-    players = db.search_player_by_name(identifier)
-    return players[0] if players else None
 
 # ============================================================================
 # RUN BOT
