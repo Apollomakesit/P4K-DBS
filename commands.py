@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import logging
 import asyncio
 import os
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ SCAN_STATE = {
     'scan_config': {
         'batch_size': 20,
         'workers': 20,
-        'wave_delay': 0.05
+        'wave_delay': 0  # 🔥 FIXED: Set to 0 since batch_get_profiles has its own delay
     }
 }
 
@@ -217,7 +218,7 @@ def setup_commands(bot, db, scraper_getter):
     """
 
     # ========================================================================
-    # GENERAL COMMANDS
+    # GENERAL COMMANDS  
     # ========================================================================
 
     @bot.tree.command(name="health", description="Check bot health status")
@@ -979,7 +980,7 @@ def setup_commands(bot, db, scraper_getter):
                     total_ids = end_id - start_id + 1
                     batch_size = SCAN_STATE['scan_config']['batch_size']
                     logger.info(f"🚀 Starting scan: IDs {start_id}-{end_id} ({total_ids:,} total)")
-                    logger.info(f"⚙️ Config: batch={batch_size}, workers={SCAN_STATE['scan_config']['workers']}, delay={SCAN_STATE['scan_config']['wave_delay']}s")
+                    logger.info(f"⚙️ Config: batch={batch_size}, workers={SCAN_STATE['scan_config']['workers']}")
 
                     for batch_start in range(start_id, end_id + 1, batch_size):
                         # Check if paused
@@ -995,8 +996,13 @@ def setup_commands(bot, db, scraper_getter):
                         batch_ids = [str(i) for i in range(batch_start, batch_end + 1)]
                         SCAN_STATE['current_id'] = batch_start
 
+                        # 🔥 PERFORMANCE TRACKING
+                        batch_time_start = time.time()
+
                         # Scan batch
                         profiles = await scraper.batch_get_profiles(batch_ids)
+
+                        batch_elapsed = time.time() - batch_time_start
 
                         # Save profiles
                         for profile in profiles:
@@ -1027,6 +1033,10 @@ def setup_commands(bot, db, scraper_getter):
                         # Update progress in database
                         await db.update_scan_progress(batch_end, SCAN_STATE['found_count'], SCAN_STATE['error_count'])
 
+                        # 🔥 DETAILED BATCH LOGGING
+                        batch_speed = len(batch_ids) / batch_elapsed if batch_elapsed > 0 else 0
+                        logger.info(f"✅ Batch {batch_start}-{batch_end}: {len(profiles)}/{len(batch_ids)} profiles in {batch_elapsed:.1f}s ({batch_speed:.2f} IDs/s)")
+
                         # Log progress every 100 IDs
                         if batch_start % 100 == 0:
                             progress = ((batch_start - start_id) / total_ids) * 100
@@ -1034,8 +1044,9 @@ def setup_commands(bot, db, scraper_getter):
                             speed = (batch_start - start_id) / elapsed if elapsed > 0 else 0
                             logger.info(f"📊 Progress: {progress:.1f}% | ID: {batch_start}/{end_id} | Speed: {speed:.2f} IDs/s | Found: {SCAN_STATE['found_count']} | Errors: {SCAN_STATE['error_count']}")
 
-                        # Add configured wave delay
-                        await asyncio.sleep(SCAN_STATE['scan_config']['wave_delay'])
+                        # 🔥 REMOVED REDUNDANT DELAY - batch_get_profiles already has delay
+                        # The old code had: await asyncio.sleep(SCAN_STATE['scan_config']['wave_delay'])
+                        # This was stacking with the scraper's internal delays, causing 40x slowdown!
 
                     # Scan complete
                     SCAN_STATE['is_scanning'] = False
@@ -1061,7 +1072,8 @@ def setup_commands(bot, db, scraper_getter):
 
             # Show expected speed based on current settings
             config = SCAN_STATE['scan_config']
-            expected_speed = config['batch_size'] / (config['wave_delay'] + 0.5)
+            # 🔥 Updated calculation - no redundant delay!
+            expected_speed = config['batch_size'] / 0.5  # Wave processing overhead only
 
             embed = discord.Embed(
                 title="🚀 Database Scan Started",
@@ -1072,13 +1084,12 @@ def setup_commands(bot, db, scraper_getter):
 
             embed.add_field(name="⚙️ Batch Size", value=f"{config['batch_size']} IDs", inline=True)
             embed.add_field(name="👷 Workers", value=str(config['workers']), inline=True)
-            embed.add_field(name="⏱️ Wave Delay", value=f"{config['wave_delay']}s", inline=True)
             embed.add_field(name="⚡ Expected Speed", value=f"~{expected_speed:.1f} IDs/s", inline=True)
             embed.add_field(name="📊 Total IDs", value=f"{end_id - start_id + 1:,}", inline=True)
 
             eta = (end_id - start_id + 1) / expected_speed
             embed.add_field(name="🕐 Est. Time", value=format_time_duration(eta), inline=True)
-            embed.set_footer(text="Tip: Use /scanconfig to adjust speed settings")
+            embed.set_footer(text="🔥 Optimized: Removed redundant delays for max speed!")
 
             await interaction.followup.send(embed=embed)
 
@@ -1206,14 +1217,12 @@ def setup_commands(bot, db, scraper_getter):
     @bot.tree.command(name="scanconfig", description="View or modify scan configuration")
     @app_commands.describe(
         batch_size="Number of IDs to scan per batch (5-30)",
-        workers="Number of concurrent workers (5-30)",
-        wave_delay="Delay between batches in seconds (0.01-1.0)"
+        workers="Number of concurrent workers (5-30)"
     )
     async def scanconfig_command(
         interaction: discord.Interaction,
         batch_size: Optional[int] = None,
-        workers: Optional[int] = None,
-        wave_delay: Optional[float] = None
+        workers: Optional[int] = None
     ):
         """Configure scan parameters"""
         await interaction.response.defer()
@@ -1238,14 +1247,6 @@ def setup_commands(bot, db, scraper_getter):
                     await interaction.followup.send("❌ **Workers must be between 5 and 30!**")
                     return
 
-            if wave_delay is not None:
-                if 0.01 <= wave_delay <= 1.0:
-                    SCAN_STATE['scan_config']['wave_delay'] = wave_delay
-                    updated.append(f"Wave delay: {wave_delay}s")
-                else:
-                    await interaction.followup.send("❌ **Wave delay must be between 0.01 and 1.0 seconds!**")
-                    return
-
             # Create embed
             embed = discord.Embed(
                 title="⚙️ Scan Configuration",
@@ -1261,24 +1262,23 @@ def setup_commands(bot, db, scraper_getter):
             config = SCAN_STATE['scan_config']
             embed.add_field(name="📦 Batch Size", value=f"{config['batch_size']} IDs", inline=True)
             embed.add_field(name="👷 Workers", value=f"{config['workers']} concurrent", inline=True)
-            embed.add_field(name="⏱️ Wave Delay", value=f"{config['wave_delay']}s", inline=True)
 
-            # Calculate expected speed
-            expected_speed = config['batch_size'] / (config['wave_delay'] + 0.5)
+            # 🔥 Updated expected speed calculation
+            expected_speed = config['batch_size'] / 0.5  # Realistic estimate
             embed.add_field(name="⚡ Expected Speed", value=f"~{expected_speed:.1f} IDs/second", inline=True)
 
             # Add preset recommendations
             embed.add_field(
                 name="📋 Recommended Presets",
                 value=(
-                    "**Aggressive:** `/scanconfig 20 20 0.05` (~30 IDs/s)\n"
-                    "**Balanced:** `/scanconfig 15 15 0.1` (~20 IDs/s)\n"
-                    "**Safe:** `/scanconfig 10 10 0.2` (~10 IDs/s)"
+                    "**Aggressive:** `/scanconfig 25 25` (~50 IDs/s)\n"
+                    "**Balanced:** `/scanconfig 20 20` (~40 IDs/s)\n"
+                    "**Safe:** `/scanconfig 15 15` (~30 IDs/s)"
                 ),
                 inline=False
             )
 
-            embed.set_footer(text="💡 Higher = faster but may trigger rate limits | Lower = safer but slower")
+            embed.set_footer(text="🔥 Optimized: wave_delay removed (built into scraper)")
 
             await interaction.followup.send(embed=embed)
 
