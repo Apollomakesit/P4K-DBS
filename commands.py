@@ -25,6 +25,21 @@ SCAN_STATE = {
     }
 }
 
+# 🔧 FIX: Add format_time helper function
+def format_time_duration(seconds: float) -> str:
+    """Format seconds into human-readable time (e.g., '2h 34m' or '45m')"""
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    
+    minutes = int(seconds // 60)
+    hours = minutes // 60
+    minutes = minutes % 60
+    
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    else:
+        return f"{minutes}m"
+
 async def resolve_player_info(db, scraper, identifier):
     """Helper to get player info by ID or name"""
     import re
@@ -115,7 +130,7 @@ def setup_commands(bot, db, scraper_getter):
     """
     
     # ========================================================================
-    # SCAN MANAGEMENT COMMANDS - NEW!
+    # SCAN MANAGEMENT COMMANDS - FIXED VERSION
     # ========================================================================
     
     scan_group = app_commands.Group(name="scan", description="Database scan management")
@@ -183,13 +198,13 @@ def setup_commands(bot, db, scraper_getter):
                                     'player_id': profile.player_id,
                                     'player_name': profile.username,
                                     'is_online': profile.is_online,
-                                    'last_connection': profile.last_seen,
+                                    'last_seen': profile.last_seen,
                                     'faction': profile.faction,
                                     'faction_rank': profile.faction_rank,
                                     'job': profile.job,
                                     'level': profile.level,
                                     'respect_points': profile.respect_points,
-                                    'warns': profile.warnings,
+                                    'warnings': profile.warnings,
                                     'played_hours': profile.played_hours,
                                     'age_ic': profile.age_ic,
                                     'phone_number': profile.phone_number,
@@ -209,6 +224,9 @@ def setup_commands(bot, db, scraper_getter):
                         if batch_start % 100 == 0:
                             progress = ((batch_start - start_id) / total_ids) * 100
                             logger.info(f"📊 Scan progress: {progress:.1f}% ({batch_start}/{end_id}) - Found: {SCAN_STATE['found_count']}, Errors: {SCAN_STATE['error_count']}")
+                        
+                        # 🔧 FIX: Add configured wave delay
+                        await asyncio.sleep(SCAN_STATE['scan_config']['wave_delay'])
                     
                     # Scan complete
                     SCAN_STATE['is_scanning'] = False
@@ -256,15 +274,19 @@ def setup_commands(bot, db, scraper_getter):
             scanned = current - start
             progress_pct = (scanned / total * 100) if total > 0 else 0
             
-            # Calculate speed and ETA
+            # 🔧 FIX: Calculate speed and ETA with proper time formatting
             if SCAN_STATE['start_time']:
                 elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
                 speed = scanned / elapsed if elapsed > 0 else 0
                 remaining = total - scanned
                 eta_seconds = remaining / speed if speed > 0 else 0
-                eta_str = str(timedelta(seconds=int(eta_seconds)))
+                
+                # 🔧 FIX: Use format_time_duration instead of timedelta str
+                elapsed_str = format_time_duration(elapsed)
+                eta_str = format_time_duration(eta_seconds) if eta_seconds > 0 else "Calculating..."
             else:
                 speed = 0
+                elapsed_str = "0s"
                 eta_str = "Unknown"
             
             status_emoji = "⏸️" if SCAN_STATE['is_paused'] else "🔄"
@@ -277,13 +299,13 @@ def setup_commands(bot, db, scraper_getter):
                 timestamp=datetime.now()
             )
             
-            embed.add_field(name="Current ID", value=f"{current:,}", inline=True)
-            embed.add_field(name="Speed", value=f"{speed:.2f} IDs/s", inline=True)
-            embed.add_field(name="ETA", value=eta_str, inline=True)
+            embed.add_field(name="📍 Current ID", value=f"{current:,}", inline=True)
+            embed.add_field(name="⚡ Speed", value=f"{speed:.1f} IDs/s", inline=True)
+            embed.add_field(name="⏱️ ETA", value=eta_str, inline=True)
             
             embed.add_field(name="✅ Found", value=f"{SCAN_STATE['found_count']:,}", inline=True)
             embed.add_field(name="❌ Errors", value=f"{SCAN_STATE['error_count']:,}", inline=True)
-            embed.add_field(name="⏱️ Elapsed", value=str(timedelta(seconds=int(elapsed))), inline=True)
+            embed.add_field(name="⏲️ Elapsed", value=elapsed_str, inline=True)
             
             # Progress bar
             bar_length = 20
@@ -376,7 +398,7 @@ def setup_commands(bot, db, scraper_getter):
     bot.tree.add_command(scan_group)
     
     # ========================================================================
-    # SCAN CONFIG COMMAND - NEW!
+    # SCAN CONFIG COMMAND - FIXED VERSION
     # ========================================================================
     
     @bot.tree.command(name="scanconfig", description="View or modify scan configuration")
@@ -438,8 +460,8 @@ def setup_commands(bot, db, scraper_getter):
             embed.add_field(name="Workers", value=f"{config['workers']} concurrent", inline=True)
             embed.add_field(name="Wave Delay", value=f"{config['wave_delay']}s", inline=True)
             
-            # Calculate expected speed
-            expected_speed = (config['batch_size'] * config['workers']) / (config['wave_delay'] + 0.5)
+            # 🔧 FIX: More accurate expected speed calculation
+            expected_speed = config['batch_size'] / (config['wave_delay'] + 0.5)
             embed.add_field(name="Expected Speed", value=f"~{expected_speed:.1f} IDs/second", inline=True)
             
             embed.set_footer(text="These settings apply to new scans only")

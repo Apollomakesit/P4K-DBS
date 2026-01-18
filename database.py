@@ -208,16 +208,24 @@ class Database:
                     )
                 ''')
                 
-                # Scan progress for resumability
+                # 🔧 FIX: Updated scan_progress table schema
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS scan_progress (
                         id INTEGER PRIMARY KEY CHECK(id = 1),
-                        last_scanned_player_id TEXT,
-                        last_scan_timestamp TIMESTAMP,
-                        total_players_scanned INTEGER DEFAULT 0,
-                        scan_completed BOOLEAN DEFAULT FALSE
+                        last_scanned_id INTEGER DEFAULT 0,
+                        found_count INTEGER DEFAULT 0,
+                        error_count INTEGER DEFAULT 0,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
+                
+                # Initialize scan_progress if empty
+                cursor.execute('SELECT COUNT(*) FROM scan_progress')
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute('''
+                        INSERT INTO scan_progress (id, last_scanned_id, found_count, error_count)
+                        VALUES (1, 0, 0, 0)
+                    ''')
                 
                 # Create indexes for performance
                 indexes = [
@@ -260,6 +268,12 @@ class Database:
                 ''', (profile['player_id'],))
                 old_data = cursor.fetchone()
                 
+                # 🔧 FIX: Handle both 'player_name' and 'username' field names
+                username = profile.get('player_name') or profile.get('username', f"Player_{profile['player_id']}")
+                
+                # 🔧 FIX: Handle both 'last_connection' and 'last_seen' field names
+                last_seen = profile.get('last_connection') or profile.get('last_seen', datetime.now())
+                
                 # Insert or update player
                 cursor.execute('''
                     INSERT INTO players (
@@ -287,15 +301,15 @@ class Database:
                         last_profile_update = CURRENT_TIMESTAMP
                 ''', (
                     profile['player_id'],
-                    profile['player_name'],
+                    username,
                     profile.get('is_online', False),
-                    profile.get('last_connection', datetime.now()),
+                    last_seen,
                     profile.get('faction'),
                     profile.get('faction_rank'),
                     profile.get('job'),
                     profile.get('level'),
                     profile.get('respect_points'),
-                    profile.get('warns'),
+                    profile.get('warns') or profile.get('warnings'),
                     profile.get('played_hours'),
                     profile.get('age_ic'),
                     profile.get('phone_number'),
@@ -329,7 +343,7 @@ class Database:
                     # Track other field changes
                     fields = ['faction', 'job', 'level', 'warnings', 'respect_points']
                     new_values = [new_faction, profile.get('job'), profile.get('level'), 
-                                profile.get('warns'), profile.get('respect_points')]
+                                profile.get('warns') or profile.get('warnings'), profile.get('respect_points')]
                     
                     for i, field in enumerate(fields):
                         old_val = str(old_data[i]) if old_data[i] is not None else None
@@ -345,6 +359,37 @@ class Database:
         except Exception as e:
             logger.error(f"Error saving player profile {profile.get('player_id')}: {e}", exc_info=True)
             raise
+    
+    # 🔧 FIX: Added missing update_scan_progress method
+    def update_scan_progress(self, last_id: int, found: int, errors: int) -> None:
+        """Update scan progress in database (called by scan command)"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE scan_progress 
+                    SET last_scanned_id = ?, 
+                        found_count = ?, 
+                        error_count = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = 1
+                ''', (last_id, found, errors))
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Error updating scan progress: {e}", exc_info=True)
+    
+    # 🔧 FIX: Added missing get_scan_progress method for scan command
+    def get_scan_progress(self) -> Optional[Dict]:
+        """Get last scan progress"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM scan_progress WHERE id = 1')
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Error getting scan progress: {e}")
+            return None
     
     def save_action(self, action) -> None:
         """Save action to database (stored indefinitely)"""
@@ -658,38 +703,15 @@ class Database:
             
             return [dict(row) for row in cursor.fetchall()]
     
-    def get_scan_progress(self) -> Dict:
-        """Get scan progress stats"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT COUNT(*) FROM players')
-            total_scanned = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT * FROM scan_progress WHERE id = 1')
-            progress = cursor.fetchone()
-            
-            estimated_total = max(total_scanned, 10000)
-            
-            return {
-                'total_scanned': total_scanned,
-                'total_target': estimated_total,
-                'percentage': (total_scanned / estimated_total * 100) if estimated_total > 0 else 0,
-                'last_scan': progress['last_scan_timestamp'] if progress else None,
-                'last_scanned_id': progress['last_scanned_player_id'] if progress else None
-            }
-    
     def save_scan_progress(self, last_player_id: str, total_scanned: int, completed: bool = False) -> None:
-        """Save scan progress"""
+        """Save scan progress (legacy method for compatibility)"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO scan_progress (id, last_scanned_player_id, last_scan_timestamp, total_players_scanned, scan_completed)
-                VALUES (1, ?, CURRENT_TIMESTAMP, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    last_scanned_player_id = excluded.last_scanned_player_id,
-                    last_scan_timestamp = CURRENT_TIMESTAMP,
-                    total_players_scanned = excluded.total_players_scanned,
-                    scan_completed = excluded.scan_completed
-            ''', (last_player_id, total_scanned, completed))
+                UPDATE scan_progress
+                SET last_scanned_id = ?,
+                    found_count = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+            ''', (last_player_id, total_scanned))
             conn.commit()
