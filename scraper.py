@@ -527,6 +527,33 @@ class Pro4KingsScraper:
             logger.error(f"Error parsing action: {e} | Text: {text[:100] if text else 'N/A'}")
             return None
     
+    def is_vip_action(self, action: PlayerAction, vip_ids: Set[str]) -> bool:
+        """💎 Check if action involves any VIP player"""
+        if not action:
+            return False
+        
+        # Check if primary player is VIP
+        if action.player_id and action.player_id in vip_ids:
+            return True
+        
+        # Check if target player is VIP
+        if action.target_player_id and action.target_player_id in vip_ids:
+            return True
+        
+        # Check if admin is VIP (for warnings/admin actions)
+        if action.admin_id and action.admin_id in vip_ids:
+            return True
+        
+        return False
+    
+    async def get_vip_actions(self, vip_ids: Set[str], limit: int = 200) -> List[PlayerAction]:
+        """💎 Get latest actions filtered for VIP players only"""
+        all_actions = await self.get_latest_actions(limit)
+        vip_actions = [action for action in all_actions if self.is_vip_action(action, vip_ids)]
+        
+        logger.info(f"💎 Found {len(vip_actions)} VIP actions out of {len(all_actions)} total")
+        return vip_actions
+    
     async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
         """Get complete player profile with improved faction rank detection"""
         profile_url = f"{self.base_url}/profile/{player_id}"
@@ -752,5 +779,3 @@ class Pro4KingsScraper:
                 await asyncio.sleep(wave_delay)
         
         return results
-
-
