@@ -728,28 +728,28 @@ class Pro4KingsScraper:
         
         return banned
     
-async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
-    """🔥 HIGHLY OPTIMIZED: Parallel fetching with larger waves"""
-    results = []
+    async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
+       """🔥 HIGHLY OPTIMIZED: Parallel fetching with larger waves"""
+       results = []
     
-    # 🔥 SOLUTION: Increase wave size to match or exceed max_concurrent
-    wave_size = 50  # Changed from 20 to 50 
-    wave_delay = 0.02  # Changed from 0.05 to 0.02s
+        # 🔥 SOLUTION: Increase wave size to match or exceed max_concurrent
+        wave_size = 50  # Changed from 20 to 50 
+        wave_delay = 0.02  # Changed from 0.05 to 0.02s
     
-    for i in range(0, len(player_ids), wave_size):
-        wave = player_ids[i:i + wave_size]
+        for i in range(0, len(player_ids), wave_size):
+            wave = player_ids[i:i + wave_size]
         
-        tasks = [self.get_player_profile(pid) for pid in wave]
-        wave_results = await asyncio.gather(*tasks, return_exceptions=True)
+            tasks = [self.get_player_profile(pid) for pid in wave]
+            wave_results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        for result in wave_results:
-            if isinstance(result, PlayerProfile):
-                results.append(result)
-            elif isinstance(result, Exception):
-                logger.error(f"Error: {result}")
+            for result in wave_results:
+                if isinstance(result, PlayerProfile):
+                    results.append(result)
+                elif isinstance(result, Exception):
+                    logger.error(f"Error: {result}")
         
-        if i + wave_size < len(player_ids):
-            await asyncio.sleep(wave_delay)
+            if i + wave_size < len(player_ids):
+                await asyncio.sleep(wave_delay)
     
-    return results
+        return results
 
