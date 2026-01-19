@@ -6,6 +6,7 @@ import sys
 from datetime import datetime, timedelta
 from database import Database
 from scraper import Pro4KingsScraper
+from config import Config
 import asyncio
 import logging
 import re
@@ -38,7 +39,8 @@ TASK_HEALTH = {
     'scrape_actions': {'last_run': None, 'error_count': 0, 'is_running': False},
     'scrape_online_players': {'last_run': None, 'error_count': 0, 'is_running': False},
     'update_pending_profiles': {'last_run': None, 'error_count': 0, 'is_running': False},
-    'check_banned_players': {'last_run': None, 'error_count': 0, 'is_running': False}
+    'check_banned_players': {'last_run': None, 'error_count': 0, 'is_running': False},
+    'scrape_vip_actions': {'last_run': None, 'error_count': 0, 'is_running': False}
 }
 
 # 🔥 Graceful shutdown flag
@@ -79,6 +81,8 @@ def signal_handler(sig, frame):
         update_pending_profiles.cancel()
     if check_banned_players.is_running():
         check_banned_players.cancel()
+    if scrape_vip_actions.is_running():
+        scrape_vip_actions.cancel()
     
     logger.info("✅ Background tasks stopped")
     
@@ -217,6 +221,11 @@ async def on_ready():
         check_banned_players.start()
         logger.info('✓ Started: check_banned_players (1h interval)')
     
+    # 💎 Start VIP tracking if configured
+    if Config.VIP_PLAYER_IDS and not scrape_vip_actions.is_running():
+        scrape_vip_actions.start()
+        logger.info(f'💎 Started: scrape_vip_actions ({Config.VIP_SCAN_INTERVAL}s interval, {len(Config.VIP_PLAYER_IDS)} VIP players)')
+    
     # 🔥 Start task watchdog
     if not task_watchdog.is_running():
         task_watchdog.start()
@@ -225,6 +234,8 @@ async def on_ready():
     logger.info('🚀 All systems operational!')
     print(f'\n{"="*60}')
     print(f'✅ {bot.user} is ONLINE and monitoring Pro4Kings!')
+    if Config.VIP_PLAYER_IDS:
+        print(f'💎 VIP Tracking: {len(Config.VIP_PLAYER_IDS)} priority players')
     print(f'{"="*60}\n')
 
 # ============================================================================
@@ -266,6 +277,16 @@ async def task_watchdog():
             if not update_pending_profiles.is_running():
                 logger.warning("🔄 Restarting crashed task: update_pending_profiles")
                 update_pending_profiles.restart()
+    
+    # Check scrape_vip_actions (should run every VIP_SCAN_INTERVAL)
+    if Config.VIP_PLAYER_IDS and TASK_HEALTH['scrape_vip_actions']['last_run']:
+        elapsed = (now - TASK_HEALTH['scrape_vip_actions']['last_run']).total_seconds()
+        max_interval = Config.VIP_SCAN_INTERVAL * 5  # Alert if no run in 5x interval
+        if elapsed > max_interval:
+            issues.append(f"scrape_vip_actions hasn't run in {elapsed:.0f}s")
+            if not scrape_vip_actions.is_running():
+                logger.warning("🔄 Restarting crashed task: scrape_vip_actions")
+                scrape_vip_actions.restart()
     
     if issues:
         logger.warning(f"⚠️ Task health issues detected: {', '.join(issues)}")
@@ -374,6 +395,88 @@ async def scrape_actions_error(error):
     logger.error(f"❌ scrape_actions task error: {error}", exc_info=error)
     TASK_HEALTH['scrape_actions']['error_count'] += 1
 
+# ============================================================================
+# 💎 VIP PLAYER TRACKING TASK
+# ============================================================================
+
+@tasks.loop(seconds=Config.VIP_SCAN_INTERVAL)
+async def scrape_vip_actions():
+    """💎 Fast scan loop specifically for VIP players"""
+    if SHUTDOWN_REQUESTED:
+        return
+    
+    if not Config.VIP_PLAYER_IDS:
+        return  # Skip if no VIPs configured
+    
+    TASK_HEALTH['scrape_vip_actions']['last_run'] = datetime.now()
+    TASK_HEALTH['scrape_vip_actions']['is_running'] = True
+    
+    try:
+        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
+        vip_ids = set(Config.VIP_PLAYER_IDS)
+        
+        # Fetch VIP-specific actions
+        vip_actions = await scraper_instance.get_vip_actions(vip_ids, limit=200)
+        
+        if vip_actions:
+            new_count = 0
+            new_player_ids = set()
+            
+            for action in vip_actions:
+                action_dict = {
+                    'player_id': action.player_id,
+                    'player_name': action.player_name,
+                    'action_type': action.action_type,
+                    'action_detail': action.action_detail,
+                    'item_name': action.item_name,
+                    'item_quantity': action.item_quantity,
+                    'target_player_id': action.target_player_id,
+                    'target_player_name': action.target_player_name,
+                    'admin_id': action.admin_id,
+                    'admin_name': action.admin_name,
+                    'warning_count': action.warning_count,
+                    'reason': action.reason,
+                    'timestamp': action.timestamp,
+                    'raw_text': action.raw_text
+                }
+                
+                # Check for duplicates and save
+                if not await db.action_exists(action.timestamp, action.raw_text):
+                    await db.save_action(action_dict)
+                    new_count += 1
+                    
+                    # Mark VIP players for priority update
+                    if action.player_id:
+                        new_player_ids.add((action.player_id, action.player_name))
+                        await db.mark_player_for_update(action.player_id, action.player_name)
+                    
+                    if action.target_player_id:
+                        new_player_ids.add((action.target_player_id, action.target_player_name))
+                        await db.mark_player_for_update(action.target_player_id, action.target_player_name)
+            
+            if new_count > 0:
+                logger.info(f"💎 VIP Scan: {new_count} new VIP actions saved, {len(new_player_ids)} players marked for update")
+            
+        TASK_HEALTH['scrape_vip_actions']['error_count'] = 0
+        
+    except Exception as e:
+        TASK_HEALTH['scrape_vip_actions']['error_count'] += 1
+        logger.error(f"❌ VIP scan failed (count: {TASK_HEALTH['scrape_vip_actions']['error_count']}): {e}", exc_info=True)
+    
+    finally:
+        TASK_HEALTH['scrape_vip_actions']['is_running'] = False
+
+@scrape_vip_actions.before_loop
+async def before_scrape_vip_actions():
+    """Wait for bot to be ready"""
+    await bot.wait_until_ready()
+    logger.info("💎 scrape_vip_actions task ready")
+
+@scrape_vip_actions.error
+async def scrape_vip_actions_error(error):
+    """Handle VIP scan task errors"""
+    logger.error(f"❌ scrape_vip_actions task error: {error}", exc_info=error)
+    TASK_HEALTH['scrape_vip_actions']['error_count'] += 1
 
 @tasks.loop(seconds=60)
 async def scrape_online_players():
