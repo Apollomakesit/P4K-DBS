@@ -206,329 +206,8 @@ class Pro4KingsScraper:
                     return None
         return None
     
-    async def get_online_players(self) -> List[Dict]:
-        """Get all online players with pagination"""
-        all_players = []
-        page = 1
-        
-        while True:
-            url = f"{self.base_url}/online?pageOnline={page}" if page > 1 else f"{self.base_url}/online"
-            logger.info(f"Fetching online players page {page}...")
-            
-            html = await self.fetch_page(url)
-            if not html:
-                break
-            
-            soup = BeautifulSoup(html, 'html.parser')
-            player_rows = soup.select('table tr, .player-row, .online-player')
-            
-            if not player_rows or len(player_rows) <= 1:
-                break
-            
-            page_players = []
-            for row in player_rows[1:]:
-                try:
-                    link = row.select_one('a[href*="/profile/"]')
-                    if link:
-                        href = link.get('href', '')
-                        id_match = re.search(r'/profile/(\d+)', href)
-                        if id_match:
-                            player_id = id_match.group(1)
-                            player_name = link.get_text(strip=True)
-                            page_players.append({
-                                'player_id': player_id,
-                                'player_name': player_name,
-                                'is_online': True,
-                                'last_seen': datetime.now()
-                            })
-                    
-                    if not link:
-                        cells = row.select('td')
-                        if len(cells) >= 2:
-                            player_id = cells[0].get_text(strip=True)
-                            player_name = cells[1].get_text(strip=True)
-                            if player_id.isdigit():
-                                page_players.append({
-                                    'player_id': player_id,
-                                    'player_name': player_name,
-                                    'is_online': True,
-                                    'last_seen': datetime.now()
-                                })
-                except Exception as e:
-                    logger.error(f"Error parsing player row: {e}")
-                    continue
-            
-            if not page_players:
-                break
-            
-            all_players.extend(page_players)
-            logger.info(f"Found {len(page_players)} players on page {page} (total: {len(all_players)})")
-            
-            next_link = soup.select_one('a[href*="pageOnline=' + str(page + 1) + '"]')
-            if not next_link:
-                break
-            
-            page += 1
-            await asyncio.sleep(0.5)
-        
-        logger.info(f"Total online players found: {len(all_players)}")
-        return all_players
-    
-    async def get_latest_actions(self, limit: int = 200) -> List[PlayerAction]:
-        """
-        CRITICAL: Get latest actions - THIS IS THE PRIMARY FUNCTION
-        Enhanced with multiple detection methods
-        """
-        url = f"{self.base_url}/"
-        html = await self.fetch_page(url)
-        
-        if not html:
-            logger.error("❌ Failed to fetch homepage for actions!")
-            return []
-        
-        soup = BeautifulSoup(html, 'lxml')
-        actions = []
-        
-        # STRATEGY 1: Find by common Romanian text patterns
-        activity_keywords = ['Activitate', 'Ultimele', 'acțiuni', 'actiuni', 'Recent']
-        possible_sections = []
-        
-        for keyword in activity_keywords:
-            headings = soup.find_all(text=re.compile(keyword, re.IGNORECASE))
-            for heading in headings:
-                parent = heading.find_parent(['div', 'section', 'article', 'main'])
-                if parent:
-                    possible_sections.append(parent)
-        
-        # STRATEGY 2: Find lists with player action patterns
-        all_lists = soup.find_all(['ul', 'ol', 'div'], class_=re.compile(r'activity|actions|feed|timeline', re.IGNORECASE))
-        possible_sections.extend(all_lists)
-        
-        # STRATEGY 3: Find by common class/id patterns
-        direct_selectors = [
-            '#activity', '#actions', '#latest-actions', '#recent-activity',
-            '.activity', '.actions', '.recent-actions', '.latest-actions',
-            '.activity-feed', '.action-log', '.player-actions'
-        ]
-        for selector in direct_selectors:
-            elem = soup.select_one(selector)
-            if elem:
-                possible_sections.append(elem)
-        
-        # STRATEGY 4: Find any list containing "Jucatorul" text (player actions)
-        all_text_containers = soup.find_all(['ul', 'ol', 'div', 'table'])
-        for container in all_text_containers:
-            text = container.get_text()
-            if text.count('Jucatorul') >= 3 or text.count('jucatorul') >= 3:
-                possible_sections.append(container)
-        
-        # Try each potential section
-        for section in possible_sections:
-            if not section:
-                continue
-            
-            entries = section.find_all(['li', 'tr', 'div'], recursive=True)
-            
-            for entry in entries:
-                text = entry.get_text(strip=True)
-                
-                if len(text) < 20:
-                    continue
-                if 'Jucatorul' not in text and 'jucatorul' not in text:
-                    continue
-                
-                action = self.parse_action_entry(entry)
-                if action:
-                    actions.append(action)
-                    
-                    if len(actions) >= limit:
-                        break
-            
-            if len(actions) > 0:
-                logger.info(f"✓ Found actions in section: {section.name} (class: {section.get('class')})")
-                break
-        
-        if len(actions) == 0:
-            logger.error("❌ NO ACTIONS FOUND! Debugging HTML structure:")
-            logger.error(f"Total 'Jucatorul' mentions: {soup.get_text().count('Jucatorul')}")
-            logger.error(f"Possible sections found: {len(possible_sections)}")
-            
-            all_text = soup.get_text()
-            lines = all_text.split('\n')
-            for line in lines:
-                if 'Jucatorul' in line and len(line) > 20:
-                    fake_elem = BeautifulSoup(f'<div>{line}</div>', 'lxml').div
-                    action = self.parse_action_entry(fake_elem)
-                    if action:
-                        actions.append(action)
-        
-        logger.info(f"✓ Parsed {len(actions)} actions from homepage")
-        return actions[:limit]
-    
-    def parse_action_entry(self, entry) -> Optional[PlayerAction]:
-        """Enhanced action parser with MORE patterns"""
-        try:
-            text = entry.get_text(strip=True)
-            if not text or len(text) < 15:
-                return None
-            
-            text = ' '.join(text.split())
-            
-            timestamp_match = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', text)
-            timestamp = datetime.now()
-            if timestamp_match:
-                try:
-                    timestamp = datetime.strptime(timestamp_match.group(1), '%Y-%m-%d %H:%M:%S')
-                except:
-                    pass
-            
-            # Pattern 1: Warning received
-            warning_match = re.search(
-                r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+primit\s+un\s+avertisment\s+\((\d+/\d+)\)[,\s]+de\s+la\s+administratorul\s+\[([^\]]+)\]\s+([^\(]+)\s*\((\d+)\)[,\s]+motiv[:\s]+(.+?)(?=\d{4}-\d{2}-\d{2}|$)',
-                text,
-                re.IGNORECASE
-            )
-            if warning_match:
-                return PlayerAction(
-                    player_id=warning_match.group(2),
-                    player_name=warning_match.group(1).strip(),
-                    action_type='warning_received',
-                    action_detail=f"Avertisment {warning_match.group(3)} de la {warning_match.group(5).strip()}",
-                    admin_id=warning_match.group(6),
-                    admin_name=warning_match.group(5).strip(),
-                    warning_count=warning_match.group(3),
-                    reason=warning_match.group(7).strip(),
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            # Pattern 2: Chest deposit/withdraw
-            chest_match = re.search(
-                r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+(pus\s+in|scos\s+din)\s+chest.*?(\d+)x\s+([^\d]+?)(?=\d{4}-\d{2}-\d{2}|$)',
-                text,
-                re.IGNORECASE
-            )
-            if chest_match:
-                action_type = 'chest_deposit' if 'pus' in chest_match.group(3).lower() else 'chest_withdraw'
-                return PlayerAction(
-                    player_id=chest_match.group(2),
-                    player_name=chest_match.group(1).strip(),
-                    action_type=action_type,
-                    action_detail=f"{chest_match.group(3)} chest",
-                    item_name=chest_match.group(5).strip(),
-                    item_quantity=int(chest_match.group(4)),
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            # Pattern 3: Item given
-            gave_match = re.search(
-                r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+dat\s+lui\s+([^\(]+)\s*\((\d+)\)\s+(\d+)x\s+([^\d]+?)(?=\d{4}-\d{2}-\d{2}|$)',
-                text,
-                re.IGNORECASE
-            )
-            if gave_match:
-                return PlayerAction(
-                    player_id=gave_match.group(2),
-                    player_name=gave_match.group(1).strip(),
-                    action_type='item_given',
-                    action_detail=f"Dat {gave_match.group(6).strip()} către {gave_match.group(3).strip()}",
-                    item_name=gave_match.group(6).strip(),
-                    item_quantity=int(gave_match.group(5)),
-                    target_player_id=gave_match.group(4),
-                    target_player_name=gave_match.group(3).strip(),
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            # Pattern 4: Item received
-            received_match = re.search(
-                r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+primit\s+de\s+la\s+([^\(]+)\s*\((\d+)\)\s+(\d+)x\s+([^\d]+?)(?=\d{4}-\d{2}-\d{2}|$)',
-                text,
-                re.IGNORECASE
-            )
-            if received_match:
-                return PlayerAction(
-                    player_id=received_match.group(2),
-                    player_name=received_match.group(1).strip(),
-                    action_type='item_received',
-                    action_detail=f"Primit {received_match.group(6).strip()} de la {received_match.group(3).strip()}",
-                    item_name=received_match.group(6).strip(),
-                    item_quantity=int(received_match.group(5)),
-                    target_player_id=received_match.group(4),
-                    target_player_name=received_match.group(3).strip(),
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            # Pattern 5: Vehicle purchase/sale
-            vehicle_match = re.search(
-                r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+(cumparat|vandut)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
-                text,
-                re.IGNORECASE
-            )
-            if vehicle_match:
-                action_type = 'vehicle_bought' if 'cumparat' in vehicle_match.group(3).lower() else 'vehicle_sold'
-                return PlayerAction(
-                    player_id=vehicle_match.group(2),
-                    player_name=vehicle_match.group(1).strip(),
-                    action_type=action_type,
-                    action_detail=vehicle_match.group(4).strip(),
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            # Pattern 6: Property purchase/sale  
-            property_match = re.search(
-                r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+(cumparat|vandut)\s+(casa|afacere|proprietate).*?(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
-                text,
-                re.IGNORECASE
-            )
-            if property_match:
-                action_type = 'property_bought' if 'cumparat' in property_match.group(3).lower() else 'property_sold'
-                return PlayerAction(
-                    player_id=property_match.group(2),
-                    player_name=property_match.group(1).strip(),
-                    action_type=action_type,
-                    action_detail=f"{property_match.group(3)} {property_match.group(4)}",
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            # Pattern 7: Generic player action
-            generic_match = re.search(
-                r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
-                text,
-                re.IGNORECASE
-            )
-            if generic_match:
-                return PlayerAction(
-                    player_id=generic_match.group(2),
-                    player_name=generic_match.group(1).strip(),
-                    action_type='other',
-                    action_detail=generic_match.group(3).strip(),
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            if 'jucatorul' in text.lower():
-                return PlayerAction(
-                    player_id=None,
-                    player_name=None,
-                    action_type='unknown',
-                    action_detail=text[:200],
-                    timestamp=timestamp,
-                    raw_text=text
-                )
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error parsing action: {e} | Text: {text[:100] if text else 'N/A'}")
-            return None
-    
     async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
-        """Get complete player profile with improved faction rank detection"""
+        """Get complete player profile"""
         profile_url = f"{self.base_url}/profile/{player_id}"
         html = await self.fetch_page(profile_url)
         
@@ -566,28 +245,6 @@ class Pro4KingsScraper:
                     if key and val:
                         profile_data[key] = val
             
-            dt_elements = soup.select('dt')
-            for dt in dt_elements:
-                dd = dt.find_next_sibling('dd')
-                if dd:
-                    key = dt.get_text(strip=True).lower()
-                    val = dd.get_text(strip=True)
-                    profile_data[key] = val
-            
-            labels = soup.select('.label, .key, .field-label, strong')
-            for label in labels:
-                key_text = label.get_text(strip=True).lower().rstrip(':')
-                value_elem = label.find_next_sibling(['span', 'div', 'p'])
-                if not value_elem:
-                    parent = label.find_parent(['div', 'li', 'tr'])
-                    if parent:
-                        value_elem = parent.find(['span', 'div', 'p'], recursive=False)
-                
-                if value_elem:
-                    val = value_elem.get_text(strip=True)
-                    if val and val != key_text:
-                        profile_data[key_text] = val
-            
             faction = None
             faction_rank = None
             job = None
@@ -617,7 +274,7 @@ class Pro4KingsScraper:
                         break
             
             for key, val in profile_data.items():
-                if any(x in key for x in ['job', 'meserie', 'ocupatie', 'occupation']):
+                if any(x in key for x in ['job', 'meserie']):
                     job = val
                     break
             
@@ -643,7 +300,7 @@ class Pro4KingsScraper:
                         break
             
             for key, val in profile_data.items():
-                if any(x in key for x in ['ore jucate', 'ore', 'hours', 'timp']):
+                if any(x in key for x in ['ore jucate', 'ore', 'hours']):
                     hours_match = re.search(r'([\d\.]+)', val)
                     if hours_match:
                         played_hours = float(hours_match.group(1))
@@ -663,9 +320,6 @@ class Pro4KingsScraper:
                         phone_number = phone_match.group(1)
                         break
             
-            vehicles_count = None
-            properties_count = None
-            
             return PlayerProfile(
                 player_id=player_id,
                 username=username,
@@ -680,8 +334,8 @@ class Pro4KingsScraper:
                 played_hours=played_hours,
                 age_ic=age_ic,
                 phone_number=phone_number,
-                vehicles_count=vehicles_count,
-                properties_count=properties_count,
+                vehicles_count=None,
+                properties_count=None,
                 profile_data=profile_data
             )
             
@@ -689,67 +343,27 @@ class Pro4KingsScraper:
             logger.error(f"Error parsing profile for player {player_id}: {e}")
             return None
     
-    async def get_banned_players(self) -> List[Dict]:
-        """Get banned players from banlist"""
-        url = f"{self.base_url}/banlist"
-        html = await self.fetch_page(url)
+    async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
+        """🔥 HIGHLY OPTIMIZED: Parallel fetching with larger waves"""
+        results = []
         
-        if not html:
-            return []
+        # 🔥 SOLUTION: Increase wave size to match or exceed max_concurrent
+        wave_size = 50  # Changed from 20 to 50 
+        wave_delay = 0.02  # Changed from 0.05 to 0.02s
         
-        soup = BeautifulSoup(html, 'html.parser')
-        banned = []
+        for i in range(0, len(player_ids), wave_size):
+            wave = player_ids[i:i + wave_size]
+            
+            tasks = [self.get_player_profile(pid) for pid in wave]
+            wave_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for result in wave_results:
+                if isinstance(result, PlayerProfile):
+                    results.append(result)
+                elif isinstance(result, Exception):
+                    logger.error(f"Error: {result}")
+            
+            if i + wave_size < len(player_ids):
+                await asyncio.sleep(wave_delay)
         
-        ban_rows = soup.select('table tr, .ban-row, .banned-player')
-        
-        for row in ban_rows[1:]:
-            try:
-                cells = row.select('td')
-                if len(cells) >= 6:
-                    player_link = cells[1].select_one('a[href*="/profile/"]')
-                    player_id = None
-                    if player_link:
-                        id_match = re.search(r'/profile/(\d+)', player_link.get('href', ''))
-                        if id_match:
-                            player_id = id_match.group(1)
-                    
-                    banned.append({
-                        'player_id': player_id or cells[0].get_text(strip=True),
-                        'player_name': cells[1].get_text(strip=True),
-                        'admin': cells[2].get_text(strip=True),
-                        'reason': cells[3].get_text(strip=True),
-                        'duration': cells[4].get_text(strip=True),
-                        'ban_date': cells[5].get_text(strip=True),
-                        'expiry_date': cells[6].get_text(strip=True) if len(cells) > 6 else None
-                    })
-            except Exception as e:
-                logger.error(f"Error parsing ban row: {e}")
-                continue
-        
-        return banned
-    
-async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
-    """🔥 HIGHLY OPTIMIZED: Parallel fetching with larger waves"""
-    results = []
-    
-    # 🔥 SOLUTION: Increase wave size to match or exceed max_concurrent
-    wave_size = 50  # Changed from 20 to 50 
-    wave_delay = 0.02  # Changed from 0.05 to 0.02s
-    
-    for i in range(0, len(player_ids), wave_size):
-        wave = player_ids[i:i + wave_size]
-        
-        tasks = [self.get_player_profile(pid) for pid in wave]
-        wave_results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for result in wave_results:
-            if isinstance(result, PlayerProfile):
-                results.append(result)
-            elif isinstance(result, Exception):
-                logger.error(f"Error: {result}")
-        
-        if i + wave_size < len(player_ids):
-            await asyncio.sleep(wave_delay)
-    
-    return results
-
+        return results
