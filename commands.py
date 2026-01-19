@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 import logging
 import asyncio
 import os
-from typing import Optional, List
+from typing import Optional, List, Dict
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -34,21 +35,70 @@ SCAN_STATE = {
 }
 
 # ========================================================================
+# HELPER FUNCTIONS
+# ========================================================================
+
+def deduplicate_actions(actions: List[dict]) -> List[dict]:
+    """Deduplicate actions that occur at the same second with same type and detail.
+    
+    Args:
+        actions: List of action dictionaries
+        
+    Returns:
+        List of deduplicated actions with 'count' field added for duplicates
+    """
+    if not actions:
+        return []
+    
+    # Group actions by (timestamp_second, action_type, action_detail)
+    grouped = defaultdict(list)
+    
+    for action in actions:
+        timestamp = action.get('timestamp')
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp)
+        
+        # Round to the nearest second for grouping
+        timestamp_key = timestamp.replace(microsecond=0) if timestamp else None
+        action_type = action.get('action_type', 'unknown')
+        action_detail = action.get('action_detail', '')
+        
+        key = (timestamp_key, action_type, action_detail)
+        grouped[key].append(action)
+    
+    # Create deduplicated list with counts
+    deduplicated = []
+    for key, group in grouped.items():
+        # Take the first action from the group
+        action = group[0].copy()
+        # Add count if there are duplicates
+        if len(group) > 1:
+            action['count'] = len(group)
+        deduplicated.append(action)
+    
+    # Sort by timestamp descending (most recent first)
+    deduplicated.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+    
+    return deduplicated
+
+# ========================================================================
 # PAGINATION VIEW
 # ========================================================================
 
 class ActionsPaginationView(discord.ui.View):
     """Pagination view for player actions with Previous/Next buttons"""
     
-    def __init__(self, actions: List[dict], player_info: dict, days: int, author_id: int, items_per_page: int = 10):
+    def __init__(self, actions: List[dict], player_info: dict, days: int, author_id: int, items_per_page: int = 10, original_count: int = None):
         super().__init__(timeout=180)  # 3 minutes timeout
-        self.actions = actions
+        # Deduplicate actions before storing
+        self.actions = deduplicate_actions(actions)
+        self.original_count = original_count or len(actions)
         self.player_info = player_info
         self.days = days
         self.author_id = author_id
         self.items_per_page = items_per_page
         self.current_page = 0
-        self.total_pages = (len(actions) + items_per_page - 1) // items_per_page
+        self.total_pages = (len(self.actions) + items_per_page - 1) // items_per_page if self.actions else 1
         
         # Update button states
         self.update_buttons()
@@ -64,9 +114,14 @@ class ActionsPaginationView(discord.ui.View):
         end_idx = min(start_idx + self.items_per_page, len(self.actions))
         page_actions = self.actions[start_idx:end_idx]
         
+        # Show both deduplicated count and original count
+        description = f"Last {self.days} days • {len(self.actions)} unique action(s)"
+        if self.original_count > len(self.actions):
+            description += f" ({self.original_count} total including duplicates)"
+        
         embed = discord.Embed(
             title=f"📝 Actions for {self.player_info['username']}",
-            description=f"Last {self.days} days • {len(self.actions)} total actions",
+            description=description,
             color=discord.Color.blue(),
             timestamp=datetime.now()
         )
@@ -75,14 +130,20 @@ class ActionsPaginationView(discord.ui.View):
             action_type = action.get('action_type', 'unknown')
             detail = action.get('action_detail', 'No details')
             timestamp = action.get('timestamp')
+            count = action.get('count', 1)
             
             if isinstance(timestamp, str):
                 timestamp = datetime.fromisoformat(timestamp)
             time_str = timestamp.strftime('%Y-%m-%d %H:%M') if timestamp else 'Unknown'
             
+            # Add count indicator if duplicates were found
+            name = f"{action_type} - {time_str}"
+            if count > 1:
+                name += f" ×{count}"
+            
             value = f"├ Player: {self.player_info['username']} ({self.player_info['player_id']})\n└ Detail: {detail}"
             embed.add_field(
-                name=f"{action_type} - {time_str}",
+                name=name,
                 value=value,
                 inline=False
             )
@@ -562,7 +623,7 @@ def setup_commands(bot, db, scraper_getter):
     )
     @app_commands.checks.cooldown(1, 30)
     async def actions_command(interaction: discord.Interaction, identifier: str, days: Optional[int] = 7):
-        """Get player's recent actions with pagination"""
+        """Get player's recent actions with pagination and deduplication"""
         await interaction.response.defer()
 
         try:
@@ -583,12 +644,16 @@ def setup_commands(bot, db, scraper_getter):
                 await interaction.followup.send(f"📝 **No Actions**\n\n{player['username']} has no recorded actions in the last {days} days.")
                 return
 
-            # Create pagination view
+            # Store original count before deduplication
+            original_count = len(actions)
+            
+            # Create pagination view (will deduplicate internally)
             view = ActionsPaginationView(
                 actions=actions,
                 player_info=player,
                 days=days,
-                author_id=interaction.user.id
+                author_id=interaction.user.id,
+                original_count=original_count
             )
             
             # Send initial page with pagination buttons
