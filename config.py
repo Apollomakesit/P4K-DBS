@@ -51,6 +51,10 @@ class Config:
     ]
     VIP_SCAN_INTERVAL: int = _safe_int.__func__('VIP_SCAN_INTERVAL', 10)  # Scan VIP actions every 10s
     
+    # Online Player Priority - Automatically track all currently online players
+    TRACK_ONLINE_PLAYERS_PRIORITY: bool = os.getenv('TRACK_ONLINE_PLAYERS_PRIORITY', 'true').lower() == 'true'
+    ONLINE_PLAYERS_SCAN_INTERVAL: int = _safe_int.__func__('ONLINE_PLAYERS_SCAN_INTERVAL', 15)  # Scan online players' actions every 15s
+    
     # Task Intervals (in seconds)
     SCRAPE_ACTIONS_INTERVAL: int = _safe_int.__func__('SCRAPE_ACTIONS_INTERVAL', 30)
     SCRAPE_ONLINE_INTERVAL: int = _safe_int.__func__('SCRAPE_ONLINE_INTERVAL', 60)
@@ -83,7 +87,8 @@ class Config:
         'scrape_online_players': 3,  # Alert if no run in 3x interval (3 minutes)
         'update_pending_profiles': 3,  # Alert if no run in 3x interval (6 minutes)
         'check_banned_players': 2,  # Alert if no run in 2x interval (2 hours)
-        'scrape_vip_actions': 5  # Alert if no run in 5x interval (50 seconds for VIP)
+        'scrape_vip_actions': 5,  # Alert if no run in 5x interval (50 seconds for VIP)
+        'scrape_online_priority_actions': 5  # Alert if no run in 5x interval (75 seconds for online)
     }
     
     @classmethod
@@ -112,6 +117,10 @@ class Config:
         vip_display = f"\n• VIP Players: {vip_count} configured" if vip_count > 0 else ""
         vip_interval_display = f"\n• VIP Scan Interval: {cls.VIP_SCAN_INTERVAL}s" if vip_count > 0 else ""
         
+        online_tracking = ""
+        if cls.TRACK_ONLINE_PLAYERS_PRIORITY:
+            online_tracking = f"\n• Online Player Priority: ✅ Enabled ({cls.ONLINE_PLAYERS_SCAN_INTERVAL}s interval)"
+        
         return f"""**Configuration:**
 
 **Database:**
@@ -119,7 +128,7 @@ class Config:
 • Backup: `{cls.DATABASE_BACKUP_PATH}`
 
 **Task Intervals:**
-• Scrape Actions: {cls.SCRAPE_ACTIONS_INTERVAL}s{vip_interval_display}
+• Scrape Actions: {cls.SCRAPE_ACTIONS_INTERVAL}s{vip_interval_display}{online_tracking}
 • Scrape Online: {cls.SCRAPE_ONLINE_INTERVAL}s
 • Update Profiles: {cls.UPDATE_PROFILES_INTERVAL}s
 • Check Banned: {cls.CHECK_BANNED_INTERVAL}s
