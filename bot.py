@@ -40,7 +40,8 @@ TASK_HEALTH = {
     'scrape_online_players': {'last_run': None, 'error_count': 0, 'is_running': False},
     'update_pending_profiles': {'last_run': None, 'error_count': 0, 'is_running': False},
     'check_banned_players': {'last_run': None, 'error_count': 0, 'is_running': False},
-    'scrape_vip_actions': {'last_run': None, 'error_count': 0, 'is_running': False}
+    'scrape_vip_actions': {'last_run': None, 'error_count': 0, 'is_running': False},
+    'scrape_online_priority_actions': {'last_run': None, 'error_count': 0, 'is_running': False}
 }
 
 # 🔥 Graceful shutdown flag
@@ -83,6 +84,8 @@ def signal_handler(sig, frame):
         check_banned_players.cancel()
     if scrape_vip_actions.is_running():
         scrape_vip_actions.cancel()
+    if scrape_online_priority_actions.is_running():
+        scrape_online_priority_actions.cancel()
     
     logger.info("✅ Background tasks stopped")
     
@@ -137,7 +140,7 @@ def verify_environment():
 # ============================================================================
 
 async def get_or_recreate_scraper(max_concurrent=None):
-    """🔧 HOTFIX: Get scraper instance with dynamic concurrency settings
+    """🛠️ HOTFIX: Get scraper instance with dynamic concurrency settings
     
     Args:
         max_concurrent: Override concurrent workers (for scans). If None, uses default (5)
@@ -226,6 +229,11 @@ async def on_ready():
         scrape_vip_actions.start()
         logger.info(f'💎 Started: scrape_vip_actions ({Config.VIP_SCAN_INTERVAL}s interval, {len(Config.VIP_PLAYER_IDS)} VIP players)')
     
+    # 🟢 Start online player priority tracking if enabled
+    if Config.TRACK_ONLINE_PLAYERS_PRIORITY and not scrape_online_priority_actions.is_running():
+        scrape_online_priority_actions.start()
+        logger.info(f'🟢 Started: scrape_online_priority_actions ({Config.ONLINE_PLAYERS_SCAN_INTERVAL}s interval)')
+    
     # 🔥 Start task watchdog
     if not task_watchdog.is_running():
         task_watchdog.start()
@@ -236,6 +244,8 @@ async def on_ready():
     print(f'✅ {bot.user} is ONLINE and monitoring Pro4Kings!')
     if Config.VIP_PLAYER_IDS:
         print(f'💎 VIP Tracking: {len(Config.VIP_PLAYER_IDS)} priority players')
+    if Config.TRACK_ONLINE_PLAYERS_PRIORITY:
+        print(f'🟢 Online Priority: Enabled ({Config.ONLINE_PLAYERS_SCAN_INTERVAL}s scan interval)')
     print(f'{"="*60}\n')
 
 # ============================================================================
@@ -287,6 +297,16 @@ async def task_watchdog():
             if not scrape_vip_actions.is_running():
                 logger.warning("🔄 Restarting crashed task: scrape_vip_actions")
                 scrape_vip_actions.restart()
+    
+    # Check scrape_online_priority_actions (should run every ONLINE_PLAYERS_SCAN_INTERVAL)
+    if Config.TRACK_ONLINE_PLAYERS_PRIORITY and TASK_HEALTH['scrape_online_priority_actions']['last_run']:
+        elapsed = (now - TASK_HEALTH['scrape_online_priority_actions']['last_run']).total_seconds()
+        max_interval = Config.ONLINE_PLAYERS_SCAN_INTERVAL * 5  # Alert if no run in 5x interval
+        if elapsed > max_interval:
+            issues.append(f"scrape_online_priority_actions hasn't run in {elapsed:.0f}s")
+            if not scrape_online_priority_actions.is_running():
+                logger.warning("🔄 Restarting crashed task: scrape_online_priority_actions")
+                scrape_online_priority_actions.restart()
     
     if issues:
         logger.warning(f"⚠️ Task health issues detected: {', '.join(issues)}")
@@ -477,6 +497,95 @@ async def scrape_vip_actions_error(error):
     """Handle VIP scan task errors"""
     logger.error(f"❌ scrape_vip_actions task error: {error}", exc_info=error)
     TASK_HEALTH['scrape_vip_actions']['error_count'] += 1
+
+# ============================================================================
+# 🟢 ONLINE PLAYER PRIORITY TRACKING TASK
+# ============================================================================
+
+@tasks.loop(seconds=Config.ONLINE_PLAYERS_SCAN_INTERVAL)
+async def scrape_online_priority_actions():
+    """🟢 Fast scan loop for currently online players' actions"""
+    if SHUTDOWN_REQUESTED:
+        return
+    
+    if not Config.TRACK_ONLINE_PLAYERS_PRIORITY:
+        return  # Skip if disabled
+    
+    TASK_HEALTH['scrape_online_priority_actions']['last_run'] = datetime.now()
+    TASK_HEALTH['scrape_online_priority_actions']['is_running'] = True
+    
+    try:
+        # Get current online players from database
+        online_players = await db.get_current_online_players()
+        if not online_players:
+            return
+        
+        online_ids = set(player['player_id'] for player in online_players)
+        
+        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
+        
+        # Fetch online player-specific actions
+        online_actions = await scraper_instance.get_online_player_actions(online_ids, limit=200)
+        
+        if online_actions:
+            new_count = 0
+            new_player_ids = set()
+            
+            for action in online_actions:
+                action_dict = {
+                    'player_id': action.player_id,
+                    'player_name': action.player_name,
+                    'action_type': action.action_type,
+                    'action_detail': action.action_detail,
+                    'item_name': action.item_name,
+                    'item_quantity': action.item_quantity,
+                    'target_player_id': action.target_player_id,
+                    'target_player_name': action.target_player_name,
+                    'admin_id': action.admin_id,
+                    'admin_name': action.admin_name,
+                    'warning_count': action.warning_count,
+                    'reason': action.reason,
+                    'timestamp': action.timestamp,
+                    'raw_text': action.raw_text
+                }
+                
+                # Check for duplicates and save
+                if not await db.action_exists(action.timestamp, action.raw_text):
+                    await db.save_action(action_dict)
+                    new_count += 1
+                    
+                    # Mark online players for priority update
+                    if action.player_id:
+                        new_player_ids.add((action.player_id, action.player_name))
+                        await db.mark_player_for_update(action.player_id, action.player_name)
+                    
+                    if action.target_player_id:
+                        new_player_ids.add((action.target_player_id, action.target_player_name))
+                        await db.mark_player_for_update(action.target_player_id, action.target_player_name)
+            
+            if new_count > 0:
+                logger.info(f"🟢 Online Priority: {new_count} new actions saved for {len(online_ids)} online players")
+            
+        TASK_HEALTH['scrape_online_priority_actions']['error_count'] = 0
+        
+    except Exception as e:
+        TASK_HEALTH['scrape_online_priority_actions']['error_count'] += 1
+        logger.error(f"❌ Online priority scan failed (count: {TASK_HEALTH['scrape_online_priority_actions']['error_count']}): {e}", exc_info=True)
+    
+    finally:
+        TASK_HEALTH['scrape_online_priority_actions']['is_running'] = False
+
+@scrape_online_priority_actions.before_loop
+async def before_scrape_online_priority_actions():
+    """Wait for bot to be ready"""
+    await bot.wait_until_ready()
+    logger.info("🟢 scrape_online_priority_actions task ready")
+
+@scrape_online_priority_actions.error
+async def scrape_online_priority_actions_error(error):
+    """Handle online priority scan task errors"""
+    logger.error(f"❌ scrape_online_priority_actions task error: {error}", exc_info=error)
+    TASK_HEALTH['scrape_online_priority_actions']['error_count'] += 1
 
 @tasks.loop(seconds=60)
 async def scrape_online_players():
