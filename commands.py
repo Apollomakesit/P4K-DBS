@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import logging
 import asyncio
 import os
-from typing import Optional
+from typing import Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,100 @@ SCAN_STATE = {
         'wave_delay': 0.05
     }
 }
+
+# ========================================================================
+# PAGINATION VIEW
+# ========================================================================
+
+class ActionsPaginationView(discord.ui.View):
+    """Pagination view for player actions with Previous/Next buttons"""
+    
+    def __init__(self, actions: List[dict], player_info: dict, days: int, author_id: int, items_per_page: int = 10):
+        super().__init__(timeout=180)  # 3 minutes timeout
+        self.actions = actions
+        self.player_info = player_info
+        self.days = days
+        self.author_id = author_id
+        self.items_per_page = items_per_page
+        self.current_page = 0
+        self.total_pages = (len(actions) + items_per_page - 1) // items_per_page
+        
+        # Update button states
+        self.update_buttons()
+    
+    def update_buttons(self):
+        """Update button enabled/disabled states based on current page"""
+        self.previous_button.disabled = (self.current_page == 0)
+        self.next_button.disabled = (self.current_page >= self.total_pages - 1)
+    
+    def build_embed(self) -> discord.Embed:
+        """Build embed for current page"""
+        start_idx = self.current_page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, len(self.actions))
+        page_actions = self.actions[start_idx:end_idx]
+        
+        embed = discord.Embed(
+            title=f"📝 Actions for {self.player_info['username']}",
+            description=f"Last {self.days} days • {len(self.actions)} total actions",
+            color=discord.Color.blue(),
+            timestamp=datetime.now()
+        )
+        
+        for action in page_actions:
+            action_type = action.get('action_type', 'unknown')
+            detail = action.get('action_detail', 'No details')
+            timestamp = action.get('timestamp')
+            
+            if isinstance(timestamp, str):
+                timestamp = datetime.fromisoformat(timestamp)
+            time_str = timestamp.strftime('%Y-%m-%d %H:%M') if timestamp else 'Unknown'
+            
+            value = f"├ Player: {self.player_info['username']} ({self.player_info['player_id']})\n└ Detail: {detail}"
+            embed.add_field(
+                name=f"{action_type} - {time_str}",
+                value=value,
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Page {self.current_page + 1}/{self.total_pages} • Use buttons to navigate")
+        return embed
+    
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Ensure only the command author can use the buttons"""
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the person who ran this command can use these buttons!",
+                ephemeral=True
+            )
+            return False
+        return True
+    
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, emoji="◀️")
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to previous page"""
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+    
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, emoji="▶️")
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to next page"""
+        self.current_page = min(self.total_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+    
+    async def on_timeout(self):
+        """Disable buttons when view times out"""
+        for item in self.children:
+            item.disabled = True
+        try:
+            # Try to edit the message to disable buttons
+            if self.message:
+                await self.message.edit(view=self)
+        except:
+            pass
 
 # Helper Functions
 def format_time_duration(seconds: float) -> str:
@@ -468,7 +562,7 @@ def setup_commands(bot, db, scraper_getter):
     )
     @app_commands.checks.cooldown(1, 30)
     async def actions_command(interaction: discord.Interaction, identifier: str, days: Optional[int] = 7):
-        """Get player's recent actions"""
+        """Get player's recent actions with pagination"""
         await interaction.response.defer()
 
         try:
@@ -489,35 +583,18 @@ def setup_commands(bot, db, scraper_getter):
                 await interaction.followup.send(f"📝 **No Actions**\n\n{player['username']} has no recorded actions in the last {days} days.")
                 return
 
-            # Build embed
-            embed = discord.Embed(
-                title=f"📝 Actions for {player['username']}",
-                description=f"Last {days} days • {len(actions)} total actions",
-                color=discord.Color.blue(),
-                timestamp=datetime.now()
+            # Create pagination view
+            view = ActionsPaginationView(
+                actions=actions,
+                player_info=player,
+                days=days,
+                author_id=interaction.user.id
             )
-
-            # Show up to 10 most recent actions
-            for action in actions[:10]:
-                action_type = action.get('action_type', 'unknown')
-                detail = action.get('action_detail', 'No details')
-                timestamp = action.get('timestamp')
-
-                if isinstance(timestamp, str):
-                    timestamp = datetime.fromisoformat(timestamp)
-                time_str = timestamp.strftime('%Y-%m-%d %H:%M') if timestamp else 'Unknown'
-
-                value = f"├ Player: {player['username']} ({player['player_id']})\n└ Detail: {detail}"
-                embed.add_field(
-                    name=f"{action_type} - {time_str}",
-                    value=value,
-                    inline=False
-                )
-
-            if len(actions) > 10:
-                embed.set_footer(text=f"Showing 10 of {len(actions)} actions")
-
-            await interaction.followup.send(embed=embed)
+            
+            # Send initial page with pagination buttons
+            embed = view.build_embed()
+            message = await interaction.followup.send(embed=embed, view=view)
+            view.message = message  # Store message reference for timeout handling
 
         except Exception as e:
             logger.error(f"Error in actions command: {e}", exc_info=True)
