@@ -43,6 +43,14 @@ class Config:
     SCRAPER_RATE_LIMIT: float = _safe_float.__func__('SCRAPER_RATE_LIMIT', 25.0)  # requests/sec
     SCRAPER_BURST_CAPACITY: int = _safe_int.__func__('SCRAPER_BURST_CAPACITY', 50)
     
+    # VIP Player Tracking - Monitor specific high-priority players
+    VIP_PLAYER_IDS: list[str] = [
+        pid.strip() 
+        for pid in os.getenv('VIP_PLAYER_IDS', '155733,184268,799,1207,143013,102850,141110,711,52323,9,64,2446,100,14,69,139978,215,141,1,4,46,51,47182').split(',') 
+        if pid.strip()
+    ]
+    VIP_SCAN_INTERVAL: int = _safe_int.__func__('VIP_SCAN_INTERVAL', 10)  # Scan VIP actions every 10s
+    
     # Task Intervals (in seconds)
     SCRAPE_ACTIONS_INTERVAL: int = _safe_int.__func__('SCRAPE_ACTIONS_INTERVAL', 30)
     SCRAPE_ONLINE_INTERVAL: int = _safe_int.__func__('SCRAPE_ONLINE_INTERVAL', 60)
@@ -74,7 +82,8 @@ class Config:
         'scrape_actions': 4,  # Alert if no run in 4x interval (2 minutes)
         'scrape_online_players': 3,  # Alert if no run in 3x interval (3 minutes)
         'update_pending_profiles': 3,  # Alert if no run in 3x interval (6 minutes)
-        'check_banned_players': 2  # Alert if no run in 2x interval (2 hours)
+        'check_banned_players': 2,  # Alert if no run in 2x interval (2 hours)
+        'scrape_vip_actions': 5  # Alert if no run in 5x interval (50 seconds for VIP)
     }
     
     @classmethod
@@ -99,6 +108,10 @@ class Config:
     @classmethod
     def display(cls) -> str:
         """Return formatted configuration display"""
+        vip_count = len(cls.VIP_PLAYER_IDS)
+        vip_display = f"\n• VIP Players: {vip_count} configured" if vip_count > 0 else ""
+        vip_interval_display = f"\n• VIP Scan Interval: {cls.VIP_SCAN_INTERVAL}s" if vip_count > 0 else ""
+        
         return f"""**Configuration:**
 
 **Database:**
@@ -106,7 +119,7 @@ class Config:
 • Backup: `{cls.DATABASE_BACKUP_PATH}`
 
 **Task Intervals:**
-• Scrape Actions: {cls.SCRAPE_ACTIONS_INTERVAL}s
+• Scrape Actions: {cls.SCRAPE_ACTIONS_INTERVAL}s{vip_interval_display}
 • Scrape Online: {cls.SCRAPE_ONLINE_INTERVAL}s
 • Update Profiles: {cls.UPDATE_PROFILES_INTERVAL}s
 • Check Banned: {cls.CHECK_BANNED_INTERVAL}s
@@ -120,7 +133,7 @@ class Config:
 **Scraper:**
 • Max Concurrent: {cls.SCRAPER_MAX_CONCURRENT}
 • Rate Limit: {cls.SCRAPER_RATE_LIMIT} req/s
-• Burst Capacity: {cls.SCRAPER_BURST_CAPACITY}
+• Burst Capacity: {cls.SCRAPER_BURST_CAPACITY}{vip_display}
 
 **Batch Sizes:**
 • Actions Fetch: {cls.ACTIONS_FETCH_LIMIT}
