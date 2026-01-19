@@ -84,22 +84,22 @@ class TokenBucketRateLimiter:
 class Pro4KingsScraper:
     """Enhanced scraper optimized for fast scanning with intelligent rate limiting"""
     
-    def __init__(self, base_url: str = "https://panel.pro4kings.ro", max_concurrent: int = 20):
+    def __init__(self, base_url: str = "https://panel.pro4kings.ro", max_concurrent: int = 50):
         self.base_url = base_url
-        self.max_concurrent = max_concurrent  # 🔥 INCREASED: 10 → 20
+        self.max_concurrent = max_concurrent  # 🔥 INCREASED: 10 → 50
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.client: Optional[httpx.AsyncClient] = None
         
         # 🔥 OPTIMIZED RATE LIMITER
         self.rate_limiter = TokenBucketRateLimiter(
-            rate=40.0,       # 🔥 Crescut de la 25 la 40 request-uri/secundă
-            capacity=60      # 🔥 Crescut de la 50 la 60 pentru burst mai mare
+            rate=60.0,       # 🔥 Crescut de la 25 la 60 request-uri/secundă
+            capacity=100      # 🔥 Crescut de la 50 la 100 pentru burst mai mare
         )
         
         # Track 503 errors pentru adaptive throttling
         self.error_503_count = 0
         self.success_count = 0
-        self.adaptive_delay = 0.01  # 🔥 Redus de la 20ms la 10ms
+        self.adaptive_delay = 0.005  # 🔥 Redus de la 20ms 
         
         # 🔥 ACTION SCRAPING STATS
         self.action_scraping_stats = {
@@ -728,29 +728,28 @@ class Pro4KingsScraper:
         
         return banned
     
-    async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
-        """🔥 OPTIMIZED: Batch fetch cu wave pattern mai rapid"""
-        results = []
+async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
+    """🔥 HIGHLY OPTIMIZED: Parallel fetching with larger waves"""
+    results = []
+    
+    # 🔥 SOLUTION: Increase wave size to match or exceed max_concurrent
+    wave_size = 50  # Changed from 20 to 50 
+    wave_delay = 0.02  # Changed from 0.05 to 0.02s
+    
+    for i in range(0, len(player_ids), wave_size):
+        wave = player_ids[i:i + wave_size]
         
-        # 🔥 OPTIMIZED: Wave size crescut de la 10 la 20, delay redus de la 0.2s la 0.05s
-        wave_size = 20  # 🔥 Crescut de la 10 la 20
-        wave_delay = 0.05  # 🔥 Redus de la 0.2s la 0.05s
+        tasks = [self.get_player_profile(pid) for pid in wave]
+        wave_results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        for i in range(0, len(player_ids), wave_size):
-            wave = player_ids[i:i + wave_size]
-            
-            # Lansează valul în paralel
-            tasks = [self.get_player_profile(pid) for pid in wave]
-            wave_results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for result in wave_results:
-                if isinstance(result, PlayerProfile):
-                    results.append(result)
-                elif isinstance(result, Exception):
-                    logger.error(f"Error: {result}")
-            
-            # Delay între valuri
-            if i + wave_size < len(player_ids):
-                await asyncio.sleep(wave_delay)
+        for result in wave_results:
+            if isinstance(result, PlayerProfile):
+                results.append(result)
+            elif isinstance(result, Exception):
+                logger.error(f"Error: {result}")
         
-        return results
+        if i + wave_size < len(player_ids):
+            await asyncio.sleep(wave_delay)
+    
+    return results
+
