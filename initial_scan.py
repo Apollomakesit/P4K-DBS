@@ -24,15 +24,15 @@ DB_PATH = os.getenv('DATABASE_PATH', 'pro4kings.db')
 START_ID = 1
 END_ID = 230000
 
-# 🔥 HIGHLY OPTIMIZED CONFIGURATION - Uses scraper's batch_get_profiles()
-CONCURRENT_WORKERS = 8      # 8 concurrent workers
-BATCH_SIZE = 200            # Each worker processes 200 IDs at once using batch_get_profiles
+# 🔥 HIGHLY OPTIMIZED CONFIGURATION
+CONCURRENT_WORKERS = 15     # Increased from 8 to 15 workers
+BATCH_SIZE = 50             # Decreased from 200 to 50 (matches scraper wave_size)
 
 class FastScanner:
     """
     HIGHLY OPTIMIZED scanner using scraper.batch_get_profiles()
-    Strategy: Let scraper handle rate limiting, we just feed it batches
-    Target: 6-10 ID/s with minimal 503 errors
+    Strategy: Smaller batches + more workers = better parallelization
+    Target: 15-25 IDs/s with minimal 503 errors
     """
     
     def __init__(self, db_path: str = DB_PATH, workers: int = CONCURRENT_WORKERS):
@@ -172,8 +172,8 @@ class FastScanner:
     
     async def scan_parallel(self):
         """
-        Parallel scan using batch processing
-        Target: 6-10 ID/s with minimal 503 errors
+        Parallel scan using optimized batch processing
+        Target: 15-25 IDs/s with minimal 503 errors
         """
         self.stats['start_time'] = datetime.now()
         self.last_progress_time = time.time()
@@ -182,19 +182,20 @@ class FastScanner:
         start_id = self.scan_state['last_id'] + 1
         
         logger.info("=" * 60)
-        logger.info(f"HIGHLY OPTIMIZED PARALLEL PROFILE SCANNER")
+        logger.info(f"🔥 HIGHLY OPTIMIZED PARALLEL PROFILE SCANNER")
         logger.info(f"Range: {start_id:,} to {END_ID:,} ({END_ID - start_id + 1:,} profiles)")
-        logger.info(f"Workers: {self.workers} (batch processing)")
+        logger.info(f"Workers: {self.workers} (parallel batch processing)")
         logger.info(f"Batch Size: {BATCH_SIZE} IDs per batch")
-        logger.info(f"Strategy: Using scraper.batch_get_profiles() for optimal parallelism")
-        logger.info(f"Target: 6-10 ID/s with minimal 503 errors")
-        logger.info(f"Estimated Time: 8-12 hours")
+        logger.info(f"Scraper Concurrency: 50 (wave size: 50)")
+        logger.info(f"Strategy: Small batches + more workers = better parallelization")
+        logger.info(f"Target: 15-25 IDs/s")
+        logger.info(f"Estimated Time: 3-4 hours")
         logger.info("=" * 60)
         
         # Generate list of IDs to scan
         player_ids = [str(i) for i in range(start_id, END_ID + 1)]
         
-        # 🔥 Split IDs into batches
+        # 🔥 Split IDs into smaller batches (50 each)
         all_batches = [player_ids[i:i + BATCH_SIZE] for i in range(0, len(player_ids), BATCH_SIZE)]
         logger.info(f"Total batches to process: {len(all_batches)}")
         
@@ -205,7 +206,8 @@ class FastScanner:
             for i in range(self.workers)
         ]
         
-        async with Pro4KingsScraper(max_concurrent=5) as scraper:
+        # 🔥 CRITICAL: Use max_concurrent=50 to match our optimization
+        async with Pro4KingsScraper(max_concurrent=50) as scraper:
             # Progress reporting task
             progress_task = asyncio.create_task(self.report_progress(start_id))
             
@@ -273,6 +275,7 @@ class FastScanner:
 ║ 📈 Performance:
 ║   Current Rate: {current_rate:.2f} ID/s (last 30s)
 ║   Average Rate: {overall_rate:.2f} ID/s (overall)
+║   Target: 15-25 ID/s
 ║ 
 ║ ⏱️ Time:
 ║   ETA: {int(eta_hours)}h {int(eta_minutes)}m
@@ -306,8 +309,8 @@ class FastScanner:
 ⏱️ Performance:
   Duration: {int(elapsed/3600)}h {int((elapsed%3600)/60)}m
   Average Rate: {avg_rate:.2f} profiles/sec
-  Target Rate: 6-10 ID/s
-  Status: {'✅ EXCELLENT' if avg_rate >= 6 else '⚠️ BELOW TARGET'}
+  Target Rate: 15-25 ID/s
+  Status: {'✅ EXCELLENT' if avg_rate >= 15 else '⚠️ BELOW TARGET' if avg_rate >= 10 else '❌ POOR'}
 
 💾 Database:
   Total profiles stored: {self.stats['found']:,}
