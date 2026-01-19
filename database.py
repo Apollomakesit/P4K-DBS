@@ -235,6 +235,7 @@ class Database:
                 # Create indexes for performance
                 indexes = [
                     'CREATE INDEX IF NOT EXISTS idx_actions_player ON actions(player_id)',
+                    'CREATE INDEX IF NOT EXISTS idx_actions_target ON actions(target_player_id)',  # 🆕 NEW INDEX
                     'CREATE INDEX IF NOT EXISTS idx_actions_timestamp ON actions(timestamp)',
                     'CREATE INDEX IF NOT EXISTS idx_actions_type ON actions(action_type)',
                     'CREATE INDEX IF NOT EXISTS idx_login_events_player ON login_events(player_id)',
@@ -632,33 +633,54 @@ class Database:
         return await asyncio.to_thread(self._get_current_online_players_sync)
     
     def _get_player_actions_sync(self, identifier: str, days: int = 7) -> List[Dict]:
-        """SYNC: Get player actions"""
+        """🆕 SYNC: Get player actions - BIDIRECTIONAL (sender OR receiver)"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cutoff = datetime.now() - timedelta(days=days)
             
             if identifier.isdigit():
+                # Query for actions where player is SENDER or RECEIVER
                 cursor.execute('''
                     SELECT * FROM actions
-                    WHERE player_id = ? AND timestamp >= ?
+                    WHERE (player_id = ? OR target_player_id = ?) AND timestamp >= ?
                     ORDER BY timestamp DESC
-                ''', (identifier, cutoff))
+                ''', (identifier, identifier, cutoff))
                 results = cursor.fetchall()
                 
                 if results:
                     return [dict(row) for row in results]
             
+            # Search by name (sender or receiver)
             cursor.execute('''
                 SELECT * FROM actions
-                WHERE player_name LIKE ? AND timestamp >= ?
+                WHERE (player_name LIKE ? OR target_player_name LIKE ?) AND timestamp >= ?
                 ORDER BY timestamp DESC
-            ''', (f'%{identifier}%', cutoff))
+            ''', (f'%{identifier}%', f'%{identifier}%', cutoff))
             
             return [dict(row) for row in cursor.fetchall()]
     
     async def get_player_actions(self, identifier: str, days: int = 7) -> List[Dict]:
-        """ASYNC: Get player actions"""
+        """🆕 ASYNC: Get player actions - BIDIRECTIONAL"""
         return await asyncio.to_thread(self._get_player_actions_sync, identifier, days)
+    
+    def _get_recent_actions_sync(self, days: int = 7, limit: int = 50) -> List[Dict]:
+        """🆕 SYNC: Get recent actions from ALL players"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = datetime.now() - timedelta(days=days)
+            
+            cursor.execute('''
+                SELECT * FROM actions
+                WHERE timestamp >= ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ''', (cutoff, limit))
+            
+            return [dict(row) for row in cursor.fetchall()]
+    
+    async def get_recent_actions(self, days: int = 7, limit: int = 50) -> List[Dict]:
+        """🆕 ASYNC: Get recent actions from ALL players"""
+        return await asyncio.to_thread(self._get_recent_actions_sync, days, limit)
     
     def _save_banned_player_sync(self, ban_data: Dict) -> None:
         """SYNC: Save banned player"""
