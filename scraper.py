@@ -554,6 +554,33 @@ class Pro4KingsScraper:
         logger.info(f"💎 Found {len(vip_actions)} VIP actions out of {len(all_actions)} total")
         return vip_actions
     
+    def is_online_action(self, action: PlayerAction, online_ids: Set[str]) -> bool:
+        """🟢 Check if action involves any currently online player"""
+        if not action:
+            return False
+        
+        # Check if primary player is online
+        if action.player_id and action.player_id in online_ids:
+            return True
+        
+        # Check if target player is online
+        if action.target_player_id and action.target_player_id in online_ids:
+            return True
+        
+        # Check if admin is online (for warnings/admin actions)
+        if action.admin_id and action.admin_id in online_ids:
+            return True
+        
+        return False
+    
+    async def get_online_player_actions(self, online_ids: Set[str], limit: int = 200) -> List[PlayerAction]:
+        """🟢 Get latest actions filtered for currently online players only"""
+        all_actions = await self.get_latest_actions(limit)
+        online_actions = [action for action in all_actions if self.is_online_action(action, online_ids)]
+        
+        logger.info(f"🟢 Found {len(online_actions)} online player actions out of {len(all_actions)} total")
+        return online_actions
+    
     async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
         """Get complete player profile with improved faction rank detection"""
         profile_url = f"{self.base_url}/profile/{player_id}"
