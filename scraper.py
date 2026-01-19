@@ -402,21 +402,23 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
             
-            # Pattern 2: Chest deposit/withdraw
+            # Pattern 2: Chest deposit/withdraw - FIXED to capture full details
             chest_match = re.search(
-                r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+(pus\s+in|scos\s+din)\s+chest.*?(\d+)x\s+([^\d]+?)(?=\d{4}-\d{2}-\d{2}|$)',
+                r'Jucatorul\s+([^\(]+)\s*\((\d+)\)\s+a\s+(pus\s+in|scos\s+din)\s+(chest.*?)(\d+)x\s+([^\d]+?)(?=\d{4}-\d{2}-\d{2}|$)',
                 text,
                 re.IGNORECASE
             )
             if chest_match:
                 action_type = 'chest_deposit' if 'pus' in chest_match.group(3).lower() else 'chest_withdraw'
+                # Include full detail with chest ID and item info
+                full_detail = f"{chest_match.group(3)} {chest_match.group(4)}{chest_match.group(5)}x {chest_match.group(6).strip()}"
                 return PlayerAction(
                     player_id=chest_match.group(2),
                     player_name=chest_match.group(1).strip(),
                     action_type=action_type,
-                    action_detail=f"{chest_match.group(3)} chest",
-                    item_name=chest_match.group(5).strip(),
-                    item_quantity=int(chest_match.group(4)),
+                    action_detail=full_detail,
+                    item_name=chest_match.group(6).strip(),
+                    item_quantity=int(chest_match.group(5)),
                     timestamp=timestamp,
                     raw_text=text
                 )
