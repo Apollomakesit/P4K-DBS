@@ -5,14 +5,26 @@ import logging
 from contextlib import contextmanager
 import time
 import asyncio
+import os
 
 logger = logging.getLogger(__name__)
 
 class Database:
     """Enhanced async-safe database manager with non-blocking operations"""
     
-    def __init__(self, db_path: str = 'pro4kings.db'):
+    def __init__(self, db_path: str = None):
+        # 🔥 Railway Volume Support: Use /data if available, otherwise default path
+        if db_path is None:
+            if os.path.exists('/data'):
+                db_path = '/data/pro4kings.db'
+                logger.info("📦 Using Railway volume: /data/pro4kings.db")
+            else:
+                db_path = 'pro4kings.db'
+                logger.info("💾 Using local database: pro4kings.db")
+        
         self.db_path = db_path
+        logger.info(f"📁 Database path: {self.db_path}")
+        
         # Initialize database synchronously on startup (before event loop)
         self._init_database_sync()
     
