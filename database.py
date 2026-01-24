@@ -912,6 +912,25 @@ class Database:
         
         return await asyncio.to_thread(_get_members_sync)
     
+    async def get_all_factions_with_counts(self) -> List[Dict]:
+        """Get all factions with member and online counts, sorted by member count (descending)"""
+        def _get_factions_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT 
+                        faction as faction_name,
+                        COUNT(*) as member_count,
+                        SUM(CASE WHEN is_online = 1 THEN 1 ELSE 0 END) as online_count
+                    FROM players
+                    WHERE faction IS NOT NULL AND faction != ''
+                    GROUP BY faction
+                    ORDER BY member_count DESC
+                ''')
+                return [dict(row) for row in cursor.fetchall()]
+        
+        return await asyncio.to_thread(_get_factions_sync)
+    
     async def get_recent_promotions(self, days: int = 7) -> List[Dict]:
         """Get recent promotions"""
         def _get_promotions_sync():
