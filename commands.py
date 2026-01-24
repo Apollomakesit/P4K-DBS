@@ -188,6 +188,102 @@ class ActionsPaginationView(discord.ui.View):
         except:
             pass
 
+
+class FactionPaginationView(discord.ui.View):
+    """Pagination view for faction members with Previous/Next buttons"""
+    
+    def __init__(self, members: List[dict], faction_name: str, author_id: int, items_per_page: int = 20):
+        super().__init__(timeout=180)  # 3 minutes timeout
+        self.members = members
+        self.faction_name = faction_name
+        self.author_id = author_id
+        self.items_per_page = items_per_page
+        self.current_page = 0
+        self.total_pages = (len(self.members) + items_per_page - 1) // items_per_page if self.members else 1
+        
+        # Update button states
+        self.update_buttons()
+    
+    def update_buttons(self):
+        """Update button enabled/disabled states based on current page"""
+        self.previous_button.disabled = (self.current_page == 0)
+        self.next_button.disabled = (self.current_page >= self.total_pages - 1)
+    
+    def build_embed(self) -> discord.Embed:
+        """Build embed for current page"""
+        start_idx = self.current_page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, len(self.members))
+        page_members = self.members[start_idx:end_idx]
+        
+        embed = discord.Embed(
+            title=f"👥 {self.faction_name}",
+            description=f"Showing {start_idx + 1}-{end_idx} of {len(self.members)} member(s)",
+            color=discord.Color.blue(),
+            timestamp=datetime.now()
+        )
+        
+        for member in page_members:
+            status = "🟢" if member.get('is_online') else "⚪"
+            rank = member.get('faction_rank', 'Membru')
+            level = member.get('level', '?')
+            
+            # Format username - check if it's a placeholder like "Player_12345"
+            username = member['username']
+            player_id = member['player_id']
+            
+            # If username looks like Player_<id>, show just the ID
+            if username.startswith('Player_') and username[7:].isdigit():
+                display_name = f"ID: {player_id}"
+            else:
+                display_name = username
+            
+            value = f"{status} Level {level} • {rank}"
+            embed.add_field(
+                name=f"{display_name} ({player_id})",
+                value=value,
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Page {self.current_page + 1}/{self.total_pages} • Use buttons to navigate")
+        return embed
+    
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Ensure only the command author can use the buttons"""
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the person who ran this command can use these buttons!",
+                ephemeral=True
+            )
+            return False
+        return True
+    
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, emoji="◀️")
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to previous page"""
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+    
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, emoji="▶️")
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to next page"""
+        self.current_page = min(self.total_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+    
+    async def on_timeout(self):
+        """Disable buttons when view times out"""
+        for item in self.children:
+            item.disabled = True
+        try:
+            # Try to edit the message to disable buttons
+            if self.message:
+                await self.message.edit(view=self)
+        except:
+            pass
+
 # Helper Functions
 def format_time_duration(seconds: float) -> str:
     """Format seconds into human-readable time"""
@@ -800,7 +896,7 @@ def setup_commands(bot, db, scraper_getter):
     @app_commands.describe(faction_name="Name of faction")
     @app_commands.checks.cooldown(1, 30)
     async def faction_command(interaction: discord.Interaction, faction_name: str):
-        """List all members of a faction"""
+        """List all members of a faction with pagination"""
         await interaction.response.defer()
 
         try:
@@ -810,33 +906,62 @@ def setup_commands(bot, db, scraper_getter):
                 await interaction.followup.send(f"🔍 **Not Found**\n\nNo members found in faction: `{faction_name}`")
                 return
 
+            # Create pagination view
+            view = FactionPaginationView(
+                members=members,
+                faction_name=faction_name,
+                author_id=interaction.user.id
+            )
+            
+            # Send initial page with pagination buttons
+            embed = view.build_embed()
+            message = await interaction.followup.send(embed=embed, view=view)
+            view.message = message  # Store message reference for timeout handling
+
+        except Exception as e:
+            logger.error(f"Error in faction command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    @bot.tree.command(name="factionlist", description="List all factions sorted by member count")
+    @app_commands.checks.cooldown(1, 30)
+    async def faction_list_command(interaction: discord.Interaction):
+        """List all factions sorted by member count (descending)"""
+        await interaction.response.defer()
+
+        try:
+            factions = await db.get_all_factions_with_counts()
+
+            if not factions:
+                await interaction.followup.send("📊 **No Factions**\n\nNo factions found in the database.")
+                return
+
             embed = discord.Embed(
-                title=f"👥 {faction_name}",
-                description=f"{len(members)} member(s)",
+                title="📋 All Factions",
+                description=f"Total: {len(factions)} faction(s)",
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
 
-            # Show up to 20 members
-            for member in members[:20]:
-                status = "🟢" if member.get('is_online') else "⚪"
-                rank = member.get('faction_rank', 'No rank')
-                level = member.get('level', '?')
-
-                value = f"{status} Level {level} • {rank}"
+            # Show up to 25 factions
+            for i, faction in enumerate(factions[:25], 1):
+                faction_name = faction['faction_name']
+                member_count = faction['member_count']
+                online_count = faction.get('online_count', 0)
+                
+                value = f"👥 {member_count} member(s) • 🟢 {online_count} online"
                 embed.add_field(
-                    name=f"{member['username']} ({member['player_id']})",
+                    name=f"{i}. {faction_name}",
                     value=value,
                     inline=False
                 )
 
-            if len(members) > 20:
-                embed.set_footer(text=f"Showing 20 of {len(members)} members")
+            if len(factions) > 25:
+                embed.set_footer(text=f"Showing top 25 of {len(factions)} factions")
 
             await interaction.followup.send(embed=embed)
 
         except Exception as e:
-            logger.error(f"Error in faction command: {e}", exc_info=True)
+            logger.error(f"Error in faction list command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
     @bot.tree.command(name="promotions", description="Recent faction promotions")
