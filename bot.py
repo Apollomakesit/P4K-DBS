@@ -13,17 +13,13 @@ import re
 import tracemalloc
 import psutil
 
-# 🔥 Import all slash commands
 from commands import setup_commands
 
-# 🔥 Start memory tracking
 tracemalloc.start()
 
-# Discord command sync tracking
 COMMANDS_SYNCED = False
 SYNC_LOCK = asyncio.Lock()
 
-# Scan status tracking
 SCAN_IN_PROGRESS = False
 SCAN_STATS = {
     'start_time': None,
@@ -34,7 +30,6 @@ SCAN_STATS = {
     'last_saved_id': 0
 }
 
-# 🔥 Task health tracking
 TASK_HEALTH = {
     'scrape_actions': {'last_run': None, 'error_count': 0, 'is_running': False},
     'scrape_online_players': {'last_run': None, 'error_count': 0, 'is_running': False},
@@ -44,7 +39,6 @@ TASK_HEALTH = {
     'scrape_online_priority_actions': {'last_run': None, 'error_count': 0, 'is_running': False}
 }
 
-# 🔥 Graceful shutdown flag
 SHUTDOWN_REQUESTED = False
 
 logging.basicConfig(
@@ -57,23 +51,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Bot configuration
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!p4k ', intents=intents)
 
-# Initialize database and scraper
 db = Database(os.getenv('DATABASE_PATH', 'pro4kings.db'))
-scraper = None  # Will be initialized in setup_hook
+scraper = None
 
-# 🔥 GRACEFUL SHUTDOWN HANDLER
 def signal_handler(sig, frame):
-    """Handle shutdown signals gracefully"""
     global SHUTDOWN_REQUESTED
     logger.info(f"\n🛑 Shutdown signal received ({sig}), cleaning up...")
     SHUTDOWN_REQUESTED = True
     
-    # Stop background tasks
     if scrape_actions.is_running():
         scrape_actions.cancel()
     if scrape_online_players.is_running():
@@ -88,20 +77,14 @@ def signal_handler(sig, frame):
         scrape_online_priority_actions.cancel()
     
     logger.info("✅ Background tasks stopped")
-    
-    # Close bot
     asyncio.create_task(bot.close())
 
-# Register signal handlers
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-# 🔥 VERIFY VOLUME MOUNT ON STARTUP
 def verify_environment():
-    """Verify Railway environment is properly configured"""
     issues = []
     
-    # Check database directory
     db_path = os.getenv('DATABASE_PATH', 'pro4kings.db')
     db_dir = os.path.dirname(db_path) or '.'
     
@@ -115,11 +98,9 @@ def verify_environment():
     if not os.access(db_dir, os.W_OK):
         issues.append(f"Database directory {db_dir} is not writable!")
     
-    # Check Discord token
     if not os.getenv('DISCORD_TOKEN'):
         issues.append("DISCORD_TOKEN environment variable not set!")
     
-    # Log system info
     try:
         memory = psutil.virtual_memory()
         logger.info(f"📊 System: {memory.total / 1024**3:.1f}GB RAM, {memory.available / 1024**3:.1f}GB available")
@@ -135,19 +116,9 @@ def verify_environment():
     logger.info("✅ Environment verification passed")
     return True
 
-# ============================================================================
-# 🔥 SCRAPER CLIENT MANAGEMENT (HOTFIXED)
-# ============================================================================
-
 async def get_or_recreate_scraper(max_concurrent=None):
-    """🛠️ HOTFIX: Get scraper instance with dynamic concurrency settings
-    
-    Args:
-        max_concurrent: Override concurrent workers (for scans). If None, uses default (5)
-    """
     global scraper
     
-    # 🔥 If max_concurrent specified and scraper exists with different setting, recreate
     if max_concurrent and scraper and scraper.max_concurrent != max_concurrent:
         logger.info(f"🔄 Recreating scraper with max_concurrent={max_concurrent} (was {scraper.max_concurrent})")
         try:
@@ -163,8 +134,7 @@ async def get_or_recreate_scraper(max_concurrent=None):
         await scraper.__aenter__()
         logger.info(f"✅ Scraper initialized with {concurrent} workers")
     
-    # Check if client is still valid
-    if scraper.client and scraper.client.is_closed:
+    if scraper.client and scraper.client.closed:
         logger.warning("⚠️ Scraper client was closed, recreating...")
         try:
             await scraper.__aexit__(None, None, None)
@@ -176,25 +146,18 @@ async def get_or_recreate_scraper(max_concurrent=None):
     
     return scraper
 
-# ============================================================================
-# 🔥 REGISTER ALL SLASH COMMANDS
-# ============================================================================
-
 setup_commands(bot, db, get_or_recreate_scraper)
 logger.info("✅ Slash commands module loaded")
 
 @bot.event
 async def on_ready():
-    """Bot startup with proper slash command registration"""
     global COMMANDS_SYNCED
     
     logger.info(f'✅ {bot.user} is now running!')
     
-    # Verify environment
     if not verify_environment():
         logger.error("❌ Environment verification failed! Bot may not work correctly.")
     
-    # Sync slash commands (only once)
     async with SYNC_LOCK:
         if not COMMANDS_SYNCED:
             try:
@@ -207,7 +170,6 @@ async def on_ready():
             except Exception as e:
                 logger.error(f"❌ Failed to sync commands: {e}", exc_info=True)
     
-    # Start monitoring tasks
     if not scrape_actions.is_running():
         scrape_actions.start()
         logger.info('✓ Started: scrape_actions (30s interval)')
@@ -224,17 +186,14 @@ async def on_ready():
         check_banned_players.start()
         logger.info('✓ Started: check_banned_players (1h interval)')
     
-    # 💎 Start VIP tracking if configured
     if Config.VIP_PLAYER_IDS and not scrape_vip_actions.is_running():
         scrape_vip_actions.start()
         logger.info(f'💎 Started: scrape_vip_actions ({Config.VIP_SCAN_INTERVAL}s interval, {len(Config.VIP_PLAYER_IDS)} VIP players)')
     
-    # 🟢 Start online player priority tracking if enabled
     if Config.TRACK_ONLINE_PLAYERS_PRIORITY and not scrape_online_priority_actions.is_running():
         scrape_online_priority_actions.start()
         logger.info(f'🟢 Started: scrape_online_priority_actions ({Config.ONLINE_PLAYERS_SCAN_INTERVAL}s interval)')
     
-    # 🔥 Start task watchdog
     if not task_watchdog.is_running():
         task_watchdog.start()
         logger.info('✓ Started: task_watchdog (5min interval)')
@@ -248,60 +207,50 @@ async def on_ready():
         print(f'🟢 Online Priority: Enabled ({Config.ONLINE_PLAYERS_SCAN_INTERVAL}s scan interval)')
     print(f'{"="*60}\n')
 
-# ============================================================================
-# 🔥 TASK WATCHDOG - Detects and restarts crashed tasks
-# ============================================================================
-
 @tasks.loop(minutes=5)
 async def task_watchdog():
-    """Monitor background tasks and restart if crashed"""
     if SHUTDOWN_REQUESTED:
         return
     
     now = datetime.now()
     issues = []
     
-    # Check scrape_actions (should run every 30s)
     if TASK_HEALTH['scrape_actions']['last_run']:
         elapsed = (now - TASK_HEALTH['scrape_actions']['last_run']).total_seconds()
-        if elapsed > 120:  # No run in 2 minutes
+        if elapsed > 120:
             issues.append("scrape_actions hasn't run in 2+ minutes")
             if not scrape_actions.is_running():
                 logger.warning("🔄 Restarting crashed task: scrape_actions")
                 scrape_actions.restart()
     
-    # Check scrape_online_players (should run every 60s)
     if TASK_HEALTH['scrape_online_players']['last_run']:
         elapsed = (now - TASK_HEALTH['scrape_online_players']['last_run']).total_seconds()
-        if elapsed > 180:  # No run in 3 minutes
+        if elapsed > 180:
             issues.append("scrape_online_players hasn't run in 3+ minutes")
             if not scrape_online_players.is_running():
                 logger.warning("🔄 Restarting crashed task: scrape_online_players")
                 scrape_online_players.restart()
     
-    # Check update_pending_profiles (should run every 2min)
     if TASK_HEALTH['update_pending_profiles']['last_run']:
         elapsed = (now - TASK_HEALTH['update_pending_profiles']['last_run']).total_seconds()
-        if elapsed > 360:  # No run in 6 minutes
+        if elapsed > 360:
             issues.append("update_pending_profiles hasn't run in 6+ minutes")
             if not update_pending_profiles.is_running():
                 logger.warning("🔄 Restarting crashed task: update_pending_profiles")
                 update_pending_profiles.restart()
     
-    # Check scrape_vip_actions (should run every VIP_SCAN_INTERVAL)
     if Config.VIP_PLAYER_IDS and TASK_HEALTH['scrape_vip_actions']['last_run']:
         elapsed = (now - TASK_HEALTH['scrape_vip_actions']['last_run']).total_seconds()
-        max_interval = Config.VIP_SCAN_INTERVAL * 5  # Alert if no run in 5x interval
+        max_interval = Config.VIP_SCAN_INTERVAL * 5
         if elapsed > max_interval:
             issues.append(f"scrape_vip_actions hasn't run in {elapsed:.0f}s")
             if not scrape_vip_actions.is_running():
                 logger.warning("🔄 Restarting crashed task: scrape_vip_actions")
                 scrape_vip_actions.restart()
     
-    # Check scrape_online_priority_actions (should run every ONLINE_PLAYERS_SCAN_INTERVAL)
     if Config.TRACK_ONLINE_PLAYERS_PRIORITY and TASK_HEALTH['scrape_online_priority_actions']['last_run']:
         elapsed = (now - TASK_HEALTH['scrape_online_priority_actions']['last_run']).total_seconds()
-        max_interval = Config.ONLINE_PLAYERS_SCAN_INTERVAL * 5  # Alert if no run in 5x interval
+        max_interval = Config.ONLINE_PLAYERS_SCAN_INTERVAL * 5
         if elapsed > max_interval:
             issues.append(f"scrape_online_priority_actions hasn't run in {elapsed:.0f}s")
             if not scrape_online_priority_actions.is_running():
@@ -316,16 +265,10 @@ async def task_watchdog():
 @task_watchdog.before_loop
 async def before_task_watchdog():
     await bot.wait_until_ready()
-    # Wait 2 minutes before first check
     await asyncio.sleep(120)
-
-# ============================================================================
-# BACKGROUND MONITORING TASKS WITH ERROR RECOVERY
-# ============================================================================
 
 @tasks.loop(seconds=30)
 async def scrape_actions():
-    """Scrape latest actions - WITH ENHANCED ERROR HANDLING"""
     if SHUTDOWN_REQUESTED:
         return
     
@@ -333,7 +276,7 @@ async def scrape_actions():
     TASK_HEALTH['scrape_actions']['is_running'] = True
     
     try:
-        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
+        scraper_instance = await get_or_recreate_scraper()
         
         logger.info("🔍 Fetching latest actions...")
         actions = await scraper_instance.get_latest_actions(limit=200)
@@ -364,12 +307,10 @@ async def scrape_actions():
                 'raw_text': action.raw_text
             }
             
-            # 🔥 ASYNC: Check for duplicates
             if not await db.action_exists(action.timestamp, action.raw_text):
                 await db.save_action(action_dict)
                 new_count += 1
                 
-                # Mark players for update
                 if action.player_id:
                     new_player_ids.add((action.player_id, action.player_name))
                     await db.mark_player_for_update(action.player_id, action.player_name)
@@ -380,7 +321,7 @@ async def scrape_actions():
         
         if new_count > 0:
             logger.info(f"✅ Saved {new_count} new actions, marked {len(new_player_ids)} players for update")
-            TASK_HEALTH['scrape_actions']['error_count'] = 0  # Reset on success
+            TASK_HEALTH['scrape_actions']['error_count'] = 0
         else:
             logger.info(f"ℹ️  No new actions (checked {len(actions)} entries)")
             
@@ -388,7 +329,6 @@ async def scrape_actions():
         TASK_HEALTH['scrape_actions']['error_count'] += 1
         logger.error(f"❌ Error in scrape_actions (count: {TASK_HEALTH['scrape_actions']['error_count']}): {e}", exc_info=True)
         
-        # If too many errors, recreate scraper
         if TASK_HEALTH['scrape_actions']['error_count'] >= 5:
             logger.warning("⚠️ Too many errors, recreating scraper client...")
             global scraper
@@ -405,37 +345,29 @@ async def scrape_actions():
 
 @scrape_actions.before_loop
 async def before_scrape_actions():
-    """Wait for bot to be ready"""
     await bot.wait_until_ready()
     logger.info("✓ scrape_actions task ready")
 
 @scrape_actions.error
 async def scrape_actions_error(error):
-    """Handle task loop errors"""
     logger.error(f"❌ scrape_actions task error: {error}", exc_info=error)
     TASK_HEALTH['scrape_actions']['error_count'] += 1
 
-# ============================================================================
-# 💎 VIP PLAYER TRACKING TASK
-# ============================================================================
-
 @tasks.loop(seconds=Config.VIP_SCAN_INTERVAL)
 async def scrape_vip_actions():
-    """💎 Fast scan loop specifically for VIP players"""
     if SHUTDOWN_REQUESTED:
         return
     
     if not Config.VIP_PLAYER_IDS:
-        return  # Skip if no VIPs configured
+        return
     
     TASK_HEALTH['scrape_vip_actions']['last_run'] = datetime.now()
     TASK_HEALTH['scrape_vip_actions']['is_running'] = True
     
     try:
-        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
+        scraper_instance = await get_or_recreate_scraper()
         vip_ids = set(Config.VIP_PLAYER_IDS)
         
-        # Fetch VIP-specific actions
         vip_actions = await scraper_instance.get_vip_actions(vip_ids, limit=200)
         
         if vip_actions:
@@ -460,12 +392,10 @@ async def scrape_vip_actions():
                     'raw_text': action.raw_text
                 }
                 
-                # Check for duplicates and save
                 if not await db.action_exists(action.timestamp, action.raw_text):
                     await db.save_action(action_dict)
                     new_count += 1
                     
-                    # Mark VIP players for priority update
                     if action.player_id:
                         new_player_ids.add((action.player_id, action.player_name))
                         await db.mark_player_for_update(action.player_id, action.player_name)
@@ -488,43 +418,34 @@ async def scrape_vip_actions():
 
 @scrape_vip_actions.before_loop
 async def before_scrape_vip_actions():
-    """Wait for bot to be ready"""
     await bot.wait_until_ready()
     logger.info("💎 scrape_vip_actions task ready")
 
 @scrape_vip_actions.error
 async def scrape_vip_actions_error(error):
-    """Handle VIP scan task errors"""
     logger.error(f"❌ scrape_vip_actions task error: {error}", exc_info=error)
     TASK_HEALTH['scrape_vip_actions']['error_count'] += 1
 
-# ============================================================================
-# 🟢 ONLINE PLAYER PRIORITY TRACKING TASK
-# ============================================================================
-
 @tasks.loop(seconds=Config.ONLINE_PLAYERS_SCAN_INTERVAL)
 async def scrape_online_priority_actions():
-    """🟢 Fast scan loop for currently online players' actions"""
     if SHUTDOWN_REQUESTED:
         return
     
     if not Config.TRACK_ONLINE_PLAYERS_PRIORITY:
-        return  # Skip if disabled
+        return
     
     TASK_HEALTH['scrape_online_priority_actions']['last_run'] = datetime.now()
     TASK_HEALTH['scrape_online_priority_actions']['is_running'] = True
     
     try:
-        # Get current online players from database
         online_players = await db.get_current_online_players()
         if not online_players:
             return
         
         online_ids = set(player['player_id'] for player in online_players)
         
-        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
+        scraper_instance = await get_or_recreate_scraper()
         
-        # Fetch online player-specific actions
         online_actions = await scraper_instance.get_online_player_actions(online_ids, limit=200)
         
         if online_actions:
@@ -549,12 +470,10 @@ async def scrape_online_priority_actions():
                     'raw_text': action.raw_text
                 }
                 
-                # Check for duplicates and save
                 if not await db.action_exists(action.timestamp, action.raw_text):
                     await db.save_action(action_dict)
                     new_count += 1
                     
-                    # Mark online players for priority update
                     if action.player_id:
                         new_player_ids.add((action.player_id, action.player_name))
                         await db.mark_player_for_update(action.player_id, action.player_name)
@@ -577,21 +496,16 @@ async def scrape_online_priority_actions():
 
 @scrape_online_priority_actions.before_loop
 async def before_scrape_online_priority_actions():
-    """Wait for bot to be ready"""
     await bot.wait_until_ready()
     logger.info("🟢 scrape_online_priority_actions task ready")
 
 @scrape_online_priority_actions.error
 async def scrape_online_priority_actions_error(error):
-    """Handle online priority scan task errors"""
     logger.error(f"❌ scrape_online_priority_actions task error: {error}", exc_info=error)
     TASK_HEALTH['scrape_online_priority_actions']['error_count'] += 1
 
 @tasks.loop(seconds=60)
 async def scrape_online_players():
-    """
-    🔥 OPTIMIZED: Scrape online players every 60 seconds (ASYNC-SAFE)
-    """
     if SHUTDOWN_REQUESTED:
         return
     
@@ -599,12 +513,11 @@ async def scrape_online_players():
     TASK_HEALTH['scrape_online_players']['is_running'] = True
     
     try:
-        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
+        scraper_instance = await get_or_recreate_scraper()
         
         online_players = await scraper_instance.get_online_players()
         current_time = datetime.now()
         
-        # 🔥 ASYNC: Get previous online players
         previous_online = await db.get_current_online_players()
         previous_ids = {p['player_id'] for p in previous_online}
         current_ids = {p['player_id'] for p in online_players}
@@ -612,18 +525,15 @@ async def scrape_online_players():
         new_logins = current_ids - previous_ids
         for player in online_players:
             if player['player_id'] in new_logins:
-                # 🔥 ASYNC: Save login
                 await db.save_login(player['player_id'], player['player_name'], current_time)
                 await db.mark_player_for_update(player['player_id'], player['player_name'])
                 logger.info(f"🟢 Login detected: {player['player_name']} ({player['player_id']})")
         
         logouts = previous_ids - current_ids
         for player_id in logouts:
-            # 🔥 ASYNC: Save logout (NON-BLOCKING NOW)
             await db.save_logout(player_id, current_time)
             logger.info(f"🔴 Logout detected: Player {player_id}")
         
-        # 🔥 ASYNC: Update online players
         await db.update_online_players(online_players)
         
         for player in online_players:
@@ -650,7 +560,6 @@ async def scrape_online_players_error(error):
 
 @tasks.loop(minutes=2)
 async def update_pending_profiles():
-    """🔥 ASYNC-SAFE: Update profiles for detected players - 200 per run"""
     if SHUTDOWN_REQUESTED:
         return
     
@@ -658,9 +567,8 @@ async def update_pending_profiles():
     TASK_HEALTH['update_pending_profiles']['is_running'] = True
     
     try:
-        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
+        scraper_instance = await get_or_recreate_scraper()
         
-        # 🔥 ASYNC: Get pending IDs
         pending_ids = await db.get_players_pending_update(limit=200)
         
         if not pending_ids:
@@ -688,7 +596,6 @@ async def update_pending_profiles():
                 'vehicles_count': profile.vehicles_count,
                 'properties_count': profile.properties_count
             }
-            # 🔥 ASYNC: Save profile
             await db.save_player_profile(profile_dict)
             await db.reset_player_priority(profile.player_id)
         
@@ -709,7 +616,6 @@ async def update_pending_profiles_error(error):
 
 @tasks.loop(hours=1)
 async def check_banned_players():
-    """🔥 ASYNC-SAFE: Check banned players list hourly"""
     if SHUTDOWN_REQUESTED:
         return
     
@@ -717,16 +623,14 @@ async def check_banned_players():
     TASK_HEALTH['check_banned_players']['is_running'] = True
     
     try:
-        scraper_instance = await get_or_recreate_scraper()  # Uses default 5 workers
+        scraper_instance = await get_or_recreate_scraper()
         
         banned = await scraper_instance.get_banned_players()
         current_ban_ids = {ban['player_id'] for ban in banned if ban.get('player_id')}
         
         for ban_data in banned:
-            # 🔥 ASYNC: Save banned player
             await db.save_banned_player(ban_data)
         
-        # 🔥 ASYNC: Mark expired bans
         await db.mark_expired_bans(current_ban_ids)
         
         logger.info(f"✓ Updated {len(banned)} banned players")
@@ -744,13 +648,8 @@ async def check_banned_players_error(error):
     logger.error(f"❌ check_banned_players task error: {error}", exc_info=error)
     TASK_HEALTH['check_banned_players']['error_count'] += 1
 
-# ============================================================================
-# PREFIX COMMAND FOR EMERGENCY COMMAND SYNC
-# ============================================================================
-
 @bot.command(name='sync')
 async def force_sync(ctx):
-    """EMERGENCY: Force sync slash commands"""
     global COMMANDS_SYNCED
     
     try:
@@ -771,10 +670,6 @@ async def force_sync(ctx):
     except Exception as e:
         await ctx.send(f"❌ **Eroare la sincronizare**: {str(e)}")
         logger.error(f"Force sync error: {e}", exc_info=True)
-
-# ============================================================================
-# RUN BOT
-# ============================================================================
 
 if __name__ == '__main__':
     TOKEN = os.getenv('DISCORD_TOKEN')
