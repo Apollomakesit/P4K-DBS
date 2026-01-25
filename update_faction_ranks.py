@@ -84,16 +84,14 @@ async def update_faction_ranks(batch_size: int = 50, max_players: int = None):
             for profile in profiles:
                 try:
                     if profile.faction_rank:
-                        # Update player profile with faction_rank
+                        # 🔥 UPDATED: Build profile dict without removed fields (level, respect_points)
                         profile_dict = {
                             'player_id': profile.player_id,
                             'player_name': profile.username,
                             'faction': profile.faction,
                             'faction_rank': profile.faction_rank,
                             'job': profile.job,
-                            'level': profile.level,
                             'warns': profile.warnings,
-                            'respect_points': profile.respect_points,
                             'played_hours': profile.played_hours,
                             'age_ic': profile.age_ic,
                             'last_connection': profile.last_seen,
