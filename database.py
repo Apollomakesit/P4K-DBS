@@ -92,7 +92,8 @@ class Database:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Players table with extended fields
+                # 🔥 UPDATED: Player profiles table - REMOVED 5 columns (level, respect_points, phone_number, vehicles_count, properties_count)
+                # Now has 14 columns instead of 19
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS player_profiles (
                         player_id TEXT PRIMARY KEY,
@@ -101,18 +102,13 @@ class Database:
                         last_seen TIMESTAMP,
                         first_detected TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         
-                        -- Profile fields
+                        -- Profile fields (CLEANED UP - removed unused fields)
                         faction TEXT,
                         faction_rank TEXT,
                         job TEXT,
-                        level INTEGER,
-                        respect_points INTEGER,
                         warnings INTEGER,
                         played_hours REAL,
                         age_ic INTEGER,
-                        phone_number TEXT,
-                        vehicles_count INTEGER,
-                        properties_count INTEGER,
                         
                         -- Metadata
                         total_actions INTEGER DEFAULT 0,
@@ -247,14 +243,13 @@ class Database:
                 # Create indexes for performance
                 indexes = [
                     'CREATE INDEX IF NOT EXISTS idx_actions_player ON actions(player_id)',
-                    'CREATE INDEX IF NOT EXISTS idx_actions_target ON actions(target_player_id)',  # 🆕 NEW INDEX
+                    'CREATE INDEX IF NOT EXISTS idx_actions_target ON actions(target_player_id)',
                     'CREATE INDEX IF NOT EXISTS idx_actions_timestamp ON actions(timestamp)',
                     'CREATE INDEX IF NOT EXISTS idx_actions_type ON actions(action_type)',
                     'CREATE INDEX IF NOT EXISTS idx_login_events_player ON login_events(player_id)',
                     'CREATE INDEX IF NOT EXISTS idx_login_events_timestamp ON login_events(timestamp)',
                     'CREATE INDEX IF NOT EXISTS idx_players_online ON player_profiles(is_online)',
                     'CREATE INDEX IF NOT EXISTS idx_players_faction ON player_profiles(faction)',
-                    'CREATE INDEX IF NOT EXISTS idx_players_level ON player_profiles(level)',
                     'CREATE INDEX IF NOT EXISTS idx_players_priority ON player_profiles(priority_update)',
                     'CREATE INDEX IF NOT EXISTS idx_rank_history_player ON rank_history(player_id)',
                     'CREATE INDEX IF NOT EXISTS idx_rank_history_current ON rank_history(is_current)',
@@ -276,14 +271,14 @@ class Database:
     # 🔥 ASYNC WRAPPER: All public methods now use asyncio.to_thread()
     
     def _save_player_profile_sync(self, profile) -> None:
-        """SYNC: Save/update player profile with change tracking"""
+        """🔥 UPDATED SYNC: Save/update player profile with change tracking (removed 5 fields)"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Get current values to detect changes
+                # Get current values to detect changes (removed level, respect_points from SELECT)
                 cursor.execute('''
-                    SELECT faction, faction_rank, job, level, warnings, respect_points
+                    SELECT faction, faction_rank, job, warnings
                     FROM player_profiles WHERE player_id = ?
                 ''', (profile['player_id'],))
                 old_data = cursor.fetchone()
@@ -291,15 +286,15 @@ class Database:
                 username = profile.get('player_name') or profile.get('username', f"Player_{profile['player_id']}")
                 last_seen = profile.get('last_connection') or profile.get('last_seen', datetime.now())
                 
-                # Insert or update player
+                # 🔥 UPDATED: Insert or update player (removed 5 fields: level, respect_points, phone_number, vehicles_count, properties_count)
                 cursor.execute('''
                     INSERT INTO player_profiles (
                         player_id, username, is_online, last_seen,
-                        faction, faction_rank, job, level, respect_points, warnings,
-                        played_hours, age_ic, phone_number, vehicles_count, properties_count,
+                        faction, faction_rank, job, warnings,
+                        played_hours, age_ic,
                         last_profile_update
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(player_id) DO UPDATE SET
                         username = excluded.username,
                         is_online = excluded.is_online,
@@ -307,14 +302,9 @@ class Database:
                         faction = excluded.faction,
                         faction_rank = excluded.faction_rank,
                         job = excluded.job,
-                        level = excluded.level,
-                        respect_points = excluded.respect_points,
                         warnings = excluded.warnings,
                         played_hours = excluded.played_hours,
                         age_ic = excluded.age_ic,
-                        phone_number = excluded.phone_number,
-                        vehicles_count = excluded.vehicles_count,
-                        properties_count = excluded.properties_count,
                         last_profile_update = CURRENT_TIMESTAMP
                 ''', (
                     profile['player_id'],
@@ -324,14 +314,9 @@ class Database:
                     profile.get('faction'),
                     profile.get('faction_rank'),
                     profile.get('job'),
-                    profile.get('level'),
-                    profile.get('respect_points'),
                     profile.get('warns') or profile.get('warnings'),
                     profile.get('played_hours'),
-                    profile.get('age_ic'),
-                    profile.get('phone_number'),
-                    profile.get('vehicles_count'),
-                    profile.get('properties_count')
+                    profile.get('age_ic')
                 ))
                 
                 # Track faction rank changes
@@ -354,10 +339,9 @@ class Database:
                             VALUES (?, ?, ?, TRUE)
                         ''', (profile['player_id'], new_faction, new_rank))
                     
-                    # Track other field changes
-                    fields = ['faction', 'job', 'level', 'warnings', 'respect_points']
-                    new_values = [new_faction, profile.get('job'), profile.get('level'), 
-                                profile.get('warns') or profile.get('warnings'), profile.get('respect_points')]
+                    # 🔥 UPDATED: Track other field changes (removed level, respect_points)
+                    fields = ['faction', 'job', 'warnings']
+                    new_values = [new_faction, profile.get('job'), profile.get('warns') or profile.get('warnings')]
                     
                     for i, field in enumerate(fields):
                         old_val = str(old_data[i]) if old_data[i] is not None else None
@@ -911,14 +895,14 @@ class Database:
         return await asyncio.to_thread(_get_history_sync)
     
     async def get_faction_members(self, faction_name: str) -> List[Dict]:
-        """Get faction members"""
+        """🔥 UPDATED: Get faction members (removed ORDER BY level)"""
         def _get_members_sync():
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT * FROM player_profiles 
                     WHERE faction = ? 
-                    ORDER BY is_online DESC, level DESC
+                    ORDER BY is_online DESC, last_seen DESC
                 ''', (faction_name,))
                 return [dict(row) for row in cursor.fetchall()]
         
