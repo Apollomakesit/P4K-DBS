@@ -2,7 +2,7 @@
 """
 Import player_profiles.csv into the database
 Handles special characters in player names
-Maps CSV columns to database schema properly
+Maps CSV columns to cleaned database schema (14 columns)
 """
 
 import csv
@@ -11,6 +11,7 @@ from datetime import datetime
 from database import Database
 import logging
 import asyncio
+import os
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,10 +27,12 @@ async def import_csv_profiles(csv_file_path: str = 'player_profiles.csv'):
     CSV Columns (10): player_id, player_name, last_connection, is_online, 
                       faction, faction_rank, warns, job, played_hours, age_ic
     
-    DB Schema (19):   player_id, username, is_online, last_seen, first_detected,
-                      faction, faction_rank, job, level, respect_points, warnings,
-                      played_hours, age_ic, phone_number, vehicles_count, properties_count,
+    DB Schema (14):   player_id, username, is_online, last_seen, first_detected,
+                      faction, faction_rank, job, warnings,
+                      played_hours, age_ic,
                       total_actions, last_profile_update, priority_update
+                      
+    🔥 REMOVED: level, respect_points, phone_number, vehicles_count, properties_count
     """
     
     db = Database()
@@ -79,7 +82,7 @@ async def import_csv_profiles(csv_file_path: str = 'player_profiles.csv'):
                     if faction in ['Civil', 'Fără', 'None', '-', '']:
                         faction = None
                     
-                    # Build profile dict matching database schema
+                    # 🔥 UPDATED: Build profile dict matching NEW 14-column schema (removed 5 fields)
                     profile = {
                         # CSV -> DB field mappings
                         'player_id': player_id,
@@ -93,12 +96,7 @@ async def import_csv_profiles(csv_file_path: str = 'player_profiles.csv'):
                         'played_hours': float(row.get('played_hours', 0)) if row.get('played_hours', '').strip() else None,
                         'age_ic': int(row.get('age_ic', 0)) if row.get('age_ic', '').strip() else None,
                         
-                        # Optional fields not in CSV (set to None)
-                        'level': None,
-                        'respect_points': None,
-                        'phone_number': None,
-                        'vehicles_count': None,
-                        'properties_count': None,
+                        # NO LONGER SENDING: level, respect_points, phone_number, vehicles_count, properties_count
                     }
                     
                     # Skip if no player_name
@@ -159,7 +157,6 @@ async def import_csv_profiles(csv_file_path: str = 'player_profiles.csv'):
 
 
 if __name__ == "__main__":
-    import os
     csv_path = sys.argv[1] if len(sys.argv) > 1 else 'player_profiles.csv'
     
     logger.info(f"\n" + "="*60)
