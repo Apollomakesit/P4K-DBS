@@ -266,6 +266,54 @@ async def log_database_startup_info():
 
 
 @tasks.loop(minutes=5)
+
+async def inspect_database_tables():
+    """Inspect database tables to debug import issues"""
+    try:
+        import sqlite3
+        
+        logger.info("="*60)
+        logger.info("🔍 DATABASE TABLE INSPECTION")
+        logger.info("="*60)
+        
+        def _inspect_sync():
+            conn = sqlite3.connect(db.db_path)
+            cursor = conn.cursor()
+            
+            # Get all tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            tables = [row[0] for row in cursor.fetchall()]
+            
+            logger.info(f"📋 Found {len(tables)} tables:")
+            for table in tables:
+                logger.info(f"   - {table}")
+            
+            # Check for both 'players' and 'player_profiles'
+            for table_name in ['players', 'player_profiles']:
+                cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+                if cursor.fetchone():
+                    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                    count = cursor.fetchone()[0]
+                    logger.info(f"✅ '{table_name}' table exists with {count:,} records")
+                else:
+                    logger.info(f"❌ '{table_name}' table does NOT exist")
+            
+            # Get player_profiles schema
+            if 'player_profiles' in tables:
+                cursor.execute("PRAGMA table_info(player_profiles)")
+                columns = cursor.fetchall()
+                logger.info(f"📊 player_profiles schema ({len(columns)} columns):")
+                for col in columns[:5]:  # Show first 5 columns
+                    logger.info(f"   - {col[1]} ({col[2]})")
+            
+            conn.close()
+        
+        await asyncio.to_thread(_inspect_sync)
+        logger.info("="*60)
+        
+    except Exception as e:
+        logger.error(f"❌ Error inspecting database: {e}", exc_info=True)
+
 async def task_watchdog():
     if SHUTDOWN_REQUESTED:
         return
