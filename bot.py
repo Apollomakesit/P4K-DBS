@@ -158,6 +158,7 @@ async def on_ready():
     if not verify_environment():
         logger.error("❌ Environment verification failed! Bot may not work correctly.")
     await log_database_startup_info()
+    await inspect_database_tables()
     
     async with SYNC_LOCK:
         if not COMMANDS_SYNCED:
