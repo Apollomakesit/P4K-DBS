@@ -21,25 +21,29 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . .
 
-# Create directories for data and logs
-RUN mkdir -p /data /app/logs
+# Create directories for data, logs, and backup storage
+RUN mkdir -p /data /app/logs /app/backup_extracted
 
 # ============================================================================
-# EXTRACT DATABASE - THIS IS THE FIX!
+# EXTRACT DATABASE TO IMAGE (not to /data which will be overwritten by volume)
 # ============================================================================
-# Extract backup.db.gz to /data/pro4kings.db if it exists
+# Extract backup.db.gz to /app/backup_extracted/ (in the image, not in /data volume)
 RUN if [ -f backup.db.gz ]; then \
-        echo "📦 Extracting backup.db.gz..."; \
-        gunzip -c backup.db.gz > /data/pro4kings.db; \
-        echo "✅ Database ready: /data/pro4kings.db ($(du -h /data/pro4kings.db | cut -f1))"; \
-        ls -lh /data/pro4kings.db; \
+        echo "📦 Extracting backup.db.gz to image..."; \
+        gunzip -c backup.db.gz > /app/backup_extracted/pro4kings.db; \
+        DB_SIZE=$(du -h /app/backup_extracted/pro4kings.db | cut -f1); \
+        echo "✅ Database ready in image: /app/backup_extracted/pro4kings.db ($DB_SIZE)"; \
+        ls -lh /app/backup_extracted/pro4kings.db; \
     else \
         echo "⚠️  backup.db.gz not found - bot will start with empty database"; \
     fi
+
+# Make entrypoint script executable
+RUN chmod +x entrypoint.sh
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV DATABASE_PATH=/data/pro4kings.db
 
-# Run bot
-CMD ["python", "bot.py"]
+# Use entrypoint script that copies database to volume on startup
+CMD ["./entrypoint.sh"]
