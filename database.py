@@ -540,42 +540,26 @@ class Database:
         await asyncio.to_thread(self._update_online_players_sync, online_players)
     
     def _mark_player_for_update_sync(self, player_id: str, player_name: str) -> None:
-        """SYNC: Mark player for priority update"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                
-                cursor.execute('SELECT player_id FROM player_profiles WHERE username = ?', (player_name,))
-                existing = cursor.fetchone()
-                
-                if existing and existing[0] != player_id:
-                    logger.warning(
-                        f"Username '{player_name}' exists with different ID. "
-                        f"Existing: {existing[0]}, New: {player_id}. Updating existing record."
-                    )
-                    cursor.execute('''
-                        UPDATE player_profiles 
-                        SET player_id = ?, priority_update = TRUE
-                        WHERE username = ?
-                    ''', (player_id, player_name))
-                else:
-                    cursor.execute('''
-                        INSERT INTO player_profiles (player_id, username, priority_update)
-                        VALUES (?, ?, TRUE)
-                        ON CONFLICT(player_id) DO UPDATE SET
-                            username = excluded.username,
-                            priority_update = TRUE
-                    ''', (player_id, player_name))
-                
-                conn.commit()
-                
-        except sqlite3.IntegrityError as e:
-            if 'UNIQUE constraint' in str(e):
-                logger.error(f"UNIQUE constraint error for player_id={player_id}, username={player_name}. Skipping.")
-            else:
-                raise
-        except Exception as e:
-            logger.error(f"Error in mark_player_for_update: {e}", exc_info=True)
+    """SYNC: Mark player for priority update"""
+    try:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Simply insert or update based on player_id only (not username)
+            cursor.execute('''
+                INSERT INTO player_profiles (player_id, username, priority_update)
+                VALUES (?, ?, TRUE)
+                ON CONFLICT(player_id) DO UPDATE SET
+                    username = excluded.username,
+                    priority_update = TRUE
+            ''', (player_id, player_name))
+            
+            conn.commit()
+            
+    except sqlite3.IntegrityError as e:
+        logger.error(f"UNIQUE constraint error for player_id={player_id}, username={player_name}. Skipping.")
+    except Exception as e:
+        logger.error(f"Error in mark_player_for_update: {e}", exc_info=True)
     
     async def mark_player_for_update(self, player_id: str, player_name: str) -> None:
         """ASYNC: Mark player for priority update"""
