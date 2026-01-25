@@ -188,6 +188,10 @@ async def on_ready():
     if not check_banned_players.is_running():
         check_banned_players.start()
         logger.info('✓ Started: check_banned_players (1h interval)')
+
+    if not update_missing_faction_ranks.is_running():
+        update_missing_faction_ranks.start()
+        logger.info('✓ Started: update_missing_faction_ranks (60min interval)')
     
     if Config.VIP_PLAYER_IDS and not scrape_vip_actions.is_running():
         scrape_vip_actions.start()
