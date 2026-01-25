@@ -207,6 +207,63 @@ async def on_ready():
         print(f'🟢 Online Priority: Enabled ({Config.ONLINE_PLAYERS_SCAN_INTERVAL}s scan interval)')
     print(f'{"="*60}\n')
 
+async def log_database_startup_info():
+    """Log database information on startup"""
+    try:
+        import os
+        
+        db_path = db.db_path
+        logger.info("="*60)
+        logger.info("📊 DATABASE STARTUP INFORMATION")
+        logger.info("="*60)
+        
+        # File info
+        if os.path.exists(db_path):
+            file_size = os.path.getsize(db_path) / (1024 * 1024)  # MB
+            logger.info(f"📁 Database file: {db_path}")
+            logger.info(f"💾 File size: {file_size:.2f} MB")
+        else:
+            logger.warning(f"⚠️  Database file not found: {db_path}")
+            return
+        
+        # Get stats
+        stats = await db.get_database_stats()
+        total_players = stats.get('total_players', 0)
+        total_actions = stats.get('total_actions', 0)
+        online_count = stats.get('online_count', 0)
+        
+        logger.info(f"👥 Total Players: {total_players:,}")
+        logger.info(f"📝 Total Actions: {total_actions:,}")
+        logger.info(f"🟢 Online Now: {online_count:,}")
+        
+        # Recent activity
+        actions_24h = await db.get_actions_count_last_24h()
+        logins_today = await db.get_logins_count_today()
+        banned_count = await db.get_active_bans_count()
+        
+        logger.info(f"📈 Actions (24h): {actions_24h:,}")
+        logger.info(f"🔑 Logins Today: {logins_today:,}")
+        logger.info(f"🚫 Active Bans: {banned_count:,}")
+        
+        # Check if data was imported
+        if total_players == 0:
+            logger.warning("⚠️  WARNING: No players in database!")
+            logger.warning("⚠️  If you expected imported data, check:")
+            logger.warning("⚠️    1. Was backup.db.gz extracted?")
+            logger.warning("⚠️    2. Did migration script run?")
+            logger.warning("⚠️    3. Check entrypoint.sh logs above")
+        elif total_players < 1000:
+            logger.warning(f"⚠️  WARNING: Only {total_players:,} players found!")
+            logger.warning(f"⚠️  Expected ~225,000 from backup import")
+        else:
+            logger.info(f"✅ Database successfully loaded with {total_players:,} players!")
+        
+        logger.info("="*60)
+        
+    except Exception as e:
+        logger.error(f"❌ Error logging database info: {e}", exc_info=True)
+
+
 @tasks.loop(minutes=5)
 async def task_watchdog():
     if SHUTDOWN_REQUESTED:
