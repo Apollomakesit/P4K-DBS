@@ -94,7 +94,7 @@ class Database:
                 
                 # Players table with extended fields
                 cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS players (
+                    CREATE TABLE IF NOT EXISTS player_profiles (
                         player_id TEXT PRIMARY KEY,
                         username TEXT NOT NULL,
                         is_online BOOLEAN DEFAULT FALSE,
@@ -253,8 +253,8 @@ class Database:
                     'CREATE INDEX IF NOT EXISTS idx_login_events_player ON login_events(player_id)',
                     'CREATE INDEX IF NOT EXISTS idx_login_events_timestamp ON login_events(timestamp)',
                     'CREATE INDEX IF NOT EXISTS idx_players_online ON players(is_online)',
-                    'CREATE INDEX IF NOT EXISTS idx_players_faction ON players(faction)',
-                    'CREATE INDEX IF NOT EXISTS idx_players_level ON players(level)',
+                    'CREATE INDEX IF NOT EXISTS idx_players_faction ON player_profiles(faction)',
+                    'CREATE INDEX IF NOT EXISTS idx_players_level ON player_profiles(level)',
                     'CREATE INDEX IF NOT EXISTS idx_players_priority ON players(priority_update)',
                     'CREATE INDEX IF NOT EXISTS idx_rank_history_player ON rank_history(player_id)',
                     'CREATE INDEX IF NOT EXISTS idx_rank_history_current ON rank_history(is_current)',
@@ -284,7 +284,7 @@ class Database:
                 # Get current values to detect changes
                 cursor.execute('''
                     SELECT faction, faction_rank, job, level, warnings, respect_points
-                    FROM players WHERE player_id = ?
+                    FROM player_profiles WHERE player_id = ?
                 ''', (profile['player_id'],))
                 old_data = cursor.fetchone()
                 
@@ -293,7 +293,7 @@ class Database:
                 
                 # Insert or update player
                 cursor.execute('''
-                    INSERT INTO players (
+                    INSERT INTO player_profiles (
                         player_id, username, is_online, last_seen,
                         faction, faction_rank, job, level, respect_points, warnings,
                         played_hours, age_ic, phone_number, vehicles_count, properties_count,
@@ -449,7 +449,7 @@ class Database:
                 # Increment player action count
                 if action.get('player_id'):
                     cursor.execute('''
-                        UPDATE players SET total_actions = total_actions + 1
+                        UPDATE player_profiles SET total_actions = total_actions + 1
                         WHERE player_id = ?
                     ''', (action['player_id'],))
                 
@@ -562,7 +562,7 @@ class Database:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                cursor.execute('SELECT player_id FROM players WHERE username = ?', (player_name,))
+                cursor.execute('SELECT player_id FROM player_profiles WHERE username = ?', (player_name,))
                 existing = cursor.fetchone()
                 
                 if existing and existing[0] != player_id:
@@ -577,7 +577,7 @@ class Database:
                     ''', (player_id, player_name))
                 else:
                     cursor.execute('''
-                        INSERT INTO players (player_id, username, priority_update)
+                        INSERT INTO player_profiles (player_id, username, priority_update)
                         VALUES (?, ?, TRUE)
                         ON CONFLICT(player_id) DO UPDATE SET
                             username = excluded.username,
@@ -767,7 +767,7 @@ class Database:
         """SYNC: Get player by exact ID"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM players WHERE player_id = ?', (player_id,))
+            cursor.execute('SELECT * FROM player_profiles WHERE player_id = ?', (player_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
     
@@ -780,7 +780,7 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT * FROM players
+                SELECT * FROM player_profiles
                 WHERE username LIKE ?
                 ORDER BY is_online DESC, last_seen DESC
                 LIMIT 20
@@ -817,7 +817,7 @@ class Database:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                cursor.execute('SELECT COUNT(*) FROM players')
+                cursor.execute('SELECT COUNT(*) FROM player_profiles')
                 total_players = cursor.fetchone()[0]
                 
                 cursor.execute('SELECT COUNT(*) FROM actions')
@@ -916,7 +916,7 @@ class Database:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT * FROM players 
+                    SELECT * FROM player_profiles 
                     WHERE faction = ? 
                     ORDER BY is_online DESC, level DESC
                 ''', (faction_name,))
