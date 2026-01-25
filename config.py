@@ -53,10 +53,10 @@ class Config:
     
     # Online Player Priority - Automatically track all currently online players
     TRACK_ONLINE_PLAYERS_PRIORITY: bool = os.getenv('TRACK_ONLINE_PLAYERS_PRIORITY', 'true').lower() == 'true'
-    ONLINE_PLAYERS_SCAN_INTERVAL: int = _safe_int.__func__('ONLINE_PLAYERS_SCAN_INTERVAL', 15)  # Scan online players' actions every 15s
+    ONLINE_PLAYERS_SCAN_INTERVAL: int = _safe_int.__func__('ONLINE_PLAYERS_SCAN_INTERVAL', 60)  # Scan online players' actions every 1m
     
     # Task Intervals (in seconds)
-    SCRAPE_ACTIONS_INTERVAL: int = _safe_int.__func__('SCRAPE_ACTIONS_INTERVAL', 30)
+    SCRAPE_ACTIONS_INTERVAL: int = _safe_int.__func__('SCRAPE_ACTIONS_INTERVAL', 5)
     SCRAPE_ONLINE_INTERVAL: int = _safe_int.__func__('SCRAPE_ONLINE_INTERVAL', 60)
     UPDATE_PROFILES_INTERVAL: int = _safe_int.__func__('UPDATE_PROFILES_INTERVAL', 120)  # 2 min
     CHECK_BANNED_INTERVAL: int = _safe_int.__func__('CHECK_BANNED_INTERVAL', 3600)  # 1 hour
