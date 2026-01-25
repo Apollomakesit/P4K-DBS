@@ -539,26 +539,27 @@ class Database:
         await asyncio.to_thread(self._update_online_players_sync, online_players)
     
     def _mark_player_for_update_sync(self, player_id: str, player_name: str) -> None:
-        """🔥 FIXED: Mark player for priority update - allows duplicate usernames"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Simply insert or update based on player_id only (not username)
-                cursor.execute('''
-                    INSERT INTO player_profiles (player_id, username, priority_update)
-                    VALUES (?, ?, TRUE)
-                    ON CONFLICT(player_id) DO UPDATE SET
-                        username = excluded.username,
-                        priority_update = TRUE
-                ''', (player_id, player_name))
-                
-                conn.commit()
-                
-        except sqlite3.IntegrityError as e:
-            logger.error(f"UNIQUE constraint error for player_id={player_id}, username={player_name}. Skipping.")
-        except Exception as e:
-            logger.error(f"Error in mark_player_for_update: {e}", exc_info=True)
+    """Mark player for priority update - allows duplicate usernames"""
+    try:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO player_profiles (player_id, username, priority_update)
+                VALUES (?, ?, TRUE)
+                ON CONFLICT(player_id) DO UPDATE SET
+                    username = excluded.username,
+                    priority_update = TRUE
+            ''', (player_id, player_name))
+            
+            conn.commit()
+            
+    except sqlite3.IntegrityError as e:
+        # This should NEVER happen with ON CONFLICT clause
+        logger.error(f"Unexpected IntegrityError for player_id={player_id}: {e}")
+    except Exception as e:
+        logger.error(f"Error marking player {player_id} for update: {e}", exc_info=True)
+
     
     async def mark_player_for_update(self, player_id: str, player_name: str) -> None:
         """ASYNC: Mark player for priority update"""
