@@ -779,7 +779,6 @@ async def check_banned_players():
     
     finally:
         TASK_HEALTH['check_banned_players']['is_running'] = False
-
 @check_banned_players.error
 async def check_banned_players_error(error):
     logger.error(f"❌ check_banned_players task error: {error}", exc_info=error)
