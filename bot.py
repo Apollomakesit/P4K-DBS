@@ -265,9 +265,6 @@ async def log_database_startup_info():
     except Exception as e:
         logger.error(f"❌ Error logging database info: {e}", exc_info=True)
 
-
-@tasks.loop(minutes=5)
-
 async def inspect_database_tables():
     """Inspect database tables to debug import issues"""
     try:
@@ -315,6 +312,7 @@ async def inspect_database_tables():
     except Exception as e:
         logger.error(f"❌ Error inspecting database: {e}", exc_info=True)
 
+@tasks.loop(minutes=5)
 async def task_watchdog():
     if SHUTDOWN_REQUESTED:
         return
