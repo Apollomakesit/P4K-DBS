@@ -31,13 +31,14 @@ SCAN_STATS = {
 }
 
 TASK_HEALTH = {
-    'scrape_actions': {'last_run': None, 'error_count': 0, 'is_running': False},
-    'scrape_online_players': {'last_run': None, 'error_count': 0, 'is_running': False},
-    'update_pending_profiles': {'last_run': None, 'error_count': 0, 'is_running': False},
-    'check_banned_players': {'last_run': None, 'error_count': 0, 'is_running': False},
-    'scrape_vip_actions': {'last_run': None, 'error_count': 0, 'is_running': False},
-    'scrape_online_priority_actions': {'last_run': None, 'error_count': 0, 'is_running': False}
+    'scrape_actions': {'last_run': None, 'is_running': False, 'error_count': 0},
+    'scrape_online_players': {'last_run': None, 'is_running': False, 'error_count': 0},
+    'update_pending_profiles': {'last_run': None, 'is_running': False, 'error_count': 0},
+    'check_banned_players': {'last_run': None, 'is_running': False, 'error_count': 0},
+    'update_missing_faction_ranks': {'last_run': None, 'is_running': False, 'error_count': 0},  # Add this
+    'task_watchdog': {'last_run': None, 'is_running': False, 'error_count': 0},
 }
+
 
 SHUTDOWN_REQUESTED = False
 
