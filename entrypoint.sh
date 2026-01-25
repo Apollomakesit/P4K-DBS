@@ -32,6 +32,17 @@ else
     fi
 fi
 
+# 🆕 RUN DATABASE MIGRATION
+if [ -f "/data/pro4kings.db" ]; then
+    echo "================================================"
+    echo "🔄 Running database migration..."
+    python migrate_database.py /data/pro4kings.db
+    if [ $? -ne 0 ]; then
+        echo "❌ Migration failed! Check logs above."
+        exit 1
+    fi
+fi
+
 # Verify database file exists and is readable
 if [ -f "/data/pro4kings.db" ]; then
     echo "================================================"
