@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Pro4Kings Scraper - Optimized version with TokenBucket Rate Limiter
+AGGRESSIVE SETTINGS for 7-8 profiles/s
 """
 
 import asyncio
@@ -61,7 +62,7 @@ class PlayerProfile:
 class TokenBucketRateLimiter:
     """Rate limiter that allows controlled bursts"""
 
-    def __init__(self, rate: float = 40.0, capacity: int = 60):
+    def __init__(self, rate: float = 80.0, capacity: int = 120):
         """
         rate: requests per second allowed
         capacity: maximum burst size
@@ -97,22 +98,22 @@ class Pro4KingsScraper:
     def __init__(
         self,
         base_url: str = "https://panel.pro4kings.ro",
-        max_concurrent: int = 20  # ⚙️ Changed default from 50 to 20
+        max_concurrent: int = 50  # ⚡ AGGRESSIVE: 50 workers
     ):
         self.base_url = base_url
-        self.max_concurrent = max(10, max_concurrent)  # ⚙️ Changed from max(50, ...) to max(10, ...)
+        self.max_concurrent = max(20, max_concurrent)  # ⚡ Minimum 20 (not 10)
         self.semaphore = asyncio.Semaphore(self.max_concurrent)
         self.client: Optional[aiohttp.ClientSession] = None
 
-        # ⚙️ Initialize TokenBucket rate limiter (moderate settings)
+        # ⚡ AGGRESSIVE TokenBucket: 80 req/s with 120 burst capacity
         self.rate_limiter = TokenBucketRateLimiter(
-            rate=40.0,      # 40 requests per second
-            capacity=60     # Allow bursts up to 60
+            rate=80.0,      # 80 requests per second
+            capacity=120    # Allow bursts up to 120
         )
 
         self.error_503_count = 0
         self.success_count = 0
-        self.adaptive_delay = 0.2  # ⚙️ Changed from 0.0 to 0.2 (start with 200ms delay)
+        self.adaptive_delay = 0.0  # ⚡ Start with NO delay
 
         self.action_scraping_stats = {
             'total_attempts': 0,
@@ -135,8 +136,8 @@ class Pro4KingsScraper:
         """Async context manager entry"""
         timeout = aiohttp.ClientTimeout(total=15, connect=5)
         connector = aiohttp.TCPConnector(
-            limit=20,  # ⚙️ Changed from self.max_concurrent * 2 to fixed 20
-            limit_per_host=10,  # ⚙️ Changed from self.max_concurrent * 2 to fixed 10
+            limit=100,  # ⚡ AGGRESSIVE: 100 connections
+            limit_per_host=50,  # ⚡ AGGRESSIVE: 50 per host
             ttl_dns_cache=300,
             force_close=False,
             enable_cleanup_closed=True
@@ -160,15 +161,16 @@ class Pro4KingsScraper:
     async def fetch_page(self, url: str, retries: int = 3) -> Optional[str]:
         """Fetch page with TokenBucket rate limiting and adaptive throttling"""
         async with self.semaphore:
-            # ⚙️ NEW: Apply TokenBucket rate limiting
+            # ✅ Apply TokenBucket rate limiting
             await self.rate_limiter.acquire()
 
-            # ⚙️ NEW: Add jitter to avoid request synchronization
+            # ✅ Add jitter to avoid request synchronization
             jitter = random.uniform(0, 0.01)  # 0-10ms random jitter
             await asyncio.sleep(jitter)
 
-            # Apply adaptive delay with minimum of 100ms
-            await asyncio.sleep(max(0.1, self.adaptive_delay))  # ⚙️ Always wait at least 100ms
+            # ⚡ ONLY apply adaptive delay if it's set (not forced minimum)
+            if self.adaptive_delay > 0:
+                await asyncio.sleep(self.adaptive_delay)
 
             for attempt in range(retries):
                 start_time = time.time()
@@ -184,8 +186,8 @@ class Pro4KingsScraper:
                             self.success_count += 1
 
                             # Reduce delay if many successes
-                            if self.success_count >= 50 and self.adaptive_delay > 0.1:
-                                self.adaptive_delay = max(0.1, self.adaptive_delay * 0.95)
+                            if self.success_count >= 50 and self.adaptive_delay > 0.01:
+                                self.adaptive_delay = max(0, self.adaptive_delay * 0.9)
                                 self.success_count = 0
 
                             return await response.text()
@@ -198,7 +200,7 @@ class Pro4KingsScraper:
                             self.consecutive_503 += 1
 
                             if self.consecutive_503 >= 3:
-                                self.adaptive_delay = min(2.0, self.adaptive_delay + 0.5)
+                                self.adaptive_delay = min(2.0, self.adaptive_delay + 0.3)
                                 logger.warning(f"Multiple 503s - delay now: {self.adaptive_delay:.2f}s")
                             else:
                                 self.adaptive_delay = min(1.0, self.adaptive_delay + 0.1)
@@ -406,10 +408,10 @@ class Pro4KingsScraper:
             return None
 
     async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
-        """Optimized parallel fetching with moderate waves"""
+        """⚡ AGGRESSIVE: Parallel fetching with large waves"""
         results = []
-        wave_size = 10  # ⚙️ Changed from 50 to 10 (balanced setting)
-        wave_delay = 0.1  # ⚙️ Changed from 0.02 to 0.1 (balanced setting)
+        wave_size = 50  # ⚡ AGGRESSIVE: 50 profiles per wave
+        wave_delay = 0.02  # ⚡ AGGRESSIVE: Only 20ms between waves
 
         for i in range(0, len(player_ids), wave_size):
             wave = player_ids[i:i + wave_size]
@@ -495,15 +497,6 @@ class Pro4KingsScraper:
             logger.error("NO ACTIONS FOUND! Debugging HTML structure:")
             logger.error(f"Total 'Jucatorul' mentions: {soup.get_text().count('Jucatorul')}")
             logger.error(f"Possible sections found: {len(possible_sections)}")
-
-            all_text = soup.get_text()
-            lines = all_text.split('\n')
-            for line in lines:
-                if 'Jucatorul' in line and len(line) > 20:
-                    fake_elem = BeautifulSoup(f'<div>{line}</div>', 'lxml').div
-                    action = self.parse_action_entry(fake_elem)
-                    if action:
-                        actions.append(action)
 
         self.action_scraping_stats['total_attempts'] += 1
         self.action_scraping_stats['total_actions_found'] += len(actions)
@@ -665,21 +658,18 @@ class Pro4KingsScraper:
         """Check if action involves any VIP player"""
         if not action:
             return False
-
         if action.player_id and action.player_id in vip_ids:
             return True
         if action.target_player_id and action.target_player_id in vip_ids:
             return True
         if action.admin_id and action.admin_id in vip_ids:
             return True
-
         return False
 
     async def get_vip_actions(self, vip_ids: Set[str], limit: int = 200) -> List[PlayerAction]:
         """Get latest actions filtered for VIP players only"""
         all_actions = await self.get_latest_actions(limit)
         vip_actions = [action for action in all_actions if self.is_vip_action(action, vip_ids)]
-
         logger.info(f"Found {len(vip_actions)} VIP actions out of {len(all_actions)} total")
         return vip_actions
 
@@ -687,21 +677,18 @@ class Pro4KingsScraper:
         """Check if action involves any currently online player"""
         if not action:
             return False
-
         if action.player_id and action.player_id in online_ids:
             return True
         if action.target_player_id and action.target_player_id in online_ids:
             return True
         if action.admin_id and action.admin_id in online_ids:
             return True
-
         return False
 
     async def get_online_player_actions(self, online_ids: Set[str], limit: int = 200) -> List[PlayerAction]:
         """Get latest actions filtered for currently online players only"""
         all_actions = await self.get_latest_actions(limit)
         online_actions = [action for action in all_actions if self.is_online_action(action, online_ids)]
-
         logger.info(f"Found {len(online_actions)} online player actions out of {len(all_actions)} total")
         return online_actions
 
@@ -817,15 +804,12 @@ class Pro4KingsScraper:
 async def main():
     """Example usage"""
     async with Pro4KingsScraper() as scraper:
-        # Get latest actions
         actions = await scraper.get_latest_actions(limit=100)
         print(f"Found {len(actions)} actions")
 
-        # Get online players
         online = await scraper.get_online_players()
         print(f"Found {len(online)} online players")
 
-        # Get player profile
         profile = await scraper.get_player_profile("1")
         if profile:
             print(f"Profile: {profile.username}")
