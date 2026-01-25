@@ -12,14 +12,16 @@ import logging
 import re
 import tracemalloc
 import psutil
-
 from commands import setup_commands
+import gzip
+import shutil
+from pathlib import Path
+import urllib.request
 
 tracemalloc.start()
 
 COMMANDS_SYNCED = False
 SYNC_LOCK = asyncio.Lock()
-
 SCAN_IN_PROGRESS = False
 SCAN_STATS = {
     'start_time': None,
@@ -49,20 +51,82 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
 logger = logging.getLogger(__name__)
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!p4k ', intents=intents)
+bot = commands.Bot(command_prefix='!p4k_', intents=intents)
 
 db = Database(os.getenv('DATABASE_PATH', 'pro4kings.db'))
 scraper = None
 
+
+async def ensure_database_exists():
+    """Download and extract database from GitHub if it doesn't exist or is empty"""
+    db_path = Path(os.getenv('DATABASE_PATH', 'pro4kings.db'))
+
+    # Create parent directory if it doesn't exist (for Railway volumes)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # If database already exists and has data, skip download
+    if db_path.exists() and db_path.stat().st_size > 100000:  # >100KB
+        logger.info(f"✓ Database exists ({db_path.stat().st_size / 1024 / 1024:.1f} MB), skipping download")
+        return
+
+    logger.info("=" * 80)
+    logger.info("⏳ Database not found or empty, downloading pre-scanned data from GitHub...")
+    logger.info("=" * 80)
+
+    # URL to your compressed database on GitHub
+    db_url = "https://github.com/Apollomakesit/P4K-DBS/raw/main/backup.db.gz"
+    gz_path = db_path.with_suffix('.db.gz')
+
+    try:
+        # Download compressed database
+        logger.info(f"📥 Downloading from: {db_url}")
+        urllib.request.urlretrieve(db_url, gz_path)
+
+        downloaded_size = gz_path.stat().st_size / 1024 / 1024
+        logger.info(f"✓ Downloaded {downloaded_size:.2f} MB (compressed)")
+
+        # Extract database
+        logger.info("📦 Extracting database...")
+        with gzip.open(gz_path, 'rb') as f_in:
+            with open(db_path, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+
+        extracted_size = db_path.stat().st_size / 1024 / 1024
+        logger.info(f"✓ Extracted to {extracted_size:.2f} MB")
+
+        # Cleanup compressed file
+        gz_path.unlink()
+        logger.info(f"🗑️  Removed temporary file")
+
+        logger.info("=" * 80)
+        logger.info(f"✅ Database ready: {db_path} ({extracted_size:.1f} MB)")
+        logger.info("=" * 80)
+
+    except Exception as e:
+        logger.error("=" * 80)
+        logger.error(f"❌ Failed to download database: {e}")
+        logger.error("=" * 80)
+        logger.warning("⚠️  Starting with empty database...")
+
+        # Cleanup on failure
+        if gz_path.exists():
+            gz_path.unlink()
+
+        # Create empty database if download failed
+        if not db_path.exists():
+            db_path.touch()
+
+
 def signal_handler(sig, frame):
     global SHUTDOWN_REQUESTED
-    logger.info(f"\n🛑 Shutdown signal received ({sig}), cleaning up...")
+    logger.info(f"Shutdown signal received ({sig}), cleaning up...")
     SHUTDOWN_REQUESTED = True
-    
+
     if scrape_actions.is_running():
         scrape_actions.cancel()
     if scrape_online_players.is_running():
@@ -75,67 +139,69 @@ def signal_handler(sig, frame):
         scrape_vip_actions.cancel()
     if scrape_online_priority_actions.is_running():
         scrape_online_priority_actions.cancel()
-    
-    logger.info("✅ Background tasks stopped")
+
+    logger.info("Background tasks stopped")
     asyncio.create_task(bot.close())
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
+
 def verify_environment():
     issues = []
-    
+
     db_path = os.getenv('DATABASE_PATH', 'pro4kings.db')
     db_dir = os.path.dirname(db_path) or '.'
-    
+
     if not os.path.exists(db_dir):
         try:
             os.makedirs(db_dir, exist_ok=True)
-            logger.info(f"✅ Created database directory: {db_dir}")
+            logger.info(f"Created database directory: {db_dir}")
         except Exception as e:
             issues.append(f"Cannot create database directory {db_dir}: {e}")
-    
+
     if not os.access(db_dir, os.W_OK):
         issues.append(f"Database directory {db_dir} is not writable!")
-    
+
     if not os.getenv('DISCORD_TOKEN'):
         issues.append("DISCORD_TOKEN environment variable not set!")
-    
+
     try:
         memory = psutil.virtual_memory()
-        logger.info(f"📊 System: {memory.total / 1024**3:.1f}GB RAM, {memory.available / 1024**3:.1f}GB available")
+        logger.info(f"System: {memory.total / 1024**3:.1f}GB RAM, {memory.available / 1024**3:.1f}GB available")
     except:
         pass
-    
+
     if issues:
-        logger.error("❌ ENVIRONMENT ISSUES:")
+        logger.error("ENVIRONMENT ISSUES:")
         for issue in issues:
             logger.error(f"  - {issue}")
         return False
-    
-    logger.info("✅ Environment verification passed")
+
+    logger.info("Environment verification passed")
     return True
+
 
 async def get_or_recreate_scraper(max_concurrent=None):
     global scraper
-    
+
     if max_concurrent and scraper and scraper.max_concurrent != max_concurrent:
-        logger.info(f"🔄 Recreating scraper with max_concurrent={max_concurrent} (was {scraper.max_concurrent})")
+        logger.info(f"Recreating scraper with max_concurrent={max_concurrent} (was {scraper.max_concurrent})")
         try:
             await scraper.__aexit__(None, None, None)
         except:
             pass
         scraper = None
-    
+
     if scraper is None:
         concurrent = max_concurrent if max_concurrent else 5
-        logger.info(f"🔄 Creating new scraper instance (max_concurrent={concurrent})...")
+        logger.info(f"Creating new scraper instance (max_concurrent={concurrent})...")
         scraper = Pro4KingsScraper(max_concurrent=concurrent)
         await scraper.__aenter__()
-        logger.info(f"✅ Scraper initialized with {concurrent} workers")
-    
+        logger.info(f"Scraper initialized with {concurrent} concurrent workers")
+
     if scraper.client and scraper.client.closed:
-        logger.warning("⚠️ Scraper client was closed, recreating...")
+        logger.warning("Scraper client was closed, recreating...")
         try:
             await scraper.__aexit__(None, None, None)
         except:
@@ -143,13 +209,13 @@ async def get_or_recreate_scraper(max_concurrent=None):
         concurrent = max_concurrent if max_concurrent else 5
         scraper = Pro4KingsScraper(max_concurrent=concurrent)
         await scraper.__aenter__()
-    
+
     return scraper
 
 setup_commands(bot, db, get_or_recreate_scraper)
-logger.info("✅ Slash commands module loaded")
+logger.info("Slash commands module loaded")
 
-@bot.event
+bot.event
 async def on_ready():
     global COMMANDS_SYNCED
     
