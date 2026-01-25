@@ -8,10 +8,13 @@ echo "================================================"
 mkdir -p /data
 mkdir -p /app/backup_extracted
 
+echo "📂 Checking for existing database..."
 # Check if database exists in volume
 if [ -f "/data/pro4kings.db" ]; then
     DB_SIZE=$(du -h /data/pro4kings.db | cut -f1)
+    RECORD_COUNT=$(sqlite3 /data/pro4kings.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND (name='players' OR name='player_profiles');" 2>/dev/null || echo "0")
     echo "✅ Database found in volume: /data/pro4kings.db ($DB_SIZE)"
+    echo "   Tables found: $RECORD_COUNT"
 else
     echo "⚠️  Database not found in volume"
 
@@ -32,24 +35,52 @@ else
     fi
 fi
 
-# 🆕 RUN DATABASE MIGRATION
+# 🔥 RUN DATABASE MIGRATION & VERIFICATION
 if [ -f "/data/pro4kings.db" ]; then
+    echo "================================================"
+    echo "🔍 Pre-migration database check..."
+    
+    # Check for players table
+    PLAYERS_COUNT=$(sqlite3 /data/pro4kings.db "SELECT COUNT(*) FROM players;" 2>/dev/null || echo "0")
+    PROFILES_COUNT=$(sqlite3 /data/pro4kings.db "SELECT COUNT(*) FROM player_profiles;" 2>/dev/null || echo "0")
+    
+    echo "   'players' table records: $PLAYERS_COUNT"
+    echo "   'player_profiles' table records: $PROFILES_COUNT"
+    
     echo "================================================"
     echo "🔄 Running database migration..."
     python migrate_database.py /data/pro4kings.db
+    
     if [ $? -ne 0 ]; then
         echo "❌ Migration failed! Check logs above."
         exit 1
     fi
+    
+    echo "================================================"
+    echo "🔍 Post-migration verification..."
+    
+    # Verify migration worked
+    FINAL_PROFILES=$(sqlite3 /data/pro4kings.db "SELECT COUNT(*) FROM player_profiles;" 2>/dev/null || echo "0")
+    echo "   'player_profiles' table now has: $FINAL_PROFILES records"
+    
+    if [ "$FINAL_PROFILES" -eq "0" ] && [ "$PLAYERS_COUNT" -gt "0" ]; then
+        echo "❌ ERROR: Migration failed! No records in player_profiles but had $PLAYERS_COUNT in players"
+        exit 1
+    fi
+    
+    if [ "$FINAL_PROFILES" -gt "0" ]; then
+        echo "✅ Migration successful! Database ready with $FINAL_PROFILES player profiles"
+    fi
 fi
 
-# Verify database file exists and is readable
+# Final database statistics
 if [ -f "/data/pro4kings.db" ]; then
     echo "================================================"
-    echo "📊 Database Statistics:"
+    echo "📊 Final Database Statistics:"
     DB_SIZE=$(du -h /data/pro4kings.db | cut -f1)
     echo "   Size: $DB_SIZE"
     echo "   Path: /data/pro4kings.db"
+    echo "   Player Profiles: $FINAL_PROFILES"
     echo "================================================"
 fi
 
