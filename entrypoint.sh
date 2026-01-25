@@ -4,10 +4,17 @@ set -e
 echo "🚀 Starting P4K Database Bot..."
 echo "================================================"
 
+# 🆕 CHECK BACKUP CONTENTS FIRST
+if [ -f "/app/backup_extracted/pro4kings.db" ]; then
+    echo "🔍 Checking backup database contents..."
+    python /app/check_backup.py
+fi
+
 # Create data directory if it doesn't exist
 mkdir -p /data
 mkdir -p /app/backup_extracted
 
+echo "================================================"
 echo "📂 Checking for existing database..."
 # Check if database exists in volume
 if [ -f "/data/pro4kings.db" ]; then
