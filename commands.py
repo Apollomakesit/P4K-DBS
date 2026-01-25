@@ -1,4 +1,4 @@
-"""Discord Slash Commands for Pro4Kings Database Bot"""
+"""Discord Slash Commands for Pro4Kings Database Bot - OPTIMIZED WITH CONCURRENT WORKERS"""
 
 import discord
 from discord import app_commands
@@ -28,10 +28,15 @@ SCAN_STATE = {
     'status_message': None,
     'status_task': None,
     'scan_config': {
-        'batch_size': 20,
-        'workers': 20,
-        'wave_delay': 0.05
-    }
+        'batch_size': 50,
+        'workers': 10,
+        'wave_delay': 0.05,
+        'max_concurrent_batches': 5
+    },
+    'worker_stats': {},
+    'total_scanned': 0,
+    'last_speed_update': None,
+    'current_speed': 0.0
 }
 
 # ========================================================================
@@ -377,12 +382,12 @@ def format_last_seen(last_seen_dt):
             return f"{months}mo ago"
 
 def build_status_embed():
-    """Build real-time status embed for scan"""
+    """Build real-time status embed for scan with concurrent worker stats"""
     current = SCAN_STATE['current_id']
     start = SCAN_STATE['start_id']
     end = SCAN_STATE['end_id']
     total = end - start + 1
-    scanned = max(0, current - start)
+    scanned = SCAN_STATE['total_scanned']
     progress_pct = (scanned / total * 100) if total > 0 else 0
 
     # Calculate speed and ETA
@@ -408,12 +413,17 @@ def build_status_embed():
         timestamp=datetime.now()
     )
 
-    embed.add_field(name="📍 Current ID", value=f"{current:,}", inline=True)
+    embed.add_field(name="📍 Current Highest ID", value=f"{current:,}", inline=True)
     embed.add_field(name="⚡ Speed", value=f"{speed:.2f} IDs/s", inline=True)
     embed.add_field(name="⏱️ ETA", value=eta_str, inline=True)
     embed.add_field(name="✅ Found", value=f"{SCAN_STATE['found_count']:,}", inline=True)
     embed.add_field(name="❌ Errors", value=f"{SCAN_STATE['error_count']:,}", inline=True)
     embed.add_field(name="⏲️ Elapsed", value=elapsed_str, inline=True)
+
+    # Worker stats
+    config = SCAN_STATE['scan_config']
+    worker_info = f"👷 {config['workers']} workers × {config['max_concurrent_batches']} concurrent batches"
+    embed.add_field(name="🔧 Workers", value=worker_info, inline=False)
 
     # Progress bar
     bar_length = 20
@@ -564,7 +574,7 @@ def setup_commands(bot, db, scraper_getter):
             scraper = await scraper_getter()
             embed.add_field(
                 name="🌐 Scraper",
-                value=f"• Workers: {scraper.max_concurrent}\n• Rate: {scraper.rate_limiter.rate} req/s",
+                value=f"• Workers: {scraper.max_concurrent}\n• Rate: Adaptive",
                 inline=False
             )
 
@@ -1201,18 +1211,18 @@ def setup_commands(bot, db, scraper_getter):
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
     # ========================================================================
-    # SCAN MANAGEMENT COMMANDS
+    # SCAN MANAGEMENT COMMANDS - WITH CONCURRENT WORKERS
     # ========================================================================
 
     scan_group = app_commands.Group(name="scan", description="Database scan management")
 
-    @scan_group.command(name="start", description="Start initial database scan")
+    @scan_group.command(name="start", description="Start initial database scan with concurrent workers")
     @app_commands.describe(
         start_id="Starting player ID (default: 1)",
         end_id="Ending player ID (default: 100000)"
     )
     async def scan_start(interaction: discord.Interaction, start_id: int = 1, end_id: int = 100000):
-        """Start database scan"""
+        """Start database scan with true concurrent workers"""
         await interaction.response.defer()
 
         try:
@@ -1232,82 +1242,130 @@ def setup_commands(bot, db, scraper_getter):
             SCAN_STATE['current_id'] = start_id
             SCAN_STATE['found_count'] = 0
             SCAN_STATE['error_count'] = 0
+            SCAN_STATE['total_scanned'] = 0
             SCAN_STATE['start_time'] = datetime.now()
             SCAN_STATE['status_message'] = None
+            SCAN_STATE['worker_stats'] = {}
+            SCAN_STATE['last_speed_update'] = datetime.now()
+            SCAN_STATE['current_speed'] = 0.0
 
-            # Start scan task
-            async def run_scan():
+            # Concurrent worker implementation
+            async def run_scan_with_workers():
                 try:
-                    workers = SCAN_STATE['scan_config']['workers']
-                    logger.info(f"🔧 Initializing scraper with {workers} workers for scan...")
+                    config = SCAN_STATE['scan_config']
+                    workers = config['workers']
+                    batch_size = config['batch_size']
+                    max_concurrent_batches = config['max_concurrent_batches']
+                    
+                    logger.info(f"🔧 Initializing scraper with {workers} max concurrent for scan...")
                     scraper = await scraper_getter(max_concurrent=workers)
                     logger.info(f"✅ Scraper ready with {scraper.max_concurrent} workers")
 
                     total_ids = end_id - start_id + 1
-                    batch_size = SCAN_STATE['scan_config']['batch_size']
-                    logger.info(f"🚀 Starting scan: IDs {start_id}-{end_id} ({total_ids:,} total)")
-                    logger.info(f"⚙️ Config: batch={batch_size}, workers={SCAN_STATE['scan_config']['workers']}, delay={SCAN_STATE['scan_config']['wave_delay']}s")
+                    logger.info(f"🚀 Starting CONCURRENT scan: IDs {start_id}-{end_id} ({total_ids:,} total)")
+                    logger.info(f"⚙️ Config: batch={batch_size}, workers={workers}, concurrent_batches={max_concurrent_batches}, delay={config['wave_delay']}s")
 
-                    for batch_start in range(start_id, end_id + 1, batch_size):
-                        # Check if paused
-                        while SCAN_STATE['is_paused']:
-                            await asyncio.sleep(1)
+                    # Create all batches upfront
+                    all_player_ids = [str(i) for i in range(start_id, end_id + 1)]
+                    all_batches = [all_player_ids[i:i + batch_size] for i in range(0, len(all_player_ids), batch_size)]
+                    logger.info(f"📦 Created {len(all_batches)} batches of {batch_size} IDs each")
 
-                        # Check if cancelled
-                        if not SCAN_STATE['is_scanning']:
-                            logger.info("🛑 Scan cancelled by user")
-                            break
+                    # Process batches with concurrent workers
+                    batch_queue = asyncio.Queue()
+                    for batch in all_batches:
+                        await batch_queue.put(batch)
 
-                        batch_end = min(batch_start + batch_size - 1, end_id)
-                        batch_ids = [str(i) for i in range(batch_start, batch_end + 1)]
-                        SCAN_STATE['current_id'] = batch_start
+                    # Worker function
+                    async def worker(worker_id: int):
+                        worker_found = 0
+                        worker_errors = 0
+                        worker_scanned = 0
+                        
+                        while not batch_queue.empty():
+                            # Check pause/cancel
+                            while SCAN_STATE['is_paused']:
+                                await asyncio.sleep(1)
+                            
+                            if not SCAN_STATE['is_scanning']:
+                                break
 
-                        # Scan batch
-                        profiles = await scraper.batch_get_profiles(batch_ids)
-
-                        # Save profiles
-                        for profile in profiles:
                             try:
-                                profile_dict = {
-                                    'player_id': profile.player_id,
-                                    'player_name': profile.username,
-                                    'is_online': profile.is_online,
-                                    'last_seen': profile.last_seen,
-                                    'faction': profile.faction,
-                                    'faction_rank': profile.faction_rank,
-                                    'job': profile.job,
-                                    'level': profile.level,
-                                    'respect_points': profile.respect_points,
-                                    'warnings': profile.warnings,
-                                    'played_hours': profile.played_hours,
-                                    'age_ic': profile.age_ic,
-                                    'phone_number': profile.phone_number,
-                                    'vehicles_count': profile.vehicles_count,
-                                    'properties_count': profile.properties_count
-                                }
-                                await db.save_player_profile(profile_dict)
-                                SCAN_STATE['found_count'] += 1
+                                batch_ids = await asyncio.wait_for(batch_queue.get(), timeout=1.0)
+                            except asyncio.TimeoutError:
+                                continue
+
+                            try:
+                                # Fetch profiles for this batch
+                                profiles = await scraper.batch_get_profiles(batch_ids)
+                                
+                                # Save profiles to database
+                                for profile in profiles:
+                                    if profile:
+                                        profile_dict = {
+                                            'player_id': profile.player_id,
+                                            'player_name': profile.username,
+                                            'is_online': profile.is_online,
+                                            'last_connection': profile.last_seen,
+                                            'faction': profile.faction,
+                                            'faction_rank': profile.faction_rank,
+                                            'job': profile.job,
+                                            'level': profile.level,
+                                            'respect_points': profile.respect_points,
+                                            'warns': profile.warnings,
+                                            'played_hours': profile.played_hours,
+                                            'age_ic': profile.age_ic,
+                                            'phone_number': profile.phone_number,
+                                            'vehicles_count': profile.vehicles_count,
+                                            'properties_count': profile.properties_count
+                                        }
+                                        await db.save_player_profile(profile_dict)
+                                        worker_found += 1
+                                        SCAN_STATE['found_count'] += 1
+
+                                worker_scanned += len(batch_ids)
+                                SCAN_STATE['total_scanned'] += len(batch_ids)
+                                
+                                # Update current_id to highest processed
+                                max_id = max([int(pid) for pid in batch_ids])
+                                if max_id > SCAN_STATE['current_id']:
+                                    SCAN_STATE['current_id'] = max_id
+
+                                # Log progress periodically
+                                if worker_scanned % (batch_size * 5) == 0:
+                                    logger.info(f"Worker {worker_id}: Scanned {worker_scanned:,} | Found {worker_found:,} | Errors {worker_errors}")
+
+                                # Add wave delay
+                                await asyncio.sleep(config['wave_delay'])
+
                             except Exception as e:
-                                logger.error(f"Error saving profile {profile.player_id}: {e}")
-                                SCAN_STATE['error_count'] += 1
+                                logger.error(f"Worker {worker_id} batch error: {e}")
+                                worker_errors += len(batch_ids)
+                                SCAN_STATE['error_count'] += len(batch_ids)
+                                SCAN_STATE['total_scanned'] += len(batch_ids)
 
-                        # Update progress in database
-                        await db.update_scan_progress(batch_end, SCAN_STATE['found_count'], SCAN_STATE['error_count'])
+                        # Worker complete
+                        SCAN_STATE['worker_stats'][worker_id] = {
+                            'scanned': worker_scanned,
+                            'found': worker_found,
+                            'errors': worker_errors
+                        }
+                        logger.info(f"✅ Worker {worker_id} complete: {worker_scanned:,} scanned, {worker_found:,} found, {worker_errors} errors")
 
-                        # Log progress every 100 IDs
-                        if batch_start % 100 == 0:
-                            progress = ((batch_start - start_id) / total_ids) * 100
-                            elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
-                            speed = (batch_start - start_id) / elapsed if elapsed > 0 else 0
-                            logger.info(f"📊 Progress: {progress:.1f}% | ID: {batch_start}/{end_id} | Speed: {speed:.2f} IDs/s | Found: {SCAN_STATE['found_count']} | Errors: {SCAN_STATE['error_count']}")
+                    # Start concurrent workers
+                    worker_tasks = [
+                        asyncio.create_task(worker(i))
+                        for i in range(max_concurrent_batches)
+                    ]
 
-                        # Add configured wave delay
-                        await asyncio.sleep(SCAN_STATE['scan_config']['wave_delay'])
+                    logger.info(f"👷 Started {max_concurrent_batches} concurrent workers")
+                    
+                    # Wait for all workers to complete
+                    await asyncio.gather(*worker_tasks)
 
                     # Scan complete
                     SCAN_STATE['is_scanning'] = False
                     elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
-                    avg_speed = (end_id - start_id) / elapsed if elapsed > 0 else 0
+                    avg_speed = SCAN_STATE['total_scanned'] / elapsed if elapsed > 0 else 0
                     logger.info(f"✅ Scan complete! Found {SCAN_STATE['found_count']:,} players in {format_time_duration(elapsed)} (avg: {avg_speed:.2f} IDs/s)")
 
                 except Exception as e:
@@ -1316,7 +1374,7 @@ def setup_commands(bot, db, scraper_getter):
                     SCAN_STATE['error_count'] += 1
 
             # Start scan in background
-            SCAN_STATE['scan_task'] = asyncio.create_task(run_scan())
+            SCAN_STATE['scan_task'] = asyncio.create_task(run_scan_with_workers())
 
             # Wait a moment to ensure scan task started
             await asyncio.sleep(0.5)
@@ -1328,22 +1386,25 @@ def setup_commands(bot, db, scraper_getter):
 
             # Show expected speed based on current settings
             config = SCAN_STATE['scan_config']
-            expected_speed = config['batch_size'] / (config['wave_delay'] + 0.5)
+            # Calculate expected speed with concurrent workers
+            expected_speed_per_worker = config['batch_size'] / (config['wave_delay'] + 0.5)
+            expected_total_speed = expected_speed_per_worker * config['max_concurrent_batches']
 
             embed = discord.Embed(
-                title="🚀 Database Scan Started",
-                description=f"Scanning player IDs {start_id:,} to {end_id:,}\n\nUse `/scan status` to monitor progress with **real-time auto-refresh**!",
+                title="🚀 Concurrent Database Scan Started",
+                description=f"Scanning player IDs {start_id:,} to {end_id:,}\n\nUsing **{config['max_concurrent_batches']} concurrent workers** for maximum speed!\n\nUse `/scan status` to monitor progress with **real-time auto-refresh**!",
                 color=discord.Color.green(),
                 timestamp=datetime.now()
             )
 
             embed.add_field(name="⚙️ Batch Size", value=f"{config['batch_size']} IDs", inline=True)
-            embed.add_field(name="👷 Workers", value=str(config['workers']), inline=True)
+            embed.add_field(name="👷 Max Workers", value=str(config['workers']), inline=True)
+            embed.add_field(name="🔀 Concurrent Batches", value=str(config['max_concurrent_batches']), inline=True)
             embed.add_field(name="⏱️ Wave Delay", value=f"{config['wave_delay']}s", inline=True)
-            embed.add_field(name="⚡ Expected Speed", value=f"~{expected_speed:.1f} IDs/s", inline=True)
+            embed.add_field(name="⚡ Expected Speed", value=f"~{expected_total_speed:.1f} IDs/s", inline=True)
             embed.add_field(name="📊 Total IDs", value=f"{end_id - start_id + 1:,}", inline=True)
 
-            eta = (end_id - start_id + 1) / expected_speed
+            eta = (end_id - start_id + 1) / expected_total_speed if expected_total_speed > 0 else 0
             embed.add_field(name="🕐 Est. Time", value=format_time_duration(eta), inline=True)
             embed.set_footer(text="Tip: Use /scanconfig to adjust speed settings")
 
@@ -1451,11 +1512,11 @@ def setup_commands(bot, db, scraper_getter):
 
             embed.add_field(name="✅ Found", value=f"{SCAN_STATE['found_count']:,} players", inline=True)
             embed.add_field(name="❌ Errors", value=f"{SCAN_STATE['error_count']:,}", inline=True)
+            embed.add_field(name="📊 Total Scanned", value=f"{SCAN_STATE['total_scanned']:,}", inline=True)
 
             if SCAN_STATE['start_time']:
                 elapsed = (datetime.now() - SCAN_STATE['start_time']).total_seconds()
-                scanned = SCAN_STATE['current_id'] - SCAN_STATE['start_id']
-                avg_speed = scanned / elapsed if elapsed > 0 else 0
+                avg_speed = SCAN_STATE['total_scanned'] / elapsed if elapsed > 0 else 0
                 embed.add_field(name="⚡ Avg Speed", value=f"{avg_speed:.2f} IDs/s", inline=True)
 
             await interaction.followup.send(embed=embed)
@@ -1467,22 +1528,24 @@ def setup_commands(bot, db, scraper_getter):
     bot.tree.add_command(scan_group)
 
     # ========================================================================
-    # SCAN CONFIG COMMAND
+    # SCAN CONFIG COMMAND - ENHANCED FOR CONCURRENT WORKERS
     # ========================================================================
 
     @bot.tree.command(name="scanconfig", description="View or modify scan configuration")
     @app_commands.describe(
-        batch_size="Number of IDs to scan per batch (5-30)",
-        workers="Number of concurrent workers (5-30)",
-        wave_delay="Delay between batches in seconds (0.01-1.0)"
+        batch_size="Number of IDs to scan per batch (10-100)",
+        workers="Number of max concurrent HTTP requests (10-50)",
+        wave_delay="Delay between batches in seconds (0.01-1.0)",
+        concurrent_batches="Number of batches to process simultaneously (1-10)"
     )
     async def scanconfig_command(
         interaction: discord.Interaction,
         batch_size: Optional[int] = None,
         workers: Optional[int] = None,
-        wave_delay: Optional[float] = None
+        wave_delay: Optional[float] = None,
+        concurrent_batches: Optional[int] = None
     ):
-        """Configure scan parameters"""
+        """Configure scan parameters for concurrent processing"""
         await interaction.response.defer()
 
         try:
@@ -1490,19 +1553,19 @@ def setup_commands(bot, db, scraper_getter):
             updated = []
 
             if batch_size is not None:
-                if 5 <= batch_size <= 30:
+                if 10 <= batch_size <= 100:
                     SCAN_STATE['scan_config']['batch_size'] = batch_size
                     updated.append(f"Batch size: {batch_size}")
                 else:
-                    await interaction.followup.send("❌ **Batch size must be between 5 and 30!**")
+                    await interaction.followup.send("❌ **Batch size must be between 10 and 100!**")
                     return
 
             if workers is not None:
-                if 5 <= workers <= 30:
+                if 10 <= workers <= 50:
                     SCAN_STATE['scan_config']['workers'] = workers
                     updated.append(f"Workers: {workers}")
                 else:
-                    await interaction.followup.send("❌ **Workers must be between 5 and 30!**")
+                    await interaction.followup.send("❌ **Workers must be between 10 and 50!**")
                     return
 
             if wave_delay is not None:
@@ -1513,9 +1576,17 @@ def setup_commands(bot, db, scraper_getter):
                     await interaction.followup.send("❌ **Wave delay must be between 0.01 and 1.0 seconds!**")
                     return
 
+            if concurrent_batches is not None:
+                if 1 <= concurrent_batches <= 10:
+                    SCAN_STATE['scan_config']['max_concurrent_batches'] = concurrent_batches
+                    updated.append(f"Concurrent batches: {concurrent_batches}")
+                else:
+                    await interaction.followup.send("❌ **Concurrent batches must be between 1 and 10!**")
+                    return
+
             # Create embed
             embed = discord.Embed(
-                title="⚙️ Scan Configuration",
+                title="⚙️ Scan Configuration - Concurrent Worker System",
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
@@ -1526,26 +1597,29 @@ def setup_commands(bot, db, scraper_getter):
                 embed.description = "**Current Configuration:**"
 
             config = SCAN_STATE['scan_config']
-            embed.add_field(name="📦 Batch Size", value=f"{config['batch_size']} IDs", inline=True)
-            embed.add_field(name="👷 Workers", value=f"{config['workers']} concurrent", inline=True)
-            embed.add_field(name="⏱️ Wave Delay", value=f"{config['wave_delay']}s", inline=True)
+            embed.add_field(name="📦 Batch Size", value=f"{config['batch_size']} IDs per batch", inline=True)
+            embed.add_field(name="👷 Max Workers", value=f"{config['workers']} HTTP requests", inline=True)
+            embed.add_field(name="🔀 Concurrent Batches", value=f"{config['max_concurrent_batches']} workers", inline=True)
+            embed.add_field(name="⏱️ Wave Delay", value=f"{config['wave_delay']}s per worker", inline=True)
 
-            # Calculate expected speed
-            expected_speed = config['batch_size'] / (config['wave_delay'] + 0.5)
-            embed.add_field(name="⚡ Expected Speed", value=f"~{expected_speed:.1f} IDs/second", inline=True)
+            # Calculate expected speed with concurrent workers
+            speed_per_worker = config['batch_size'] / (config['wave_delay'] + 0.5)
+            total_speed = speed_per_worker * config['max_concurrent_batches']
+            embed.add_field(name="⚡ Expected Speed", value=f"~{total_speed:.1f} IDs/second", inline=True)
 
             # Add preset recommendations
             embed.add_field(
                 name="📋 Recommended Presets",
                 value=(
-                    "**Aggressive:** `/scanconfig 20 20 0.05` (~30 IDs/s)\n"
-                    "**Balanced:** `/scanconfig 15 15 0.1` (~20 IDs/s)\n"
-                    "**Safe:** `/scanconfig 10 10 0.2` (~10 IDs/s)"
+                    "**Ultra Fast:** `/scanconfig 100 30 0.05 8` (~150 IDs/s)\n"
+                    "**Aggressive:** `/scanconfig 50 20 0.05 5` (~80 IDs/s)\n"
+                    "**Balanced:** `/scanconfig 50 15 0.1 3` (~40 IDs/s)\n"
+                    "**Safe:** `/scanconfig 30 10 0.2 2` (~15 IDs/s)"
                 ),
                 inline=False
             )
 
-            embed.set_footer(text="💡 Higher = faster but may trigger rate limits | Lower = safer but slower")
+            embed.set_footer(text="💡 More concurrent batches = faster scanning | Adjust if you get rate limited")
 
             await interaction.followup.send(embed=embed)
 
@@ -1553,4 +1627,4 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in scanconfig command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
-    logger.info("✅ All slash commands registered successfully")
+    logger.info("✅ All slash commands registered successfully with concurrent worker support")
