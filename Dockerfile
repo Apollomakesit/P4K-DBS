@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     g++ \
     python3-dev \
     gzip \
+    sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -38,12 +39,13 @@ RUN if [ -f backup.db.gz ]; then \
         echo "⚠️  backup.db.gz not found - bot will start with empty database"; \
     fi
 
-# Make entrypoint script executable
+# Make entrypoint and migration scripts executable
 RUN chmod +x entrypoint.sh
+COPY migrate_database.py /app/
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV DATABASE_PATH=/data/pro4kings.db
 
-# Use entrypoint script that copies database to volume on startup
-CMD ["./entrypoint.sh"]
+# 🔥 USE ENTRYPOINT INSTEAD OF CMD (can't be overridden by Railway)
+ENTRYPOINT ["./entrypoint.sh"]
