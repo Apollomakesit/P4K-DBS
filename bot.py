@@ -58,11 +58,24 @@ bot = commands.Bot(command_prefix='!p4k ', intents=intents)
 db = Database(os.getenv('DATABASE_PATH', 'pro4kings.db'))
 scraper = None
 
+async def cleanup_scraper():
+    """Properly close the scraper's aiohttp session"""
+    global scraper
+    if scraper:
+        try:
+            logger.info("🧹 Closing scraper session...")
+            await scraper.__aexit__(None, None, None)
+            scraper = None
+            logger.info("✅ Scraper session closed")
+        except Exception as e:
+            logger.error(f"⚠️ Error closing scraper: {e}")
+
 def signal_handler(sig, frame):
     global SHUTDOWN_REQUESTED
     logger.info(f"\n🛑 Shutdown signal received ({sig}), cleaning up...")
     SHUTDOWN_REQUESTED = True
     
+    # Cancel all background tasks
     if scrape_actions.is_running():
         scrape_actions.cancel()
     if scrape_online_players.is_running():
@@ -77,7 +90,13 @@ def signal_handler(sig, frame):
         scrape_online_priority_actions.cancel()
     
     logger.info("✅ Background tasks stopped")
-    asyncio.create_task(bot.close())
+    
+    # Schedule cleanup and bot close
+    async def shutdown():
+        await cleanup_scraper()
+        await bot.close()
+    
+    asyncio.create_task(shutdown())
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
@@ -121,11 +140,7 @@ async def get_or_recreate_scraper(max_concurrent=None):
     
     if max_concurrent and scraper and scraper.max_concurrent != max_concurrent:
         logger.info(f"🔄 Recreating scraper with max_concurrent={max_concurrent} (was {scraper.max_concurrent})")
-        try:
-            await scraper.__aexit__(None, None, None)
-        except:
-            pass
-        scraper = None
+        await cleanup_scraper()
     
     if scraper is None:
         concurrent = max_concurrent if max_concurrent else 5
@@ -136,10 +151,7 @@ async def get_or_recreate_scraper(max_concurrent=None):
     
     if scraper.client and scraper.client.closed:
         logger.warning("⚠️ Scraper client was closed, recreating...")
-        try:
-            await scraper.__aexit__(None, None, None)
-        except:
-            pass
+        await cleanup_scraper()
         concurrent = max_concurrent if max_concurrent else 5
         scraper = Pro4KingsScraper(max_concurrent=concurrent)
         await scraper.__aenter__()
@@ -331,13 +343,7 @@ async def scrape_actions():
         
         if TASK_HEALTH['scrape_actions']['error_count'] >= 5:
             logger.warning("⚠️ Too many errors, recreating scraper client...")
-            global scraper
-            try:
-                if scraper:
-                    await scraper.__aexit__(None, None, None)
-            except:
-                pass
-            scraper = None
+            await cleanup_scraper()
             TASK_HEALTH['scrape_actions']['error_count'] = 0
     
     finally:
@@ -686,4 +692,15 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"❌ Fatal error: {e}", exc_info=True)
     finally:
+        # Final cleanup on exit
+        if scraper:
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(cleanup_scraper())
+                else:
+                    loop.run_until_complete(cleanup_scraper())
+            except:
+                pass
         logger.info("🛑 Bot shutdown complete")
