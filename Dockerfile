@@ -39,9 +39,11 @@ RUN if [ -f backup.db.gz ]; then \
         echo "⚠️  backup.db.gz not found - bot will start with empty database"; \
     fi
 
-# Make entrypoint and migration scripts executable
+# Make entrypoint and scripts executable
 RUN chmod +x entrypoint.sh
 COPY migrate_database.py /app/
+COPY check_backup.py /app/
+RUN chmod +x check_backup.py
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
