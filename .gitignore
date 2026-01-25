@@ -13,6 +13,8 @@ backups/
 
 # Scan State
 scan_state.json
+initial_scan.log
+
 
 # Python
 __pycache__/
@@ -89,3 +91,5 @@ scrape_results.json
 
 # Docker
 docker-compose.override.yml
+
+
