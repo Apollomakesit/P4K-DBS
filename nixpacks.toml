@@ -1,8 +1,5 @@
 [phases.install]
 cmds = ["pip install -r requirements.txt"]
 
-[phases.setup]
-cmds = ["python import_csv_profiles.py"]
-
 [start]
 cmd = "python bot.py"
