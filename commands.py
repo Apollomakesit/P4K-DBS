@@ -1561,11 +1561,11 @@ def setup_commands(bot, db, scraper_getter):
                     return
 
             if workers is not None:
-                if 10 <= workers <= 50:
+                if 1 <= workers <= 50:
                     SCAN_STATE['scan_config']['workers'] = workers
                     updated.append(f"Workers: {workers}")
                 else:
-                    await interaction.followup.send("❌ **Workers must be between 10 and 50!**")
+                    await interaction.followup.send("❌ **Workers must be between 1 and 50!**")
                     return
 
             if wave_delay is not None:
