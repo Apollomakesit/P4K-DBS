@@ -720,38 +720,53 @@ async def update_pending_profiles_error(error):
     logger.error(f"❌ update_pending_profiles task error: {error}", exc_info=error)
     TASK_HEALTH['update_pending_profiles']['error_count'] += 1
 
-@tasks.loop(hours=1)
+@tasks.loop(minutes=60)  # Run every 60 minutes
 async def update_missing_faction_ranks():
     """Target players with factions but no faction_rank for updates"""
-    while True:
-        try:
-            # Query players with faction but no faction_rank
-            def _get_missing_ranks():
-                with db.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        SELECT player_id 
-                        FROM player_profiles 
-                        WHERE faction IS NOT NULL 
-                        AND faction != '' 
-                        AND (faction_rank IS NULL OR faction_rank = '')
-                        LIMIT 50
-                    ''')
-                    return [row[0] for row in cursor.fetchall()]
-            
-            player_ids = await asyncio.to_thread(_get_missing_ranks)
-            
-            if player_ids:
-                logger.info(f"🎯 Targeting {len(player_ids)} players with missing faction ranks")
-                for player_id in player_ids:
-                    await db.mark_player_for_update(player_id, f"Player_{player_id}")
-            
-            # Run every 10 minutes
-            await asyncio.sleep(600)
-            
-        except Exception as e:
-            logger.error(f"Error in update_missing_faction_ranks: {e}")
-            await asyncio.sleep(60)
+    if SHUTDOWN_REQUESTED:
+        return
+    
+    TASK_HEALTH['update_missing_faction_ranks']['last_run'] = datetime.now()
+    TASK_HEALTH['update_missing_faction_ranks']['is_running'] = True
+    
+    try:
+        # Query players with faction but no faction_rank
+        def _get_missing_ranks():
+            with db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT player_id 
+                    FROM player_profiles 
+                    WHERE faction IS NOT NULL 
+                    AND faction != '' 
+                    AND (faction_rank IS NULL OR faction_rank = '')
+                    LIMIT 50
+                ''')
+                return [row[0] for row in cursor.fetchall()]
+        
+        player_ids = await asyncio.to_thread(_get_missing_ranks)
+        
+        if player_ids:
+            logger.info(f"🎯 Targeting {len(player_ids)} players with missing faction ranks")
+            for player_id in player_ids:
+                await db.mark_player_for_update(player_id, f"Player_{player_id}")
+        
+        TASK_HEALTH['update_missing_faction_ranks']['error_count'] = 0
+        
+    except Exception as e:
+        TASK_HEALTH['update_missing_faction_ranks']['error_count'] += 1
+        logger.error(f"Error in update_missing_faction_ranks: {e}", exc_info=True)
+    
+    finally:
+        TASK_HEALTH['update_missing_faction_ranks']['is_running'] = False
+
+@update_missing_faction_ranks.error
+async def update_missing_faction_ranks_error(error):
+    logger.error(f"❌ update_missing_faction_ranks task error: {error}", exc_info=error)
+    TASK_HEALTH['update_missing_faction_ranks']['error_count'] += 1
+
+# Add the missing @tasks.loop decorator to check_banned_players
+@tasks.loop(hours=1)
 async def check_banned_players():
     if SHUTDOWN_REQUESTED:
         return
@@ -779,6 +794,7 @@ async def check_banned_players():
     
     finally:
         TASK_HEALTH['check_banned_players']['is_running'] = False
+
 @check_banned_players.error
 async def check_banned_players_error(error):
     logger.error(f"❌ check_banned_players task error: {error}", exc_info=error)
