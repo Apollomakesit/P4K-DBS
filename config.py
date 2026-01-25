@@ -49,7 +49,7 @@ class Config:
         for pid in os.getenv('VIP_PLAYER_IDS', '155733,184268,799,1207,143013,102850,141110,711,52323,9,64,2446,100,14,69,139978,215,141,1,4,46,51,47182').split(',') 
         if pid.strip()
     ]
-    VIP_SCAN_INTERVAL: int = _safe_int.__func__('VIP_SCAN_INTERVAL', 10)  # Scan VIP actions every 10s
+    VIP_SCAN_INTERVAL: int = _safe_int.__func__('VIP_SCAN_INTERVAL', 600)  # Scan VIP actions every 10m
     
     # Online Player Priority - Automatically track all currently online players
     TRACK_ONLINE_PLAYERS_PRIORITY: bool = os.getenv('TRACK_ONLINE_PLAYERS_PRIORITY', 'true').lower() == 'true'
