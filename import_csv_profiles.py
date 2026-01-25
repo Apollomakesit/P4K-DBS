@@ -57,10 +57,12 @@ async def import_csv_profiles(csv_file_path: str = 'player_profiles.csv'):
             # Read first line to detect format
             first_line = csvfile.readline()
             csvfile.seek(0)
-            
+
             # Determine delimiter (comma or tab)
+            delimiter = '\t' if first_line.count('\t') > first_line.count(',') else ','
             delimiter_name = 'TAB' if delimiter == '\t' else 'COMMA'
             logger.info(f"Detected delimiter: {delimiter_name}")
+
 
             
             # Parse the CSV
