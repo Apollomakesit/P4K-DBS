@@ -429,6 +429,90 @@ class Pro4KingsScraper:
                 await asyncio.sleep(wave_delay)
 
         return results
+
+    async def get_factions_info(self) -> List[Dict]:
+        """🆕 Get faction information from /factions page"""
+        url = f"{self.base_url}/factions"
+        logger.info(f"Fetching faction data from {url}...")
+        
+        html = await self.fetch_page(url)
+        if not html:
+            logger.error("Failed to fetch factions page!")
+            return []
+        
+        soup = BeautifulSoup(html, 'lxml')
+        factions = []
+        
+        # Try multiple selectors to find faction data
+        # Common patterns: table rows, cards, divs with faction info
+        
+        # Try table format first
+        faction_rows = soup.select('table tr')
+        if len(faction_rows) > 1:  # Has header + data
+            logger.info(f"Found {len(faction_rows)-1} faction rows in table")
+            
+            for row in faction_rows[1:]:  # Skip header
+                try:
+                    cells = row.select('td')
+                    if len(cells) >= 2:
+                        # Extract faction name and member count
+                        faction_name = cells[0].get_text(strip=True)
+                        
+                        # Look for member count (usually numeric)
+                        member_count = 0
+                        for cell in cells[1:]:
+                            text = cell.get_text(strip=True)
+                            count_match = re.search(r'(\d+)', text)
+                            if count_match:
+                                member_count = int(count_match.group(1))
+                                break
+                        
+                        if faction_name and faction_name not in ['Civil', '-', 'Fără']:
+                            factions.append({
+                                'faction_name': faction_name,
+                                'member_count': member_count,
+                                'scraped_at': datetime.now()
+                            })
+                            
+                except Exception as e:
+                    logger.error(f"Error parsing faction row: {e}")
+                    continue
+        
+        # Try card/div format if table didn't work
+        if not factions:
+            faction_cards = soup.select('.faction, .faction-card, .faction-info')
+            logger.info(f"Found {len(faction_cards)} faction cards")
+            
+            for card in faction_cards:
+                try:
+                    faction_name = None
+                    member_count = 0
+                    
+                    # Look for faction name
+                    name_elem = card.select_one('h2, h3, h4, .faction-name, .name')
+                    if name_elem:
+                        faction_name = name_elem.get_text(strip=True)
+                    
+                    # Look for member count
+                    count_text = card.get_text()
+                    count_matches = re.findall(r'(\d+)\s*(?:membr|member|players|jucători)', count_text, re.IGNORECASE)
+                    if count_matches:
+                        member_count = int(count_matches[0])
+                    
+                    if faction_name and faction_name not in ['Civil', '-', 'Fără']:
+                        factions.append({
+                            'faction_name': faction_name,
+                            'member_count': member_count,
+                            'scraped_at': datetime.now()
+                        })
+                        
+                except Exception as e:
+                    logger.error(f"Error parsing faction card: {e}")
+                    continue
+        
+        logger.info(f"✅ Scraped {len(factions)} factions")
+        return factions
+    
     async def get_latest_actions(self, limit: int = 200) -> List[PlayerAction]:
         """Get latest actions - enhanced with multiple detection methods"""
         url = f"{self.base_url}/"
@@ -836,6 +920,12 @@ async def main():
         profile = await scraper.get_player_profile("1")
         if profile:
             print(f"Profile: {profile.username}")
+        
+        # Test faction scraping
+        factions = await scraper.get_factions_info()
+        print(f"Found {len(factions)} factions")
+        for faction in factions:
+            print(f"  - {faction['faction_name']}: {faction['member_count']} members")
 
 
 if __name__ == "__main__":
