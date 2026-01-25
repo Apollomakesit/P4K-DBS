@@ -115,7 +115,6 @@ class Database:
                         last_profile_update TIMESTAMP,
                         priority_update BOOLEAN DEFAULT FALSE,
                         
-                        UNIQUE(username)
                     )
                 ''')
                 
