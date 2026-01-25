@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Pro4Kings Scraper - Optimized version with TokenBucket Rate Limiter
-AGGRESSIVE SETTINGS for 7-8 profiles/s
+Pro4Kings Scraper - ULTRA SAFE Version with TokenBucket Rate Limiter
+Minimum 1 worker support for maximum 503 error protection
 """
 
 import asyncio
@@ -62,7 +62,7 @@ class PlayerProfile:
 class TokenBucketRateLimiter:
     """Rate limiter that allows controlled bursts"""
 
-    def __init__(self, rate: float = 80.0, capacity: int = 120):
+    def __init__(self, rate: float = 10.0, capacity: int = 20):
         """
         rate: requests per second allowed
         capacity: maximum burst size
@@ -93,27 +93,27 @@ class TokenBucketRateLimiter:
 
 
 class Pro4KingsScraper:
-    """Enhanced scraper optimized for fast scanning with intelligent rate limiting"""
+    """Ultra-safe scraper with TokenBucket rate limiting - supports 1-50 workers"""
 
     def __init__(
         self,
         base_url: str = "https://panel.pro4kings.ro",
-        max_concurrent: int = 50  # ⚡ AGGRESSIVE: 50 workers
+        max_concurrent: int = 10  # Default: 10 workers
     ):
         self.base_url = base_url
-        self.max_concurrent = max(20, max_concurrent)  # ⚡ Minimum 20 (not 10)
+        self.max_concurrent = max(1, max_concurrent)  # ✅ Minimum 1 worker for ultra-safe scanning
         self.semaphore = asyncio.Semaphore(self.max_concurrent)
         self.client: Optional[aiohttp.ClientSession] = None
 
-        # ⚡ AGGRESSIVE TokenBucket: 80 req/s with 120 burst capacity
+        # TokenBucket: Smooth request distribution
         self.rate_limiter = TokenBucketRateLimiter(
-            rate=80.0,      # 80 requests per second
-            capacity=120    # Allow bursts up to 120
+            rate=max(10.0, self.max_concurrent * 1.5),  # Scale with workers
+            capacity=max(20, self.max_concurrent * 3)   # Allow some bursting
         )
 
         self.error_503_count = 0
         self.success_count = 0
-        self.adaptive_delay = 0.0  # ⚡ Start with NO delay
+        self.adaptive_delay = 0.0  # Start with no delay, adapts if 503s occur
 
         self.action_scraping_stats = {
             'total_attempts': 0,
@@ -136,8 +136,8 @@ class Pro4KingsScraper:
         """Async context manager entry"""
         timeout = aiohttp.ClientTimeout(total=15, connect=5)
         connector = aiohttp.TCPConnector(
-            limit=100,  # ⚡ AGGRESSIVE: 100 connections
-            limit_per_host=50,  # ⚡ AGGRESSIVE: 50 per host
+            limit=max(10, self.max_concurrent * 2),
+            limit_per_host=max(10, self.max_concurrent * 2),
             ttl_dns_cache=300,
             force_close=False,
             enable_cleanup_closed=True
@@ -149,7 +149,7 @@ class Pro4KingsScraper:
             headers=self.headers
         )
 
-        logger.info(f"✓ HTTP client initialized ({self.max_concurrent} workers, {self.rate_limiter.rate} req/s)")
+        logger.info(f"✓ HTTP client initialized ({self.max_concurrent} workers, {self.rate_limiter.rate:.1f} req/s)")
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -164,11 +164,11 @@ class Pro4KingsScraper:
             # ✅ Apply TokenBucket rate limiting
             await self.rate_limiter.acquire()
 
-            # ✅ Add jitter to avoid request synchronization
-            jitter = random.uniform(0, 0.01)  # 0-10ms random jitter
+            # ✅ Add jitter to avoid request synchronization (0-10ms)
+            jitter = random.uniform(0, 0.01)
             await asyncio.sleep(jitter)
 
-            # ⚡ ONLY apply adaptive delay if it's set (not forced minimum)
+            # ✅ Apply adaptive delay only if it's set (increases with 503 errors)
             if self.adaptive_delay > 0:
                 await asyncio.sleep(self.adaptive_delay)
 
@@ -408,10 +408,11 @@ class Pro4KingsScraper:
             return None
 
     async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
-        """⚡ AGGRESSIVE: Parallel fetching with large waves"""
+        """Batch fetch profiles with configurable wave size"""
         results = []
-        wave_size = 50  # ⚡ AGGRESSIVE: 50 profiles per wave
-        wave_delay = 0.02  # ⚡ AGGRESSIVE: Only 20ms between waves
+        # Scale wave size with worker count (minimum 10, maximum 50)
+        wave_size = min(50, max(10, self.max_concurrent * 5))
+        wave_delay = 0.05  # 50ms between waves
 
         for i in range(0, len(player_ids), wave_size):
             wave = player_ids[i:i + wave_size]
@@ -428,7 +429,6 @@ class Pro4KingsScraper:
                 await asyncio.sleep(wave_delay)
 
         return results
-
     async def get_latest_actions(self, limit: int = 200) -> List[PlayerAction]:
         """Get latest actions - enhanced with multiple detection methods"""
         url = f"{self.base_url}/"
@@ -459,7 +459,6 @@ class Pro4KingsScraper:
             '.activity', '.actions', '.recent-actions', '.latest-actions',
             '.activity-feed', '.action-log', '.player-actions'
         ]
-
         for selector in direct_selectors:
             elem = soup.select_one(selector)
             if elem:
@@ -498,10 +497,19 @@ class Pro4KingsScraper:
             logger.error(f"Total 'Jucatorul' mentions: {soup.get_text().count('Jucatorul')}")
             logger.error(f"Possible sections found: {len(possible_sections)}")
 
+            all_text = soup.get_text()
+            lines = all_text.split('\n')
+            for line in lines:
+                if 'Jucatorul' in line and len(line) > 20:
+                    fake_elem = BeautifulSoup(f'<div>{line}</div>', 'lxml').div
+                    action = self.parse_action_entry(fake_elem)
+                    if action:
+                        actions.append(action)
+
         self.action_scraping_stats['total_attempts'] += 1
         self.action_scraping_stats['total_actions_found'] += len(actions)
-        logger.info(f"Parsed {len(actions)} actions from homepage")
 
+        logger.info(f"Parsed {len(actions)} actions from homepage")
         return actions[:limit]
 
     def parse_action_entry(self, entry) -> Optional[PlayerAction]:
@@ -522,8 +530,9 @@ class Pro4KingsScraper:
                     pass
 
             warning_match = re.search(
-                r'Jucatorul\s+(\w+)\s+\((\d+)\)\s+a\s+primit\s+un\s+avertisment.*?de\s+la\s+administratorul\s+(\w+)\s+\((\d+)\).*?motiv:?\s*(.+?)(?:\d{4}-\d{2}-\d{2}|$)',
-                text, re.IGNORECASE
+                r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+un\s+avertisment,\s+de\s+la\s+administratorul\s+([^(]+)\((\d+)\)\s*,\s*motiv:\s*(.+?)(?=\d{4}-\d{2}-\d{2}|$)',
+                text,
+                re.IGNORECASE
             )
             if warning_match:
                 return PlayerAction(
@@ -540,8 +549,9 @@ class Pro4KingsScraper:
                 )
 
             chest_match = re.search(
-                r'Jucatorul\s+(\w+)\s+\((\d+)\)\s+a\s+(pus\s+in|scos\s+din)\s+chest(?:\s+ID\s+)?([^x]*)\s+x(\d+)\s+(.+?)(?:\d{4}-\d{2}-\d{2}|$)',
-                text, re.IGNORECASE
+                r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(pus\s+in|scos\s+din)\s+chest\s*(?:ID:\s*)?(\d+)?\s+x(\d+)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|$)',
+                text,
+                re.IGNORECASE
             )
             if chest_match:
                 action_type = "chest_deposit" if "pus in" in chest_match.group(3).lower() else "chest_withdraw"
@@ -559,8 +569,9 @@ class Pro4KingsScraper:
                 )
 
             gave_match = re.search(
-                r'Jucatorul\s+(\w+)\s+\((\d+)\)\s+a\s+dat\s+lui\s+(\w+)\s+\((\d+)\)\s+x(\d+)\s+(.+?)(?:\d{4}-\d{2}-\d{2}|$)',
-                text, re.IGNORECASE
+                r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+dat\s+lui\s+([^(]+)\((\d+)\)\s+x(\d+)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|$)',
+                text,
+                re.IGNORECASE
             )
             if gave_match:
                 return PlayerAction(
@@ -577,8 +588,9 @@ class Pro4KingsScraper:
                 )
 
             received_match = re.search(
-                r'Jucatorul\s+(\w+)\s+\((\d+)\)\s+a\s+primit\s+de\s+la\s+(\w+)\s+\((\d+)\)\s+x(\d+)\s+(.+?)(?:\d{4}-\d{2}-\d{2}|$)',
-                text, re.IGNORECASE
+                r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+de\s+la\s+([^(]+)\((\d+)\)\s+x(\d+)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|$)',
+                text,
+                re.IGNORECASE
             )
             if received_match:
                 return PlayerAction(
@@ -595,8 +607,9 @@ class Pro4KingsScraper:
                 )
 
             vehicle_match = re.search(
-                r'Jucatorul\s+(\w+)\s+\((\d+)\)\s+a\s+(cumparat|vandut)\s+(.+?)(?:\d{4}-\d{2}-\d{2}|Jucatorul)',
-                text, re.IGNORECASE
+                r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
+                text,
+                re.IGNORECASE
             )
             if vehicle_match:
                 action_type = "vehicle_bought" if "cumparat" in vehicle_match.group(3).lower() else "vehicle_sold"
@@ -610,8 +623,9 @@ class Pro4KingsScraper:
                 )
 
             property_match = re.search(
-                r'Jucatorul\s+(\w+)\s+\((\d+)\)\s+a\s+(cumparat|vandut)\s+(casa|afacere|proprietate)\s+(.+?)(?:\d{4}-\d{2}-\d{2}|Jucatorul)',
-                text, re.IGNORECASE
+                r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(casa|afacere|proprietate)\s*(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
+                text,
+                re.IGNORECASE
             )
             if property_match:
                 action_type = "property_bought" if "cumparat" in property_match.group(3).lower() else "property_sold"
@@ -619,14 +633,15 @@ class Pro4KingsScraper:
                     player_id=property_match.group(2),
                     player_name=property_match.group(1).strip(),
                     action_type=action_type,
-                    action_detail=f"{property_match.group(3)} {property_match.group(4)} {property_match.group(5)}",
+                    action_detail=f"{property_match.group(3)} {property_match.group(4)}",
                     timestamp=timestamp,
                     raw_text=text
                 )
 
             generic_match = re.search(
-                r'Jucatorul\s+(\w+)\s+\((\d+)\)\s+(.+?)(?:\d{4}-\d{2}-\d{2}|Jucatorul)',
-                text, re.IGNORECASE
+                r'Jucatorul\s+([^(]+)\((\d+)\)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
+                text,
+                re.IGNORECASE
             )
             if generic_match:
                 return PlayerAction(
@@ -651,19 +666,23 @@ class Pro4KingsScraper:
             return None
 
         except Exception as e:
-            logger.error(f"Error parsing action ({e}): Text: {text[:100] if text else 'N/A'}")
+            logger.error(f"Error parsing action: {e}, Text: {text[:100] if text else 'NA'}")
             return None
 
     def is_vip_action(self, action: PlayerAction, vip_ids: Set[str]) -> bool:
         """Check if action involves any VIP player"""
         if not action:
             return False
+
         if action.player_id and action.player_id in vip_ids:
             return True
+
         if action.target_player_id and action.target_player_id in vip_ids:
             return True
+
         if action.admin_id and action.admin_id in vip_ids:
             return True
+
         return False
 
     async def get_vip_actions(self, vip_ids: Set[str], limit: int = 200) -> List[PlayerAction]:
@@ -677,12 +696,16 @@ class Pro4KingsScraper:
         """Check if action involves any currently online player"""
         if not action:
             return False
+
         if action.player_id and action.player_id in online_ids:
             return True
+
         if action.target_player_id and action.target_player_id in online_ids:
             return True
+
         if action.admin_id and action.admin_id in online_ids:
             return True
+
         return False
 
     async def get_online_player_actions(self, online_ids: Set[str], limit: int = 200) -> List[PlayerAction]:
