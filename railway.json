@@ -5,7 +5,6 @@
     "buildCommand": "pip install -r requirements.txt"
   },
   "deploy": {
-    "preDeployCommand": ["python3 import_csv_profiles.py"],
     "startCommand": "python bot.py",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
