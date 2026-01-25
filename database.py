@@ -148,7 +148,7 @@ class Database:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         raw_text TEXT,
                         
-                        FOREIGN KEY (player_id) REFERENCES players(player_id)
+                        FOREIGN KEY (player_id) REFERENCES player_profiles(player_id)
                     )
                 ''')
                 
@@ -162,7 +162,7 @@ class Database:
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         session_duration_seconds INTEGER,
                         
-                        FOREIGN KEY (player_id) REFERENCES players(player_id)
+                        FOREIGN KEY (player_id) REFERENCES player_profiles(player_id)
                     )
                 ''')
                 
@@ -177,7 +177,7 @@ class Database:
                         rank_lost TIMESTAMP,
                         is_current BOOLEAN DEFAULT TRUE,
                         
-                        FOREIGN KEY (player_id) REFERENCES players(player_id)
+                        FOREIGN KEY (player_id) REFERENCES player_profiles(player_id)
                     )
                 ''')
                 
@@ -191,7 +191,7 @@ class Database:
                         new_value TEXT,
                         changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         
-                        FOREIGN KEY (player_id) REFERENCES players(player_id)
+                        FOREIGN KEY (player_id) REFERENCES player_profiles(player_id)
                     )
                 ''')
                 
@@ -221,7 +221,7 @@ class Database:
                         player_name TEXT NOT NULL,
                         detected_online_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         
-                        FOREIGN KEY (player_id) REFERENCES players(player_id)
+                        FOREIGN KEY (player_id) REFERENCES player_profiles(player_id)
                     )
                 ''')
                 
@@ -252,10 +252,10 @@ class Database:
                     'CREATE INDEX IF NOT EXISTS idx_actions_type ON actions(action_type)',
                     'CREATE INDEX IF NOT EXISTS idx_login_events_player ON login_events(player_id)',
                     'CREATE INDEX IF NOT EXISTS idx_login_events_timestamp ON login_events(timestamp)',
-                    'CREATE INDEX IF NOT EXISTS idx_players_online ON players(is_online)',
+                    'CREATE INDEX IF NOT EXISTS idx_players_online ON player_profiles(is_online)',
                     'CREATE INDEX IF NOT EXISTS idx_players_faction ON player_profiles(faction)',
                     'CREATE INDEX IF NOT EXISTS idx_players_level ON player_profiles(level)',
-                    'CREATE INDEX IF NOT EXISTS idx_players_priority ON players(priority_update)',
+                    'CREATE INDEX IF NOT EXISTS idx_players_priority ON player_profiles(priority_update)',
                     'CREATE INDEX IF NOT EXISTS idx_rank_history_player ON rank_history(player_id)',
                     'CREATE INDEX IF NOT EXISTS idx_rank_history_current ON rank_history(is_current)',
                     'CREATE INDEX IF NOT EXISTS idx_profile_history_player ON profile_history(player_id)',
@@ -541,9 +541,9 @@ class Database:
                         detected_online_at = CURRENT_TIMESTAMP
                 ''', [(p['player_id'], p['player_name']) for p in online_players])
                 
-                # 🔥 Batch update players table
+                # 🔥 Batch update player_profiles table
                 cursor.executemany('''
-                    UPDATE players
+                    UPDATE player_profiles
                     SET is_online = TRUE, last_seen = CURRENT_TIMESTAMP
                     WHERE player_id = ?
                 ''', [(p['player_id'],) for p in online_players])
@@ -571,7 +571,7 @@ class Database:
                         f"Existing: {existing[0]}, New: {player_id}. Updating existing record."
                     )
                     cursor.execute('''
-                        UPDATE players 
+                        UPDATE player_profiles 
                         SET player_id = ?, priority_update = TRUE
                         WHERE username = ?
                     ''', (player_id, player_name))
@@ -603,7 +603,7 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT player_id FROM players
+                SELECT player_id FROM player_profiles
                 WHERE priority_update = TRUE
                 ORDER BY last_profile_update ASC
                 LIMIT ?
@@ -619,7 +619,7 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                UPDATE players
+                UPDATE player_profiles
                 SET priority_update = FALSE
                 WHERE player_id = ?
             ''', (player_id,))
@@ -934,7 +934,7 @@ class Database:
                         faction as faction_name,
                         COUNT(*) as member_count,
                         SUM(CASE WHEN is_online = 1 THEN 1 ELSE 0 END) as online_count
-                    FROM players
+                    FROM player_profiles
                     WHERE faction IS NOT NULL AND faction != ''
                     GROUP BY faction
                     ORDER BY member_count DESC
@@ -958,7 +958,7 @@ class Database:
                         p.faction,
                         ph1.changed_at as timestamp
                     FROM profile_history ph1
-                    JOIN players p ON p.player_id = ph1.player_id
+                    JOIN player_profiles p ON p.player_id = ph1.player_id
                     WHERE ph1.field_name = 'faction_rank' 
                     AND ph1.changed_at >= ?
                     ORDER BY ph1.changed_at DESC
