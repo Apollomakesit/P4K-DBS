@@ -721,6 +721,37 @@ async def update_pending_profiles_error(error):
     TASK_HEALTH['update_pending_profiles']['error_count'] += 1
 
 @tasks.loop(hours=1)
+async def update_missing_faction_ranks():
+    """Target players with factions but no faction_rank for updates"""
+    while True:
+        try:
+            # Query players with faction but no faction_rank
+            def _get_missing_ranks():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        SELECT player_id 
+                        FROM player_profiles 
+                        WHERE faction IS NOT NULL 
+                        AND faction != '' 
+                        AND (faction_rank IS NULL OR faction_rank = '')
+                        LIMIT 50
+                    ''')
+                    return [row[0] for row in cursor.fetchall()]
+            
+            player_ids = await asyncio.to_thread(_get_missing_ranks)
+            
+            if player_ids:
+                logger.info(f"🎯 Targeting {len(player_ids)} players with missing faction ranks")
+                for player_id in player_ids:
+                    await db.mark_player_for_update(player_id, f"Player_{player_id}")
+            
+            # Run every 10 minutes
+            await asyncio.sleep(600)
+            
+        except Exception as e:
+            logger.error(f"Error in update_missing_faction_ranks: {e}")
+            await asyncio.sleep(60)
 async def check_banned_players():
     if SHUTDOWN_REQUESTED:
         return
