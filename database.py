@@ -92,8 +92,8 @@ class Database:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # 🔥 UPDATED: Player profiles table - REMOVED 5 columns (level, respect_points, phone_number, vehicles_count, properties_count)
-                # Now has 14 columns instead of 19
+                # 🔥 FIXED: Removed trailing comma and UNIQUE constraint on username
+                # Multiple players can have the same name with different IDs
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS player_profiles (
                         player_id TEXT PRIMARY KEY,
@@ -113,8 +113,7 @@ class Database:
                         -- Metadata
                         total_actions INTEGER DEFAULT 0,
                         last_profile_update TIMESTAMP,
-                        priority_update BOOLEAN DEFAULT FALSE,
-                        
+                        priority_update BOOLEAN DEFAULT FALSE
                     )
                 ''')
                 
@@ -540,26 +539,26 @@ class Database:
         await asyncio.to_thread(self._update_online_players_sync, online_players)
     
     def _mark_player_for_update_sync(self, player_id: str, player_name: str) -> None:
-    """SYNC: Mark player for priority update"""
-    try:
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Simply insert or update based on player_id only (not username)
-            cursor.execute('''
-                INSERT INTO player_profiles (player_id, username, priority_update)
-                VALUES (?, ?, TRUE)
-                ON CONFLICT(player_id) DO UPDATE SET
-                    username = excluded.username,
-                    priority_update = TRUE
-            ''', (player_id, player_name))
-            
-            conn.commit()
-            
-    except sqlite3.IntegrityError as e:
-        logger.error(f"UNIQUE constraint error for player_id={player_id}, username={player_name}. Skipping.")
-    except Exception as e:
-        logger.error(f"Error in mark_player_for_update: {e}", exc_info=True)
+        """🔥 FIXED: Mark player for priority update - allows duplicate usernames"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Simply insert or update based on player_id only (not username)
+                cursor.execute('''
+                    INSERT INTO player_profiles (player_id, username, priority_update)
+                    VALUES (?, ?, TRUE)
+                    ON CONFLICT(player_id) DO UPDATE SET
+                        username = excluded.username,
+                        priority_update = TRUE
+                ''', (player_id, player_name))
+                
+                conn.commit()
+                
+        except sqlite3.IntegrityError as e:
+            logger.error(f"UNIQUE constraint error for player_id={player_id}, username={player_name}. Skipping.")
+        except Exception as e:
+            logger.error(f"Error in mark_player_for_update: {e}", exc_info=True)
     
     async def mark_player_for_update(self, player_id: str, player_name: str) -> None:
         """ASYNC: Mark player for priority update"""
