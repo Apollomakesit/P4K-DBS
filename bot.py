@@ -35,10 +35,11 @@ TASK_HEALTH = {
     'scrape_online_players': {'last_run': None, 'is_running': False, 'error_count': 0},
     'update_pending_profiles': {'last_run': None, 'is_running': False, 'error_count': 0},
     'check_banned_players': {'last_run': None, 'is_running': False, 'error_count': 0},
-    'update_missing_faction_ranks': {'last_run': None, 'is_running': False, 'error_count': 0},  # Add this
+    'update_missing_faction_ranks': {'last_run': None, 'is_running': False, 'error_count': 0},
+    'scrape_vip_actions': {'last_run': None, 'is_running': False, 'error_count': 0},  # ADD THIS
+    'scrape_online_priority_actions': {'last_run': None, 'is_running': False, 'error_count': 0},  # ADD THIS
     'task_watchdog': {'last_run': None, 'is_running': False, 'error_count': 0},
 }
-
 
 SHUTDOWN_REQUESTED = False
 
