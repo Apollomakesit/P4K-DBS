@@ -154,11 +154,19 @@ logger.info("✅ Slash commands module loaded")
 @bot.event
 async def on_ready():
     global COMMANDS_SYNCED
-    
     logger.info(f'✅ {bot.user} is now running!')
     
     if not verify_environment():
         logger.error("❌ Environment verification failed! Bot may not work correctly.")
+    
+    # 🔥 AUTO-IMPORT CSV DATA ON FIRST RUN (for Railway persistence)
+    try:
+        from import_on_startup import auto_import_on_startup
+        await auto_import_on_startup()
+    except Exception as e:
+        logger.error(f"Error during CSV auto-import: {e}", exc_info=True)
+        logger.warning("⚠️ Continuing without CSV import - database may be empty")
+    
     await log_database_startup_info()
     await inspect_database_tables()
     
@@ -169,11 +177,12 @@ async def on_ready():
                 synced = await bot.tree.sync()
                 logger.info(f"✅ Synced {len(synced)} slash commands:")
                 for cmd in synced:
-                    logger.info(f"  - /{cmd.name}: {cmd.description}")
+                    logger.info(f"   - /{cmd.name}: {cmd.description}")
                 COMMANDS_SYNCED = True
             except Exception as e:
                 logger.error(f"❌ Failed to sync commands: {e}", exc_info=True)
     
+    # Start background tasks
     if not scrape_actions.is_running():
         scrape_actions.start()
         logger.info('✓ Started: scrape_actions (30s interval)')
@@ -189,7 +198,7 @@ async def on_ready():
     if not check_banned_players.is_running():
         check_banned_players.start()
         logger.info('✓ Started: check_banned_players (1h interval)')
-
+    
     if not update_missing_faction_ranks.is_running():
         update_missing_faction_ranks.start()
         logger.info('✓ Started: update_missing_faction_ranks (60min interval)')
@@ -214,6 +223,7 @@ async def on_ready():
     if Config.TRACK_ONLINE_PLAYERS_PRIORITY:
         print(f'🟢 Online Priority: Enabled ({Config.ONLINE_PLAYERS_SCAN_INTERVAL}s scan interval)')
     print(f'{"="*60}\n')
+
 
 async def log_database_startup_info():
     """Log database information on startup"""
