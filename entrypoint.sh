@@ -178,6 +178,8 @@ else
     exit 1
 fi
 
+python diagnose_profile.py
+
 echo "================================================"
 echo "🤖 Starting Discord bot..."
 echo "================================================"
