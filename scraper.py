@@ -242,7 +242,7 @@ class Pro4KingsScraper:
         return None
 
 async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
-    """🔥 ENHANCED: Get player profile with improved username and age_ic extraction"""
+    """🔥 ENHANCED: Get player profile - specifically for Pro4Kings HTML structure"""
     profile_url = f"{self.base_url}/profile/{player_id}"
     html = await self.fetch_page(profile_url)
     if not html:
@@ -251,132 +251,100 @@ async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
     soup = BeautifulSoup(html, 'lxml')
     
     try:
-        # 🔥 ENHANCED USERNAME EXTRACTION
+        # 🔥 SPECIFIC USERNAME EXTRACTION for Pro4Kings structure
         username = None
         
-        # Try h4.card-title first (most common location)
+        # Method 1: Find h4.card-title and extract from font tag
         card_title = soup.select_one('h4.card-title')
         if card_title:
-            # Extract text, skipping icon elements
-            text = card_title.get_text(strip=True)
-            # Remove online/offline indicator if present
-            text = text.replace('', '').strip()
-            if text and text != player_id and len(text) > 1:
-                username = text
-                logger.debug(f"Found username '{username}' in h4.card-title for player {player_id}")
+            # Look specifically for font tag inside card-title
+            font_tag = card_title.find('font')
+            if font_tag:
+                username = font_tag.get_text(strip=True)
+                logger.debug(f"Found username '{username}' in h4.card-title > font for player {player_id}")
+            else:
+                # Fallback: get all text but remove icon
+                for icon in card_title.find_all(['i', 'svg']):
+                    icon.decompose()
+                username = card_title.get_text(strip=True)
+                logger.debug(f"Found username '{username}' in h4.card-title (no font) for player {player_id}")
         
-        # Try other selectors if h4.card-title didn't work
-        if not username:
+        # Method 2: Try .card-title without h4 restriction
+        if not username or username == player_id:
+            card_title_any = soup.select_one('.card-title')
+            if card_title_any:
+                font_tag = card_title_any.find('font')
+                if font_tag:
+                    username = font_tag.get_text(strip=True)
+                    logger.debug(f"Found username '{username}' in .card-title > font for player {player_id}")
+        
+        # Method 3: Look for any font tag with style="vertical-align: middle;"
+        if not username or username == player_id:
+            font_with_style = soup.find('font', style=re.compile(r'vertical-align'))
+            if font_with_style:
+                username = font_with_style.get_text(strip=True)
+                logger.debug(f"Found username '{username}' in font[style] for player {player_id}")
+        
+        # Method 4: Generic selectors
+        if not username or username == player_id:
             username_selectors = [
                 '.profile-username',
                 '.player-name',
-                '.player-name-display',
                 '.username',
-                '.name-field',
-                'h1', 'h2', 'h3', 'h4'  # 🔥 Added h4
+                'h1', 'h2', 'h3'
             ]
             for selector in username_selectors:
                 username_elem = soup.select_one(selector)
                 if username_elem:
                     text = username_elem.get_text(strip=True)
-                    # Skip if it's just the ID or a title/label
-                    if text and text != player_id and not text.lower().startswith('profil') and len(text) > 1:
+                    if text and text != player_id and len(text) > 1:
                         username = text
                         logger.debug(f"Found username '{username}' with selector '{selector}' for player {player_id}")
                         break
         
-        # 🆕 FALLBACK: Try finding text in <font> tags (common wrapper)
-        if not username:
-            font_elements = soup.select('font')
-            for elem in font_elements:
-                text = elem.get_text(strip=True)
-                # Look for name-like text (alphabetic, not too short, not a common label)
-                if text and len(text) >= 3 and any(c.isalpha() for c in text):
-                    if not any(keyword in text.lower() for keyword in ['id', 'profil', 'player', 'ultima', 'status', 'facțiune', 'rank']):
-                        parent = elem.find_parent(['h1', 'h2', 'h3', 'h4', 'h5'])
-                        if parent:
-                            username = text
-                            logger.debug(f"Found username '{username}' in font tag for player {player_id}")
-                            break
-        
-        # 🆕 FALLBACK: Try finding any bold/strong text that's not a label
-        if not username:
-            bold_elements = soup.select('strong, b')
-            for elem in bold_elements:
-                text = elem.get_text(strip=True)
-                # Look for name-like text (alphabetic, not too short, not a common label)
-                if text and len(text) >= 3 and any(c.isalpha() for c in text):
-                    if not any(keyword in text.lower() for keyword in ['id', 'profil', 'player', 'nume', 'name', 'ultima', 'status']):
-                        username = text
-                        logger.debug(f"Found username '{username}' from bold text for player {player_id}")
-                        break
-        
-        # Final fallback
-        if not username:
+        # Final validation and fallback
+        if not username or username == player_id or len(username) < 2:
             username = f"Player_{player_id}"
             logger.warning(f"⚠️ Could not extract username for player {player_id}, using placeholder")
         
-        is_online = bool(soup.select_one('.text-success, .fa-circle.text-success, i.text-success'))
+        # Online status
+        is_online = bool(soup.find('i', class_=re.compile(r'text-success|fa-circle.*text-success')))
+        if not is_online:
+            is_online = bool(soup.find(text=re.compile(r'Online', re.IGNORECASE)))
+        
         last_seen = datetime.now()
         
-        last_conn_text = soup.find(text=re.compile(r'Ultima.*conectare|Last.*connection', re.IGNORECASE))
-        if last_conn_text:
-            parent = last_conn_text.find_parent(['div', 'span', 'td', 'dd'])
-            if parent:
-                time_match = re.search(r'(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})', parent.get_text())
+        # Parse last connection time
+        last_conn_cell = soup.find('th', text=re.compile(r'Ultima.*conectare|Last.*connection', re.IGNORECASE))
+        if last_conn_cell:
+            td = last_conn_cell.find_next_sibling('td')
+            if td:
+                time_text = td.get_text(strip=True)
+                # Format: 25/01/2026 16:06:15
+                time_match = re.search(r'(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2})', time_text)
                 if time_match:
                     try:
                         last_seen = datetime.strptime(time_match.group(1), '%d/%m/%Y %H:%M:%S')
-                    except:
-                        pass
+                        logger.debug(f"Parsed last_seen: {last_seen} for player {player_id}")
+                    except Exception as e:
+                        logger.debug(f"Could not parse datetime: {e}")
         
         profile_data = {}
         
-        # 🔥 ENHANCED TABLE PARSING - handles <th scope="row">
-        info_rows = soup.select('tr')
-        for row in info_rows:
-            # Try th + td structure (most common)
-            th = row.select_one('th[scope="row"]')
-            td = row.select_one('td')
-            
-            if th and td:
-                key = th.get_text(strip=True).lower()
+        # 🔥 PARSE TABLE DATA - specific to Pro4Kings structure
+        # Find all <th scope="row"> elements
+        table_headers = soup.find_all('th', attrs={'scope': 'row'})
+        for th in table_headers:
+            key = th.get_text(strip=True).lower()
+            # Get the corresponding td (next sibling)
+            td = th.find_next_sibling('td')
+            if td:
                 val = td.get_text(strip=True)
-                if key and val and val not in ['—', '-', '']:
+                if val and val not in ['—', '-', '']:
                     profile_data[key] = val
-            else:
-                # Fallback to old method
-                cells = row.select('td, th')
-                if len(cells) == 2:
-                    key = cells[0].get_text(strip=True).lower()
-                    val = cells[1].get_text(strip=True)
-                    if key and val:
-                        profile_data[key] = val
+                    logger.debug(f"Profile data: {key} = {val}")
         
-        # Also try dt/dd pairs
-        dt_elements = soup.select('dt')
-        for dt in dt_elements:
-            dd = dt.find_next_sibling('dd')
-            if dd:
-                key = dt.get_text(strip=True).lower()
-                val = dd.get_text(strip=True)
-                profile_data[key] = val
-        
-        # Also try label + value patterns
-        labels = soup.select('.label, .key, .field-label, strong')
-        for label in labels:
-            keytext = label.get_text(strip=True).lower().rstrip(':')
-            value_elem = label.find_next_sibling(['span', 'div', 'p'])
-            if not value_elem:
-                parent = label.find_parent(['div', 'li', 'tr'])
-                if parent:
-                    value_elem = parent.find(['span', 'div', 'p'], recursive=False)
-            if value_elem:
-                val = value_elem.get_text(strip=True)
-                if val and val != '—':
-                    profile_data[keytext] = val
-        
-        # Extract fields that still exist in database
+        # Extract specific fields
         faction = None
         faction_rank = None
         job = None
@@ -384,79 +352,78 @@ async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
         played_hours = None
         age_ic = None
         
+        # Faction extraction
         for key, val in profile_data.items():
-            if any(x in key for x in ['fac', 'facțiune', 'factiune', 'faction']):
-                if val and val not in ['Civil', 'Fără', 'None', '-', 'Fara']:
+            if any(x in key for x in ['facțiune', 'factiune', 'fac', 'faction']):
+                if val and val not in ['Civil', 'Fără', 'Fara', 'None', '-']:
                     faction = val
+                    logger.debug(f"Found faction: {faction}")
                     break
         
+        # Faction rank extraction
         for key, val in profile_data.items():
-            if any(x in key for x in ['rank facțiune', 'rank factiune', 'rank facțiune', 'faction rank', 'rang', 'rank']):
+            if any(x in key for x in ['rank facțiune', 'rank factiune', 'rank', 'rang']):
                 if val and val not in ['-', 'None', 'Fără', 'Fara']:
                     faction_rank = val
+                    logger.debug(f"Found faction_rank: {faction_rank}")
                     break
         
-        if faction and not faction_rank:
-            for key, val in profile_data.items():
-                if 'rank' in key and val and val != '-':
-                    faction_rank = val
-                    break
-        
+        # Job extraction
         for key, val in profile_data.items():
-            if any(x in key for x in ['job', 'meserie', 'ocupație', 'ocupatie', 'occupation']):
+            if 'job' in key or 'meserie' in key:
                 job = val
+                logger.debug(f"Found job: {job}")
                 break
         
+        # Warnings extraction
         for key, val in profile_data.items():
-            if any(x in key for x in ['warn', 'avertis']):
+            if 'warn' in key or 'avertis' in key:
                 warn_match = re.search(r'(\d+)', val)
                 if warn_match:
                     warnings = int(warn_match.group(1))
+                    logger.debug(f"Found warnings: {warnings}")
                     break
         
+        # Played hours extraction
         for key, val in profile_data.items():
-            if any(x in key for x in ['ore jucate', 'ore', 'hours', 'timp']):
+            if any(x in key for x in ['ore jucate', 'ore', 'hours']):
                 hours_match = re.search(r'([\d.]+)', val)
                 if hours_match:
                     played_hours = float(hours_match.group(1))
+                    logger.debug(f"Found played_hours: {played_hours}")
                     break
         
-        # 🔥 ENHANCED AGE_IC EXTRACTION - looks for "vârsta ic", "varsta ic", etc.
+        # 🔥 AGE IC EXTRACTION - handle Romanian characters properly
+        # Look for keys containing age-related terms
         for key, val in profile_data.items():
-            # Check for various age-related keywords
-            if any(x in key for x in ['varsta', 'vârsta', 'vârstă', 'age']):
+            # Normalize key for comparison (remove diacritics)
+            key_normalized = key.replace('ă', 'a').replace('â', 'a').replace('î', 'i')
+            if any(x in key_normalized for x in ['varsta', 'vârsta', 'age', 'varsta ic', 'age ic']):
                 age_match = re.search(r'(\d+)', val)
                 if age_match:
                     potential_age = int(age_match.group(1))
-                    # Sanity check
                     if 18 <= potential_age <= 99:
                         age_ic = potential_age
-                        logger.debug(f"Found age_ic {age_ic} from key '{key}' for player {player_id}")
+                        logger.debug(f"Found age_ic {age_ic} from key '{key}' = '{val}' for player {player_id}")
                         break
         
-        # 🆕 FALLBACK: Search entire page text for age patterns if not found in profile_data
+        # Direct search for "Vârsta IC" table row
         if not age_ic:
-            page_text = soup.get_text()
-            # Look for patterns like "Varsta: 25" or "Age IC: 30" or "25 ani"
-            age_patterns = [
-                r'Vârstă[:\s]+(?:IC[:\s]+)?(\d+)',
-                r'Varsta[:\s]+(?:IC[:\s]+)?(\d+)',
-                r'Age[:\s]+\(?IC\)?[:\s]+(\d+)',
-                r'Age[:\s]+(\d+)',
-                r'(\d+)\s+ani',
-            ]
-            for pattern in age_patterns:
-                match = re.search(pattern, page_text, re.IGNORECASE)
-                if match:
-                    potential_age = int(match.group(1))
-                    # Sanity check - age should be reasonable (18-99 for IC age)
-                    if 18 <= potential_age <= 99:
-                        age_ic = potential_age
-                        logger.debug(f"Found age_ic {age_ic} using fallback pattern '{pattern}' for player {player_id}")
-                        break
+            age_th = soup.find('th', text=re.compile(r'V[aâă]rst[aă].*IC', re.IGNORECASE))
+            if age_th:
+                age_td = age_th.find_next_sibling('td')
+                if age_td:
+                    age_text = age_td.get_text(strip=True)
+                    age_match = re.search(r'(\d+)', age_text)
+                    if age_match:
+                        potential_age = int(age_match.group(1))
+                        if 18 <= potential_age <= 99:
+                            age_ic = potential_age
+                            logger.debug(f"Found age_ic {age_ic} from direct th search for player {player_id}")
         
         if not age_ic:
             logger.warning(f"⚠️ Could not extract age_ic for player {player_id}")
+            logger.debug(f"Profile data keys: {list(profile_data.keys())}")
         
         return PlayerProfile(
             player_id=player_id,
@@ -473,9 +440,9 @@ async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
         )
     
     except Exception as e:
-        logger.error(f"Error parsing profile for player {player_id}: {e}")
+        logger.error(f"Error parsing profile for player {player_id}: {e}", exc_info=True)
         return None
-
+    
     async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
         """Batch fetch profiles with configurable wave size"""
         results = []
