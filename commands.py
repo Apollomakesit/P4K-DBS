@@ -241,7 +241,7 @@ class FactionPaginationView(discord.ui.View):
             else:
                 display_name = username
             
-            value = f"{status} {rank}""
+            value = f"{status} {rank}"
             embed.add_field(
                 name=f"{display_name} ({player_id})",
                 value=value,
