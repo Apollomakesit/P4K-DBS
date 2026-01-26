@@ -1,0 +1,50 @@
+name: Diagnose Scraper
+
+# Run manually or on push to diagnose branch
+on:
+  workflow_dispatch:
+    inputs:
+      player_id:
+        description: 'Player ID to diagnose'
+        required: false
+        default: '155733'
+  push:
+    branches:
+      - diagnose
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install aiohttp beautifulsoup4 lxml
+
+    - name: Run diagnostic script
+      run: |
+        python diagnose_profile.py
+      env:
+        PLAYER_ID: ${{ github.event.inputs.player_id || '155733' }}
+
+    - name: Upload HTML sample
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: profile-html-sample
+        path: profile_sample.html
+        retention-days: 7
+
+    - name: Display summary
+      if: always()
+      run: |
+        echo "## Diagnostic Results" >> $GITHUB_STEP_SUMMARY
+        echo "Check the uploaded artifacts for profile_sample.html" >> $GITHUB_STEP_SUMMARY
