@@ -947,15 +947,26 @@ class Database:
         return await asyncio.to_thread(_get_history_sync)
     
     async def get_faction_members(self, faction_name: str) -> List[Dict]:
-        """🔥 UPDATED: Get faction members (removed ORDER BY level)"""
+        """🔥 UPDATED: Get faction members with accurate online status (last 5 minutes only)"""
         def _get_members_sync():
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                
+                # 🔥 FIXED: Join with online_players and filter by time (last 5 minutes)
+                cutoff = datetime.now() - timedelta(minutes=5)
+                
                 cursor.execute('''
-                    SELECT * FROM player_profiles 
-                    WHERE faction = ? 
-                    ORDER BY is_online DESC, last_seen DESC
-                ''', (faction_name,))
+                    SELECT 
+                        p.*,
+                        CASE 
+                            WHEN o.detected_online_at >= ? THEN 1 
+                            ELSE 0 
+                        END as is_online
+                    FROM player_profiles p
+                    LEFT JOIN online_players o ON p.player_id = o.player_id
+                    WHERE p.faction = ?
+                    ORDER BY is_online DESC, p.last_seen DESC
+                ''', (cutoff, faction_name))
                 return [dict(row) for row in cursor.fetchall()]
         
         return await asyncio.to_thread(_get_members_sync)

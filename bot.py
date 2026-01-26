@@ -701,6 +701,7 @@ async def update_pending_profiles():
         results = await scraper_instance.batch_get_profiles(pending_ids)
         
         for profile in results:
+            # 🔥 FIXED: Removed 5 non-existent fields
             profile_dict = {
                 'player_id': profile.player_id,
                 'player_name': profile.username,
@@ -709,14 +710,9 @@ async def update_pending_profiles():
                 'faction': profile.faction,
                 'faction_rank': profile.faction_rank,
                 'job': profile.job,
-                'level': profile.level,
-                'respect_points': profile.respect_points,
                 'warns': profile.warnings,
                 'played_hours': profile.played_hours,
-                'age_ic': profile.age_ic,
-                'phone_number': profile.phone_number,
-                'vehicles_count': profile.vehicles_count,
-                'properties_count': profile.properties_count
+                'age_ic': profile.age_ic
             }
             await db.save_player_profile(profile_dict)
             await db.reset_player_priority(profile.player_id)
