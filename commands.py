@@ -230,7 +230,6 @@ class FactionPaginationView(discord.ui.View):
         for member in page_members:
             status = "🟢" if member.get('is_online') else "⚪"
             rank = member.get('faction_rank', 'Membru')
-            level = member.get('level', '?')
             
             # Format username - check if it's a placeholder like "Player_12345"
             username = member['username']
@@ -242,7 +241,7 @@ class FactionPaginationView(discord.ui.View):
             else:
                 display_name = username
             
-            value = f"{status} Level {level} • {rank}"
+            value = f"{status} {rank}""
             embed.add_field(
                 name=f"{display_name} ({player_id})",
                 value=value,
@@ -323,12 +322,9 @@ async def resolve_player_info(db, scraper, identifier):
                     'faction': profile_obj.faction,
                     'faction_rank': profile_obj.faction_rank,
                     'job': profile_obj.job,
-                    'level': profile_obj.level,
-                    'respect_points': profile_obj.respect_points,
                     'warnings': profile_obj.warnings,
                     'played_hours': profile_obj.played_hours,
                     'age_ic': profile_obj.age_ic,
-                    'phone_number': profile_obj.phone_number
                 }
                 await db.save_player_profile(profile)
         return profile
@@ -622,57 +618,6 @@ def setup_commands(bot, db, scraper_getter):
     # ========================================================================
     # PLAYER COMMANDS
     # ========================================================================
-
-    @bot.tree.command(name="player", description="Get complete player profile")
-    @app_commands.describe(identifier="Player ID or name")
-    @app_commands.checks.cooldown(1, 5)
-    async def player_command(interaction: discord.Interaction, identifier: str):
-        """Get complete player profile"""
-        await interaction.response.defer()
-
-        try:
-            scraper = await scraper_getter()
-            player = await resolve_player_info(db, scraper, identifier)
-
-            if not player:
-                await interaction.followup.send(f"🔍 **Not Found**\n\nNo player found with identifier: `{identifier}`")
-                return
-
-            # Build embed
-            status_icon = "🟢" if player.get('is_online') else "⚪"
-            embed = discord.Embed(
-                title=f"{status_icon} {player['username']}",
-                description=f"Player ID: `{player['player_id']}`",
-                color=discord.Color.green() if player.get('is_online') else discord.Color.greyple(),
-                timestamp=datetime.now()
-            )
-
-            # Status and Faction
-            status_value = "Online" if player.get('is_online') else f"Last seen: {format_last_seen(player.get('last_seen'))}"
-            embed.add_field(name="Status", value=status_value, inline=True)
-
-            faction = player.get('faction') or "No faction"
-            faction_rank = player.get('faction_rank') or ""
-            faction_display = f"{faction}\n{faction_rank}" if faction_rank else faction
-            embed.add_field(name="Faction", value=faction_display, inline=True)
-
-            # Stats
-            embed.add_field(name="Level", value=str(player.get('level', 'N/A')), inline=True)
-            embed.add_field(name="Respect", value=str(player.get('respect_points', 'N/A')), inline=True)
-            embed.add_field(name="Warnings", value=f"{player.get('warnings', 0)}/3", inline=True)
-            embed.add_field(name="Played Hours", value=str(player.get('played_hours', 'N/A')), inline=True)
-
-            # Additional Info
-            if player.get('job'):
-                embed.add_field(name="Job", value=player['job'], inline=True)
-            if player.get('phone_number'):
-                embed.add_field(name="Phone", value=player['phone_number'], inline=True)
-
-            await interaction.followup.send(embed=embed)
-
-        except Exception as e:
-            logger.error(f"Error in player command: {e}", exc_info=True)
-            await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
     @bot.tree.command(name="search", description="Search players by name")
     @app_commands.describe(query="Search term (minimum 2 characters)")
