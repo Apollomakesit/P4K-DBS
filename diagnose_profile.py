@@ -2,15 +2,24 @@
 """
 Diagnostic script to inspect HTML structure from Pro4Kings profile page
 Run this to debug scraper issues with username and age_ic extraction
+
+Usage:
+    python diagnose_profile.py              # Uses default player ID 155733
+    python diagnose_profile.py 123456       # Diagnose specific player
 """
 import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
 import re
+import sys
 
 async def diagnose_profile(player_id: str = "155733"):
     """Fetch and analyze profile HTML structure"""
     url = f"https://panel.pro4kings.ro/profile/{player_id}"
+
+    print(f"🔍 Diagnosing Player ID: {player_id}")
+    print(f"🌐 URL: {url}")
+    print("=" * 60)
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -23,21 +32,21 @@ async def diagnose_profile(player_id: str = "155733"):
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as client:
         try:
             async with client.get(url, ssl=False) as response:
-                print(f"Status: {response.status}")
+                print(f"📡 Status: {response.status}")
 
                 if response.status != 200:
-                    print(f"ERROR: Got status {response.status}")
+                    print(f"❌ ERROR: Got status {response.status}")
                     return
 
                 html = await response.text()
-                print(f"HTML length: {len(html)} characters\n")
+                print(f"📄 HTML length: {len(html)} characters\n")
 
                 soup = BeautifulSoup(html, "lxml")
 
                 # Analyze title structure
-                print("=" * 50)
+                print("=" * 60)
                 print("TITLE ANALYSIS (USERNAME):")
-                print("=" * 50)
+                print("=" * 60)
 
                 card_titles = soup.select("h4.card-title")
                 print(f"Found {len(card_titles)} h4.card-title elements")
@@ -59,9 +68,9 @@ async def diagnose_profile(player_id: str = "155733"):
                     print(f"  Text: {ct.get_text(strip=True)}")
 
                 # Analyze table structure for Age IC
-                print("\n" + "=" * 50)
+                print("\n" + "=" * 60)
                 print("TABLE ANALYSIS (ALL PROFILE DATA):")
-                print("=" * 50)
+                print("=" * 60)
 
                 table_headers = soup.find_all("th", attrs={"scope": "row"})
                 print(f"Found {len(table_headers)} th[scope=row] elements")
@@ -73,9 +82,9 @@ async def diagnose_profile(player_id: str = "155733"):
                     print(f"  [{i}] {key}: {val}")
 
                 # Look for age specifically
-                print("\n" + "=" * 50)
+                print("\n" + "=" * 60)
                 print("SEARCHING FOR AGE/VÂRSTA:")
-                print("=" * 50)
+                print("=" * 60)
 
                 age_patterns = [
                     re.compile(r"v[aă]rst[aă].*ic", re.IGNORECASE),
@@ -95,24 +104,31 @@ async def diagnose_profile(player_id: str = "155733"):
                                 print(f"    Value: {td.get_text(strip=True)}")
 
                 # Save sample HTML for inspection
-                print("\n" + "=" * 50)
+                print("\n" + "=" * 60)
                 print("SAVING SAMPLE HTML")
-                print("=" * 50)
+                print("=" * 60)
 
-                with open("profile_sample.html", "w", encoding="utf-8") as f:
+                filename = f"profile_sample_{player_id}.html"
+                with open(filename, "w", encoding="utf-8") as f:
                     f.write(html)
-                print("✅ Saved to: profile_sample.html")
+                print(f"✅ Saved to: {filename}")
 
                 # Show first 500 chars of body
                 body = soup.find("body")
                 if body:
                     body_text = body.get_text()[:500]
-                    print(f"\nBody preview (first 500 chars):\n{body_text}")
+                    print(f"\n📝 Body preview (first 500 chars):\n{body_text}")
+
+                print("\n" + "=" * 60)
+                print("✅ DIAGNOSTIC COMPLETE")
+                print("=" * 60)
 
         except Exception as e:
-            print(f"ERROR: {e}")
+            print(f"❌ ERROR: {e}")
             import traceback
             traceback.print_exc()
 
 if __name__ == "__main__":
-    asyncio.run(diagnose_profile())
+    # Get player ID from command line or use default
+    player_id = sys.argv[1] if len(sys.argv) > 1 else "155733"
+    asyncio.run(diagnose_profile(player_id))
