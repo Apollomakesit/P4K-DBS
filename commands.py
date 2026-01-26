@@ -1112,6 +1112,169 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in online command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
+    # ========================================================================
+    # PLAYER PROFILE & STATS COMMANDS
+    # ========================================================================
+    
+    @bot.tree.command(name="player", description="Get complete player profile and stats")
+    @app_commands.describe(identifier="Player ID or name")
+    @app_commands.checks.cooldown(1, 5)
+    async def player_command(interaction: discord.Interaction, identifier: str):
+        """Get complete player profile with stats"""
+        await interaction.response.defer()
+        
+        try:
+            # Get player from database first
+            player = await db.get_player_stats(identifier)
+            
+            if not player:
+                # Try fetching from website
+                scraper = await scraper_getter()
+                
+                # Try as ID
+                if identifier.isdigit():
+                    profile_obj = await scraper.get_player_profile(identifier)
+                    if profile_obj:
+                        player = {
+                            'player_id': profile_obj.player_id,
+                            'username': profile_obj.username,
+                            'is_online': profile_obj.is_online,
+                            'last_seen': profile_obj.last_seen,
+                            'faction': profile_obj.faction,
+                            'faction_rank': profile_obj.faction_rank,
+                            'job': profile_obj.job,
+                            'warnings': profile_obj.warnings,
+                            'played_hours': profile_obj.played_hours,
+                            'age_ic': profile_obj.age_ic
+                        }
+                        await db.save_player_profile(player)
+            
+            if not player:
+                await interaction.followup.send(
+                    f"🔍 **Not Found**\n\nNo player found with identifier: `{identifier}`"
+                )
+                return
+            
+            # Build profile embed
+            status_icon = "🟢" if player.get('is_online') else "⚪"
+            
+            embed = discord.Embed(
+                title=f"{status_icon} {player['username']}",
+                description=f"Player ID: `{player['player_id']}`",
+                color=discord.Color.green() if player.get('is_online') else discord.Color.greyple(),
+                timestamp=datetime.now()
+            )
+            
+            # Status
+            status_value = "Online" if player.get('is_online') else f"Last seen: {format_last_seen(player.get('last_seen'))}"
+            embed.add_field(name="Status", value=status_value, inline=True)
+            
+            # Faction
+            faction = player.get('faction') or "No faction"
+            faction_rank = player.get('faction_rank') or ""
+            faction_display = f"{faction} - {faction_rank}" if faction_rank else faction
+            embed.add_field(name="Faction", value=faction_display, inline=True)
+            
+            # Job
+            job = player.get('job') or "Unemployed"
+            embed.add_field(name="Job", value=job, inline=True)
+            
+            # Warnings
+            warnings = player.get('warnings', 0) or 0
+            warn_color = "🟢" if warnings == 0 else "🟡" if warnings < 3 else "🔴"
+            embed.add_field(name="Warnings", value=f"{warn_color} {warnings}/3", inline=True)
+            
+            # Played hours
+            hours = player.get('played_hours', 0) or 0
+            embed.add_field(name="Played Hours", value=f"{hours:.1f}h", inline=True)
+            
+            # Age IC
+            age_ic = player.get('age_ic') or "Unknown"
+            embed.add_field(name="Age (IC)", value=str(age_ic), inline=True)
+            
+            # Get action count
+            total_actions = player.get('total_actions', 0) or 0
+            embed.add_field(name="📊 Total Actions", value=f"{total_actions:,}", inline=True)
+            
+            # Get recent actions count (last 7 days)
+            recent_actions = await db.get_player_actions(player['player_id'], days=7)
+            embed.add_field(name="📝 Actions (7d)", value=f"{len(recent_actions):,}", inline=True)
+            
+            # First detected
+            first_detected = player.get('first_detected')
+            if first_detected:
+                if isinstance(first_detected, str):
+                    try:
+                        first_detected = datetime.fromisoformat(first_detected)
+                    except:
+                        first_detected = None
+                if first_detected:
+                    embed.add_field(
+                        name="First Detected",
+                        value=first_detected.strftime('%Y-%m-%d'),
+                        inline=True
+                    )
+            
+            embed.set_footer(text=f"Use /actions {player['player_id']} to see recent activity")
+            
+            await interaction.followup.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error in player command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+    
+    @bot.tree.command(name="actions", description="View player's recent actions")
+    @app_commands.describe(
+        identifier="Player ID or name",
+        days="Number of days to look back (default: 7)"
+    )
+    @app_commands.checks.cooldown(1, 10)
+    async def actions_command(interaction: discord.Interaction, identifier: str, days: int = 7):
+        """View player's recent actions with pagination and deduplication"""
+        await interaction.response.defer()
+        
+        try:
+            # Get player info first
+            player = await db.get_player_stats(identifier)
+            
+            if not player:
+                await interaction.followup.send(
+                    f"🔍 **Not Found**\n\nNo player found with identifier: `{identifier}`"
+                )
+                return
+            
+            # Get actions
+            actions = await db.get_player_actions(player['player_id'], days=days)
+            
+            if not actions:
+                embed = discord.Embed(
+                    title=f"📝 Actions for {player['username']}",
+                    description=f"No actions found in the last {days} days",
+                    color=discord.Color.orange(),
+                    timestamp=datetime.now()
+                )
+                embed.set_footer(text=f"Player ID: {player['player_id']}")
+                await interaction.followup.send(embed=embed)
+                return
+            
+            # Create pagination view
+            view = ActionsPaginationView(
+                actions=actions,
+                player_info=player,
+                days=days,
+                author_id=interaction.user.id,
+                original_count=len(actions)
+            )
+            
+            # Send initial page
+            embed = view.build_embed()
+            message = await interaction.followup.send(embed=embed, view=view)
+            view.message = message
+            
+        except Exception as e:
+            logger.error(f"Error in actions command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
 
     # ========================================================================
     # ADMIN COMMANDS
