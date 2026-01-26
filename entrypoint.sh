@@ -178,7 +178,10 @@ else
     exit 1
 fi
 
-python diagnose_profile.py
+echo "================================================"
+echo "🔍 Running profile diagnostics..."
+python /app/diagnose_profile.py 155733 || true
+echo "================================================"
 
 echo "================================================"
 echo "🤖 Starting Discord bot..."
