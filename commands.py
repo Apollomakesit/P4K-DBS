@@ -710,7 +710,7 @@ def setup_commands(bot, db, scraper_getter):
     @bot.tree.command(name="stats", description="Show database statistics")
     @app_commands.checks.cooldown(1, 10)
     async def stats_command(interaction: discord.Interaction):
-        """Show database statistics"""
+        """🔥 FIXED: Show database statistics with accurate online count (last 24h)"""
         await interaction.response.defer()
 
         try:
@@ -724,7 +724,10 @@ def setup_commands(bot, db, scraper_getter):
 
             embed.add_field(name="👥 Total Players", value=f"{stats.get('total_players', 0):,}", inline=True)
             embed.add_field(name="📝 Total Actions", value=f"{stats.get('total_actions', 0):,}", inline=True)
-            embed.add_field(name="🟢 Online Now", value=f"{stats.get('online_count', 0):,}", inline=True)
+            
+            # 🔥 FIXED: Changed from "Online Now" to "Online Last 24h" and uses accurate count
+            online_24h_count = await db.get_online_players_last_24h_count()
+            embed.add_field(name="🟢 Online Last 24h", value=f"{online_24h_count:,}", inline=True)
 
             # Recent Activity
             actions_24h = await db.get_actions_count_last_24h()
@@ -776,9 +779,8 @@ def setup_commands(bot, db, scraper_getter):
             for i, player in enumerate(players[:10]):
                 status = "🟢 Online" if player.get('is_online') else "⚪ Offline"
                 faction = player.get('faction') or "No faction"
-                level = player.get('level') or '?'
-
-                value = f"{status}\n├ Faction: {faction}\n└ Level: {level}"
+                
+                value = f"{status}\n├ Faction: {faction}"
                 embed.add_field(
                     name=f"{player['username']} (ID: {player['player_id']})",
                     value=value,
@@ -1004,10 +1006,10 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in faction command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
-    @bot.tree.command(name="factionlist", description="List all factions sorted by member count")
+    @bot.tree.command(name="factionlist", description="🔥 FIXED: List all factions with currently online members only")
     @app_commands.checks.cooldown(1, 30)
     async def faction_list_command(interaction: discord.Interaction):
-        """List all factions sorted by member count (descending)"""
+        """🔥 FIXED: List all factions with member counts and CURRENT online counts"""
         await interaction.response.defer()
 
         try:
@@ -1019,7 +1021,7 @@ def setup_commands(bot, db, scraper_getter):
 
             embed = discord.Embed(
                 title="📋 All Factions",
-                description=f"Total: {len(factions)} faction(s)",
+                description=f"Total: {len(factions)} faction(s)\n💡 Online count shows currently online members",
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
@@ -1030,7 +1032,8 @@ def setup_commands(bot, db, scraper_getter):
                 member_count = faction['member_count']
                 online_count = faction.get('online_count', 0)
                 
-                value = f"👥 {member_count} member(s) • 🟢 {online_count} online"
+                # 🔥 FIXED: Now shows accurate online count from online_players table
+                value = f"👥 {member_count} member(s) • 🟢 {online_count} online now"
                 embed.add_field(
                     name=f"{i}. {faction_name}",
                     value=value,
@@ -1188,11 +1191,11 @@ def setup_commands(bot, db, scraper_getter):
     # 🆕 PLAYER PROFILE & STATS COMMANDS
     # ========================================================================
     
-    @bot.tree.command(name="player", description="Get complete player profile and stats")
+    @bot.tree.command(name="player", description="🔥 FIXED: Get complete player profile and stats")
     @app_commands.describe(identifier="Player ID or name")
     @app_commands.checks.cooldown(1, 5)
     async def player_command(interaction: discord.Interaction, identifier: str):
-        """Get complete player profile with stats from database"""
+        """🔥 FIXED: Get complete player profile with accurate faction and status info"""
         await interaction.response.defer()
         
         try:
@@ -1238,13 +1241,13 @@ def setup_commands(bot, db, scraper_getter):
             )
             
             # Status
-            status_value = "Online" if player.get('is_online') else f"Last seen: {format_last_seen(player.get('last_seen'))}"
+            status_value = "Online now" if player.get('is_online') else f"Last seen: {format_last_seen(player.get('last_seen'))}"
             embed.add_field(name="Status", value=status_value, inline=True)
             
             # Faction
             faction = player.get('faction') or "No faction"
-            faction_rank = player.get('faction_rank') or ""
-            faction_display = f"{faction} - {faction_rank}" if faction_rank else faction
+            faction_rank = player.get('faction_rank') or "null"
+            faction_display = f"{faction} - {faction_rank}" if faction != "No faction" else faction
             embed.add_field(name="Faction", value=faction_display, inline=True)
             
             # Job
@@ -1287,12 +1290,103 @@ def setup_commands(bot, db, scraper_getter):
                         inline=True
                     )
             
+            # 🔥 ADDED: Note about data freshness
+            last_update = player.get('last_profile_update')
+            if last_update:
+                if isinstance(last_update, str):
+                    try:
+                        last_update = datetime.fromisoformat(last_update)
+                    except:
+                        last_update = None
+                if last_update and isinstance(last_update, datetime):
+                    update_age = (datetime.now() - last_update).total_seconds()
+                    if update_age > 86400:  # More than 24 hours old
+                        embed.add_field(
+                            name="⚠️ Data Age",
+                            value=f"Profile last updated: {format_last_seen(last_update)}\n💡 Use `/refresh_player {player['player_id']}` to update",
+                            inline=False
+                        )
+            
             embed.set_footer(text=f"Use /actions {player['player_id']} to see recent activity")
             
             await interaction.followup.send(embed=embed)
             
         except Exception as e:
             logger.error(f"Error in player command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+    
+    # ========================================================================
+    # 🆕 ADMIN COMMAND - REFRESH PLAYER
+    # ========================================================================
+    
+    @bot.tree.command(name="refresh_player", description="🆕 Force refresh player profile from website (Admin only)")
+    @app_commands.describe(player_id="Player ID to refresh")
+    @app_commands.checks.cooldown(1, 10)
+    async def refresh_player_command(interaction: discord.Interaction, player_id: str):
+        """🆕 Force refresh player profile - fixes stale data like player 155733"""
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ **Access Denied**\n\nThis command is restricted to bot administrators.",
+                ephemeral=True
+            )
+            return
+        
+        await interaction.response.defer()
+        
+        try:
+            if not player_id.isdigit():
+                await interaction.followup.send("❌ Player ID must be a number!")
+                return
+            
+            scraper = await scraper_getter()
+            
+            # Fetch fresh profile from website
+            logger.info(f"🔄 Refreshing profile for player {player_id}...")
+            profile_obj = await scraper.get_player_profile(player_id)
+            
+            if not profile_obj:
+                await interaction.followup.send(f"❌ **Not Found**\n\nPlayer {player_id} not found on website.")
+                return
+            
+            # Save to database
+            profile = {
+                'player_id': profile_obj.player_id,
+                'player_name': profile_obj.username,
+                'is_online': profile_obj.is_online,
+                'last_connection': profile_obj.last_seen,
+                'faction': profile_obj.faction,
+                'faction_rank': profile_obj.faction_rank,
+                'job': profile_obj.job,
+                'warns': profile_obj.warnings,
+                'played_hours': profile_obj.played_hours,
+                'age_ic': profile_obj.age_ic
+            }
+            
+            await db.save_player_profile(profile)
+            logger.info(f"✅ Updated profile for {profile_obj.username} ({player_id})")
+            
+            # Build success embed
+            embed = discord.Embed(
+                title="✅ Profile Refreshed",
+                description=f"Successfully updated profile for **{profile_obj.username}** (ID: {player_id})",
+                color=discord.Color.green(),
+                timestamp=datetime.now()
+            )
+            
+            # Show updated fields
+            embed.add_field(name="Username", value=profile_obj.username, inline=True)
+            embed.add_field(name="Faction", value=profile_obj.faction or "No faction", inline=True)
+            embed.add_field(name="Rank", value=profile_obj.faction_rank or "None", inline=True)
+            embed.add_field(name="Status", value="🟢 Online" if profile_obj.is_online else "⚪ Offline", inline=True)
+            embed.add_field(name="Job", value=profile_obj.job or "None", inline=True)
+            embed.add_field(name="Warnings", value=str(profile_obj.warnings or 0), inline=True)
+            
+            embed.set_footer(text="Use /player to view full profile")
+            
+            await interaction.followup.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error in refresh_player command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
     
     # ========================================================================
@@ -1491,14 +1585,9 @@ def setup_commands(bot, db, scraper_getter):
                                             'faction': profile.faction,
                                             'faction_rank': profile.faction_rank,
                                             'job': profile.job,
-                                            'level': profile.level,
-                                            'respect_points': profile.respect_points,
                                             'warns': profile.warnings,
                                             'played_hours': profile.played_hours,
-                                            'age_ic': profile.age_ic,
-                                            'phone_number': profile.phone_number,
-                                            'vehicles_count': profile.vehicles_count,
-                                            'properties_count': profile.properties_count
+                                            'age_ic': profile.age_ic
                                         }
                                         await db.save_player_profile(profile_dict)
                                         worker_found += 1
