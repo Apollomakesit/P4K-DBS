@@ -1,6 +1,6 @@
 # Discord Commands Reference
 
-Complete list of all available Discord slash commands.
+Complete list of all available Discord slash commands for P4K-DBS.
 
 ---
 
@@ -13,12 +13,11 @@ Complete list of all available Discord slash commands.
 **Permissions**: Everyone
 
 **Shows**:
-- Background task status
-- Last run times
-- Error counts
+- Background task status and last run times
+- Task error counts
 - Memory usage
-- Database status
-- Scraper status
+- Database connection status
+- Player and action counts
 
 **Example**:
 ```
@@ -38,28 +37,35 @@ Background Tasks:
    Last run: 45s ago
    Errors: 0
 
+🟢 scrape_vip_actions
+   Last run: 8s ago
+   Errors: 0
+
 Memory Usage:
 Current: 127.3 MB
 
 Database:
 ✅ Connected
-Actions: 45,231
-Players: 12,847
+Actions: 57,588
+Players: 186,906
 ```
 
 ---
 
 ### /config
 
-**Description**: Display current configuration  
+**Description**: Display current bot configuration  
 **Cooldown**: 30 seconds  
 **Permissions**: Everyone
 
 **Shows**:
 - Database paths
-- Task intervals
+- Task intervals (actions, online, profiles, bans, watchdog)
 - Data retention policies
-- Scraper settings
+- Scraper settings (workers, rate limits)
+- VIP player tracking status
+- Online player priority status
+- Batch sizes
 - Logging configuration
 
 **Example**:
@@ -78,12 +84,26 @@ Players: 12,847
 **Shows**:
 - Total players tracked
 - Total actions recorded
-- Online player count
-- Recent activity
+- Currently online player count
+- Actions in last 24 hours
+- Logins today
+- Active bans count
 
 **Example**:
 ```
 /stats
+```
+
+**Output**:
+```
+📊 Database Statistics
+
+👥 Total Players: 186,906
+📝 Total Actions: 57,588
+🟢 Online Now: 299
+📈 Actions (24h): 2,341
+🔑 Logins Today: 847
+🚫 Active Bans: 12
 ```
 
 ---
@@ -92,7 +112,7 @@ Players: 12,847
 
 ### /player
 
-**Description**: Get complete player profile  
+**Description**: Get complete player profile and stats  
 **Cooldown**: 5 seconds  
 **Permissions**: Everyone
 
@@ -100,18 +120,40 @@ Players: 12,847
 - `identifier` (required): Player ID or name
 
 **Shows**:
-- Username and ID
-- Online status
+- Username and player ID
+- Online status and last seen
 - Faction and rank
-- Level and respect
-- Warnings
+- Job
+- Warnings (X/3)
 - Played hours
-- Last seen
+- Age (IC)
+- Total actions logged
+- Recent actions (last 7 days)
+- First detected date
 
 **Examples**:
 ```
 /player identifier:12345
 /player identifier:John_Doe
+/player identifier:John  (searches by name)
+```
+
+**Output**:
+```
+🟢 John_Doe
+Player ID: 12345
+
+Status: Online
+Faction: LSPD - Officer II
+Job: Taxi Driver
+Warnings: 🟢 0/3
+Played Hours: 247.5h
+Age (IC): 25
+
+📊 Total Actions: 1,234
+📝 Actions (7d): 89
+
+First Detected: 2025-11-15
 ```
 
 ---
@@ -126,39 +168,41 @@ Players: 12,847
 - `query` (required): Search term (minimum 2 characters)
 
 **Features**:
-- Fuzzy matching
-- Paginated results (10 per page)
-- Shows online status
-- Sorted by online first
+- Partial name matching
+- Case-insensitive
+- Shows up to 10 results
+- Displays online status, faction, and level
 
 **Examples**:
 ```
 /search query:John
 /search query:Smith
+/search query:Do
 ```
 
 **Output**:
 ```
-Players matching 'John' (Page 1/3)
+🔍 Search Results for 'John'
+Found 23 player(s)
 
 John_Doe (ID: 12345)
-├ Status: 🟢 Online
+🟢 Online
 ├ Faction: LSPD
-└ Level: 45
+└ Level: 15
 
-John_Smith (ID: 67890)
-├ Status: ⚪ Offline
+Johnny_B (ID: 67890)
+⚪ Offline
 ├ Faction: No faction
-└ Level: 12
+└ Level: 3
 
-[⏮️] [◀️] [▶️] [⏭️] [🗑️]
+Showing 10 of 23 results
 ```
 
 ---
 
 ### /actions
 
-**Description**: Get player's recent actions  
+**Description**: View player's recent actions with pagination  
 **Cooldown**: 30 seconds  
 **Permissions**: Everyone
 
@@ -166,29 +210,34 @@ John_Smith (ID: 67890)
 - `identifier` (required): Player ID or name
 - `days` (optional): Days to look back (default: 7, max: 30)
 
-**Shows**:
-- All actions performed
-- Timestamps
-- Action details
-- Paginated (10 per page)
+**Features**:
+- Automatic deduplication of duplicate actions
+- Interactive pagination (10 actions per page)
+- Shows action type, timestamp, and details
+- Displays duplicate count when applicable
 
 **Examples**:
 ```
 /actions identifier:12345
 /actions identifier:John_Doe days:14
+/actions identifier:John days:30
 ```
 
 **Output**:
 ```
-Actions for John_Doe (7 days) (Page 1/8)
+📝 Actions for John_Doe
+Last 7 days • 45 unique action(s) (67 total including duplicates)
 
 warning_received - 2026-01-18 14:30
 ├ Player: John_Doe (12345)
 └ Detail: Avertisment 1/3 de la Admin_Name
 
-item_given - 2026-01-18 12:15
+item_given - 2026-01-18 12:15 ×3
 ├ Player: John_Doe (12345)
 └ Detail: Dat Materials către Jane_Smith
+
+Page 1/5 • Use buttons to navigate
+[◀️ Previous] [Next ▶️]
 ```
 
 ---
@@ -206,7 +255,8 @@ item_given - 2026-01-18 12:15
 **Shows**:
 - Login/logout times
 - Session durations
-- Total playtime
+- Total playtime in period
+- Up to 10 most recent sessions
 
 **Examples**:
 ```
@@ -227,9 +277,10 @@ item_given - 2026-01-18 12:15
 
 **Shows**:
 - All rank changes
-- Promotion/demotion dates
-- Time in each rank
-- Current rank
+- Faction names
+- Date obtained
+- Duration in each rank
+- Current rank highlighted
 
 **Examples**:
 ```
@@ -243,31 +294,67 @@ item_given - 2026-01-18 12:15
 
 ### /faction
 
-**Description**: List all members of a faction  
+**Description**: List all members of a faction with pagination  
 **Cooldown**: 30 seconds  
 **Permissions**: Everyone
 
 **Parameters**:
 - `faction_name` (required): Name of faction
 
-**Shows**:
-- All members
-- Ranks
-- Levels
-- Online status
-- Paginated
+**Features**:
+- Shows all faction members
+- Displays ranks
+- Shows online status
+- Paginated (20 members per page)
+- Interactive navigation buttons
 
 **Examples**:
 ```
 /faction faction_name:LSPD
 /faction faction_name:Ballas
+/faction faction_name:FBI
+```
+
+**Output**:
+```
+👥 LSPD
+Showing 1-20 of 47 member(s)
+
+John_Doe (12345)
+🟢 Officer II
+
+Jane_Smith (67890)
+⚪ Detective
+
+Page 1/3 • Use buttons to navigate
+[◀️ Previous] [Next ▶️]
+```
+
+---
+
+### /factionlist
+
+**Description**: List all factions sorted by member count  
+**Cooldown**: 30 seconds  
+**Permissions**: Everyone
+
+**Shows**:
+- All factions
+- Member counts
+- Online member counts
+- Sorted by size (descending)
+- Up to 25 factions shown
+
+**Example**:
+```
+/factionlist
 ```
 
 ---
 
 ### /promotions
 
-**Description**: Recent faction promotions  
+**Description**: View recent faction promotions  
 **Cooldown**: 30 seconds  
 **Permissions**: Everyone
 
@@ -277,8 +364,9 @@ item_given - 2026-01-18 12:15
 **Shows**:
 - Recent rank changes
 - Player names
-- Old and new ranks
-- Timestamps
+- Old rank → New rank
+- Faction name
+- Dates
 
 **Examples**:
 ```
@@ -303,9 +391,9 @@ item_given - 2026-01-18 12:15
 - Banned players
 - Ban reasons
 - Admin who banned
-- Duration
-- Expiry date
-- Paginated
+- Ban duration
+- Active/expired status
+- Up to 15 bans shown
 
 **Examples**:
 ```
@@ -319,15 +407,14 @@ item_given - 2026-01-18 12:15
 
 ### /online
 
-**Description**: Current online players  
+**Description**: View currently online players  
 **Cooldown**: 10 seconds  
 **Permissions**: Everyone
 
 **Shows**:
 - All online players
-- Player IDs
-- Last seen times
-- Paginated
+- Player names and IDs
+- Up to 20 players shown
 
 **Example**:
 ```
@@ -336,9 +423,192 @@ item_given - 2026-01-18 12:15
 
 ---
 
+## Scan Commands
+
+### /scan start
+
+**Description**: Start database scan with concurrent workers  
+**Cooldown**: None  
+**Permissions**: Everyone
+
+**Parameters**:
+- `start_id` (optional): Starting player ID (default: 1)
+- `end_id` (optional): Ending player ID (default: 100000)
+
+**Features**:
+- Concurrent worker system for maximum speed
+- Configurable batch sizes and workers
+- Real-time progress tracking
+- Auto-saves found players to database
+- Pause/resume capability
+
+**Examples**:
+```
+/scan start start_id:1 end_id:100000
+/scan start start_id:50000 end_id:60000
+```
+
+**Output**:
+```
+🚀 Concurrent Database Scan Started
+Scanning player IDs 1 to 100,000
+
+Using 5 concurrent workers for maximum speed!
+
+Use /scan status to monitor progress with real-time auto-refresh!
+
+⚙️ Batch Size: 50 IDs
+👷 Max Workers: 10
+🔀 Concurrent Batches: 5
+⏱️ Wave Delay: 0.05s
+⚡ Expected Speed: ~150.0 IDs/s
+📊 Total IDs: 100,000
+🕐 Est. Time: 11m
+```
+
+---
+
+### /scan status
+
+**Description**: View real-time scan progress (auto-refreshing every 3 seconds)  
+**Cooldown**: None  
+**Permissions**: Everyone
+
+**Shows**:
+- Current scan progress percentage
+- IDs scanned and remaining
+- Current highest ID processed
+- Scan speed (IDs/second)
+- Estimated time remaining
+- Found players count
+- Error count
+- Worker configuration
+- Progress bar visualization
+
+**Example**:
+```
+/scan status
+```
+
+**Output**:
+```
+🔄 Scan Status: Running
+Progress: 45.2% (45,234/100,000 IDs)
+Range: 1 → 100,000
+
+📍 Current Highest ID: 45,234
+⚡ Speed: 127.45 IDs/s
+⏱️ ETA: 7m 8s
+✅ Found: 8,932
+❌ Errors: 42
+⏲️ Elapsed: 5m 55s
+
+🔧 Workers: 10 workers × 5 concurrent batches
+
+Progress Bar:
+█████████░░░░░░░░░░░ 45.2%
+
+🔄 Auto-refreshing every 3 seconds | Use /scan pause or /scan cancel
+```
+
+---
+
+### /scan pause
+
+**Description**: Pause ongoing scan  
+**Cooldown**: None  
+**Permissions**: Everyone
+
+**Example**:
+```
+/scan pause
+```
+
+---
+
+### /scan resume
+
+**Description**: Resume paused scan  
+**Cooldown**: None  
+**Permissions**: Everyone
+
+**Example**:
+```
+/scan resume
+```
+
+---
+
+### /scan cancel
+
+**Description**: Cancel ongoing scan  
+**Cooldown**: None  
+**Permissions**: Everyone
+
+**Shows**:
+- Final statistics (found, errors, total scanned)
+- Average scan speed
+
+**Example**:
+```
+/scan cancel
+```
+
+---
+
+### /scanconfig
+
+**Description**: View or modify scan configuration  
+**Cooldown**: None  
+**Permissions**: Everyone
+
+**Parameters** (all optional):
+- `batch_size`: Number of IDs per batch (10-100)
+- `workers`: Max concurrent HTTP requests (10-50)
+- `wave_delay`: Delay between batches in seconds (0.01-1.0)
+- `concurrent_batches`: Number of batches to process simultaneously (1-10)
+
+**Examples**:
+```
+# View current configuration
+/scanconfig
+
+# Ultra Fast preset (~150 IDs/s)
+/scanconfig batch_size:100 workers:30 wave_delay:0.05 concurrent_batches:8
+
+# Balanced preset (~40 IDs/s)
+/scanconfig batch_size:50 workers:15 wave_delay:0.1 concurrent_batches:3
+
+# Safe preset (~15 IDs/s)
+/scanconfig batch_size:30 workers:10 wave_delay:0.2 concurrent_batches:2
+```
+
+**Output**:
+```
+⚙️ Scan Configuration - Concurrent Worker System
+
+Current Configuration:
+
+📦 Batch Size: 50 IDs per batch
+👷 Max Workers: 15 HTTP requests
+🔀 Concurrent Batches: 3 workers
+⏱️ Wave Delay: 0.1s per worker
+⚡ Expected Speed: ~40.0 IDs/second
+
+📋 Recommended Presets:
+Ultra Fast: /scanconfig 100 30 0.05 8 (~150 IDs/s)
+Aggressive: /scanconfig 50 20 0.05 5 (~80 IDs/s)
+Balanced: /scanconfig 50 15 0.1 3 (~40 IDs/s)
+Safe: /scanconfig 30 10 0.2 2 (~15 IDs/s)
+
+💡 More concurrent batches = faster scanning | Adjust if you get rate limited
+```
+
+---
+
 ## Admin Commands
 
-⚠️ These commands require admin permissions (ADMIN_USER_IDS)
+⚠️ These commands require admin permissions (ADMIN_USER_IDS environment variable)
 
 ### /cleanup_old_data
 
@@ -350,51 +620,43 @@ item_given - 2026-01-18 12:15
 - `dry_run` (optional): Preview without deleting (default: true)
 - `confirm` (optional): Must be true to actually delete (default: false)
 
-**Safety**:
+**Safety Features**:
 - Requires both `dry_run=false` AND `confirm=true` to delete
-- Shows preview first
-- Uses configured retention policies
+- Shows preview of what will be deleted
+- Uses configured retention policies from environment
 
 **Examples**:
 ```
 # Preview what will be deleted
+/cleanup_old_data
 /cleanup_old_data dry_run:true
 
-# Actually delete (requires confirmation)
+# Actually delete old data
 /cleanup_old_data dry_run:false confirm:true
 ```
 
 **Output**:
 ```
-🗑️ CLEANUP EXECUTED - Data Cleanup
+🗑️ DRY RUN - Data Cleanup Preview
+No data was deleted. Set dry_run=false confirm=true to execute.
 
-Actions
-Deleted: 45,231
-Retention: 90 days
-
-Login Events
-Deleted: 128,492
-Retention: 30 days
-
-Profile History
-Deleted: 8,721
-Retention: 180 days
-
-✅ Cleanup completed successfully
+Old Actions (90+ days): 12,847 records
+Old Login Events (30+ days): 45,231 records
+Old Profile History (180+ days): 3,421 records
 ```
 
 ---
 
 ### /backup_database
 
-**Description**: Create database backup  
+**Description**: Create timestamped database backup  
 **Cooldown**: 300 seconds (5 minutes)  
 **Permissions**: Admin only
 
 **Creates**:
-- Timestamped backup file
+- Timestamped backup file (pro4kings_backup_YYYYMMDD_HHMMSS.db)
 - Stored in configured backup directory
-- Shows file size and location
+- Shows file size and total backup count
 
 **Example**:
 ```
@@ -405,38 +667,29 @@ Retention: 180 days
 ```
 ✅ Database Backup Created
 
-Backup File
-pro4kings_backup_20260118_170000.db
+Backup File:
+pro4kings_backup_20260126_052400.db
 
-Size
-127.45 MB
+Size: 198.45 MB
+Location: /data/backups
 
-Location
-/data/backups
-
-Total backups: 8
+Total backups: 12
 ```
-
-**Best practices**:
-- Backup before cleanup
-- Backup before major updates
-- Keep recent backups
-- Test restore process
 
 ---
 
-## Debug Commands
+## Prefix Commands
 
 ### !p4k sync
 
-**Description**: Force sync slash commands (emergency)  
+**Description**: Force sync slash commands (emergency use only)  
 **Type**: Prefix command (not slash)  
 **Permissions**: Everyone
 
 **When to use**:
-- Slash commands not showing
+- Slash commands not appearing
 - After bot restart
-- After adding new commands
+- After code updates
 
 **Example**:
 ```
@@ -446,45 +699,57 @@ Total backups: 8
 **Output**:
 ```
 🔄 Sincronizare forțată comenzi slash...
-✅ Succes! Sincronizate 25 comenzi
+✅ Succes! Sincronizate 18 comenzi:
+• /health: Check bot health status
+• /config: Display current configuration
+• /stats: Show database statistics
+...
 ```
 
 ---
 
 ## Command Cooldowns
 
-| Command | Cooldown | Admin Bypass |
-|---------|----------|-------------|
-| `/health` | 10s | Yes |
-| `/config` | 30s | Yes |
-| `/stats` | 10s | Yes |
-| `/player` | 5s | Yes |
-| `/search` | 10s | Yes |
-| `/actions` | 30s | Yes |
-| `/sessions` | 10s | Yes |
-| `/rank_history` | 10s | Yes |
-| `/faction` | 30s | Yes |
-| `/promotions` | 30s | Yes |
-| `/bans` | 30s | Yes |
-| `/online` | 10s | Yes |
-| `/cleanup_old_data` | 300s | No |
-| `/backup_database` | 300s | No |
-
-**Note**: Admin users bypass most cooldowns, except safety-critical commands.
+| Command | Cooldown | Notes |
+|---------|----------|-------|
+| `/health` | 10s | Status check |
+| `/config` | 30s | Configuration display |
+| `/stats` | 10s | Database stats |
+| `/player` | 5s | Profile lookup |
+| `/search` | 10s | Name search |
+| `/actions` | 30s | Action history |
+| `/sessions` | 10s | Session history |
+| `/rank_history` | 10s | Rank changes |
+| `/faction` | 30s | Member list |
+| `/factionlist` | 30s | All factions |
+| `/promotions` | 30s | Recent promotions |
+| `/bans` | 30s | Ban list |
+| `/online` | 10s | Online players |
+| `/scan start` | None | Start scan |
+| `/scan status` | None | Scan progress |
+| `/scan pause` | None | Pause scan |
+| `/scan resume` | None | Resume scan |
+| `/scan cancel` | None | Cancel scan |
+| `/scanconfig` | None | Scan settings |
+| `/cleanup_old_data` | 300s | Admin only |
+| `/backup_database` | 300s | Admin only |
 
 ---
 
-## Pagination Controls
+## Pagination Features
 
-Commands with multiple results use pagination:
+Commands with pagination support:
+- `/actions` - 10 actions per page
+- `/faction` - 20 members per page
 
-- ⏮️ **First Page**: Jump to first page
+**Controls**:
 - ◀️ **Previous**: Go to previous page
 - ▶️ **Next**: Go to next page
-- ⏭️ **Last Page**: Jump to last page
-- 🗑️ **Delete**: Delete the message
 
-**Auto-disable**: Buttons disable after 3 minutes of inactivity
+**Features**:
+- Buttons auto-disable after 3 minutes
+- Only command author can use buttons
+- Page indicator shows current position
 
 ---
 
@@ -494,7 +759,7 @@ Commands with multiple results use pagination:
 
 **Cooldown**:
 ```
-⏳ This command is on cooldown. Try again in 25 seconds.
+⏳ This command is on cooldown. Try again in 15 seconds.
 ```
 
 **Permission Denied**:
@@ -503,68 +768,87 @@ Commands with multiple results use pagination:
 This command is restricted to bot administrators.
 ```
 
-**Database Busy**:
-```
-⏳ Database Busy
-
-The database is currently processing other operations.
-Please try again in a few moments.
-```
-
 **Not Found**:
 ```
 🔍 Not Found
+No player found with identifier: John
+```
 
-The requested resource could not be found.
-Please check your input and try again.
+**No Data**:
+```
+📝 No Actions
+John_Doe has no recorded actions in the last 7 days.
+```
+
+**Scan Already Running**:
+```
+❌ A scan is already in progress! Use /scan status to check progress or /scan cancel to stop it.
 ```
 
 ---
 
-## Tips & Tricks
+## Tips & Best Practices
 
-### Efficient Searching
+### Efficient Player Lookup
 
 ```
-# Search by partial name
-/search query:John
-
-# Search by ID (exact)
+# Fastest - Search by exact ID
 /player identifier:12345
 
-# Get recent activity
-/actions identifier:12345 days:7
+# Search by partial name
+/search query:John
+# Then use exact ID from results
+/player identifier:12345
 ```
 
-### Monitoring
+### Monitoring Bot Health
 
 ```
 # Quick health check
 /health
 
-# Detailed stats
-/stats
-
-# Current configuration
+# View configuration
 /config
+
+# Check database size and activity
+/stats
 ```
 
-### Maintenance
+### Database Scanning
 
 ```
-# 1. Check database size
+# 1. Configure scan speed based on resources
+/scanconfig batch_size:50 workers:15 wave_delay:0.1 concurrent_batches:3
+
+# 2. Start scan
+/scan start start_id:1 end_id:100000
+
+# 3. Monitor progress (auto-refreshes)
+/scan status
+
+# 4. Pause if needed (e.g., high server load)
+/scan pause
+
+# 5. Resume when ready
+/scan resume
+```
+
+### Database Maintenance
+
+```
+# 1. Check current size
 /stats
 
-# 2. Create backup
+# 2. Create backup before cleanup
 /backup_database
 
-# 3. Preview cleanup
+# 3. Preview what will be deleted
 /cleanup_old_data dry_run:true
 
 # 4. Execute cleanup
 /cleanup_old_data dry_run:false confirm:true
 
-# 5. Verify
+# 5. Verify new size
 /stats
 ```
 
@@ -572,6 +856,11 @@ Please check your input and try again.
 
 ## Related Documentation
 
-- [DEPLOYMENT.md](DEPLOYMENT.md) - Railway deployment
-- [CONFIGURATION.md](CONFIGURATION.md) - Environment variables
-- [README.md](README.md) - General overview
+- [CONFIGURATION.md](CONFIGURATION.md) - Environment variables and settings
+- [DEPLOYMENT.md](DEPLOYMENT.md) - Railway deployment guide
+- [README.md](README.md) - Project overview
+
+---
+
+**Last Updated**: January 26, 2026  
+**Bot Version**: 2.0 (Concurrent Scan System)
