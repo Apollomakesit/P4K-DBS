@@ -1113,14 +1113,14 @@ def setup_commands(bot, db, scraper_getter):
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
     # ========================================================================
-    # PLAYER PROFILE & STATS COMMANDS
+    # 🆕 PLAYER PROFILE & STATS COMMANDS
     # ========================================================================
     
     @bot.tree.command(name="player", description="Get complete player profile and stats")
     @app_commands.describe(identifier="Player ID or name")
     @app_commands.checks.cooldown(1, 5)
     async def player_command(interaction: discord.Interaction, identifier: str):
-        """Get complete player profile with stats"""
+        """Get complete player profile with stats from database"""
         await interaction.response.defer()
         
         try:
@@ -1128,7 +1128,7 @@ def setup_commands(bot, db, scraper_getter):
             player = await db.get_player_stats(identifier)
             
             if not player:
-                # Try fetching from website
+                # Try fetching from website as fallback
                 scraper = await scraper_getter()
                 
                 # Try as ID
@@ -1208,7 +1208,7 @@ def setup_commands(bot, db, scraper_getter):
                         first_detected = datetime.fromisoformat(first_detected)
                     except:
                         first_detected = None
-                if first_detected:
+                if first_detected and isinstance(first_detected, datetime):
                     embed.add_field(
                         name="First Detected",
                         value=first_detected.strftime('%Y-%m-%d'),
@@ -1275,7 +1275,7 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in actions command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
-
+    
     # ========================================================================
     # ADMIN COMMANDS
     # ========================================================================
