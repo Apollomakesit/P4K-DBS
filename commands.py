@@ -1191,11 +1191,11 @@ def setup_commands(bot, db, scraper_getter):
     # 🆕 PLAYER PROFILE & STATS COMMANDS
     # ========================================================================
     
-    @bot.tree.command(name="player", description="🔥 FIXED: Get complete player profile and stats")
+    @bot.tree.command(name="player", description="🔥 FIXED: Get complete player profile and stats (faster loading)")
     @app_commands.describe(identifier="Player ID or name")
     @app_commands.checks.cooldown(1, 5)
     async def player_command(interaction: discord.Interaction, identifier: str):
-        """🔥 FIXED: Get complete player profile with accurate faction and status info"""
+        """🔥 FIXED: Get complete player profile - no 'null' rank, faster loading"""
         await interaction.response.defer()
         
         try:
@@ -1244,10 +1244,22 @@ def setup_commands(bot, db, scraper_getter):
             status_value = "Online now" if player.get('is_online') else f"Last seen: {format_last_seen(player.get('last_seen'))}"
             embed.add_field(name="Status", value=status_value, inline=True)
             
-            # Faction
-            faction = player.get('faction') or "No faction"
-            faction_rank = player.get('faction_rank') or "null"
-            faction_display = f"{faction} - {faction_rank}" if faction != "No faction" else faction
+            # 🔥 FIXED: Faction/Rank display - don't show "null"
+            faction = player.get('faction')
+            faction_rank = player.get('faction_rank')
+            
+            if faction and faction not in (None, '', 'Civil', 'Fără', 'None', '-', 'N/A'):
+                # Player has a faction
+                if faction_rank and faction_rank not in (None, '', 'null', 'NULL'):
+                    # Has both faction and rank
+                    faction_display = f"{faction}\n├ Rank: {faction_rank}"
+                else:
+                    # Has faction but no rank
+                    faction_display = f"{faction}\n├ Rank: Unknown"
+            else:
+                # No faction
+                faction_display = "No faction"
+            
             embed.add_field(name="Faction", value=faction_display, inline=True)
             
             # Job
@@ -1267,13 +1279,25 @@ def setup_commands(bot, db, scraper_getter):
             age_ic = player.get('age_ic') or "Unknown"
             embed.add_field(name="Age (IC)", value=str(age_ic), inline=True)
             
-            # Get action count
+            # Get action count from player_profiles table (already cached)
             total_actions = player.get('total_actions', 0) or 0
             embed.add_field(name="📊 Total Actions", value=f"{total_actions:,}", inline=True)
             
-            # Get recent actions count (last 7 days)
-            recent_actions = await db.get_player_actions(player['player_id'], days=7)
-            embed.add_field(name="📝 Actions (7d)", value=f"{len(recent_actions):,}", inline=True)
+            # 🔥 OPTIMIZED: Use a lighter query for recent actions count only
+            # Instead of fetching all actions, just count them
+            def _count_recent_actions():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cutoff = datetime.now() - timedelta(days=7)
+                    cursor.execute('''
+                        SELECT COUNT(*) FROM actions
+                        WHERE (player_id = ? OR target_player_id = ?)
+                        AND timestamp >= ?
+                    ''', (player['player_id'], player['player_id'], cutoff))
+                    return cursor.fetchone()[0]
+            
+            recent_count = await asyncio.to_thread(_count_recent_actions)
+            embed.add_field(name="📝 Actions (7d)", value=f"{recent_count:,}", inline=True)
             
             # First detected
             first_detected = player.get('first_detected')
@@ -1289,23 +1313,6 @@ def setup_commands(bot, db, scraper_getter):
                         value=first_detected.strftime('%Y-%m-%d'),
                         inline=True
                     )
-            
-            # 🔥 ADDED: Note about data freshness
-            last_update = player.get('last_profile_update')
-            if last_update:
-                if isinstance(last_update, str):
-                    try:
-                        last_update = datetime.fromisoformat(last_update)
-                    except:
-                        last_update = None
-                if last_update and isinstance(last_update, datetime):
-                    update_age = (datetime.now() - last_update).total_seconds()
-                    if update_age > 86400:  # More than 24 hours old
-                        embed.add_field(
-                            name="⚠️ Data Age",
-                            value=f"Profile last updated: {format_last_seen(last_update)}\n💡 Use `/refresh_player {player['player_id']}` to update",
-                            inline=False
-                        )
             
             embed.set_footer(text=f"Use /actions {player['player_id']} to see recent activity")
             
