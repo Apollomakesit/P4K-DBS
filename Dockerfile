@@ -47,11 +47,12 @@ RUN if [ -f player_profiles.csv ]; then \
         echo "⚠️  player_profiles.csv not found"; \
     fi
 
-# Make entrypoint and scripts executable
+# Make entrypoint and migration scripts executable
 RUN chmod +x entrypoint.sh
-COPY migrate_database.py /app/
-COPY check_backup.py /app/ 2>/dev/null || echo "check_backup.py not found, skipping"
-RUN chmod +x check_backup.py 2>/dev/null || true
+
+# Make Python scripts executable if they exist
+RUN if [ -f migrate_database.py ]; then chmod +x migrate_database.py; fi
+RUN if [ -f check_backup.py ]; then chmod +x check_backup.py; fi
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
