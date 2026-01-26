@@ -118,7 +118,7 @@ class ActionsPaginationView(discord.ui.View):
         """Parse item transfer actions to determine direction and involved parties.
         
         Args:
-            action: Action dict with player_id, target_player_id, action_detail
+            action: Action dict with player_id and action_detail
             viewing_player_id: The player whose actions we're viewing
             
         Returns:
@@ -126,31 +126,36 @@ class ActionsPaginationView(discord.ui.View):
         """
         detail = action.get('action_detail', '')
         player_id = str(action.get('player_id', ''))
-        target_player_id = str(action.get('target_player_id', ''))
-        player_name = action.get('player_name', '')
-        target_player_name = action.get('target_player_name', '')
         
         # Check if this is a "ia dat lui" (gave to) action
         # Pattern: "ia dat lui TargetName(TargetID) QuantityxItem"
         if 'ia dat lui' in detail:
-            # Extract items (everything after the player name/ID)
+            # Extract target player info from the detail text
             # Pattern: "ia dat lui Name(ID) items"
-            match = re.search(r'ia dat lui .+?\(\d+\)\s+(.+)', detail)
-            items = match.group(1) if match else detail.split('ia dat lui')[-1].strip()
+            match = re.search(r'ia dat lui (.+?)\((\d+)\)\s+(.+)', detail)
+            
+            if not match:
+                return None
+            
+            target_name = match.group(1).strip()
+            target_id = match.group(2)
+            items = match.group(3).strip()
             
             # Determine direction based on who we're viewing
             if player_id == viewing_player_id:
                 # Viewing player GAVE to target
                 return {
                     'direction': 'GAVE',
-                    'other_player': f"{target_player_name} ({target_player_id})" if target_player_name else f"ID {target_player_id}",
+                    'other_player': f"{target_name} ({target_id})",
                     'items': items
                 }
-            elif target_player_id == viewing_player_id:
-                # Viewing player RECEIVED from source
+            elif target_id == viewing_player_id:
+                # Viewing player RECEIVED from source player
+                # Get source player info from the action
+                source_name = action.get('player_name', 'Unknown')
                 return {
                     'direction': 'RECEIVED',
-                    'other_player': f"{player_name} ({player_id})" if player_name else f"ID {player_id}",
+                    'other_player': f"{source_name} ({player_id})",
                     'items': items
                 }
         
@@ -197,7 +202,7 @@ class ActionsPaginationView(discord.ui.View):
             if transfer_info:
                 # Format as GAVE or RECEIVED
                 direction_emoji = "📤" if transfer_info['direction'] == 'GAVE' else "📥"
-                value = f"{direction_emoji} {transfer_info['direction']} {transfer_info['direction'].lower()}"
+                value = f"{direction_emoji} **{transfer_info['direction']}**"
                 value += f"\n├ {'To' if transfer_info['direction'] == 'GAVE' else 'From'}: {transfer_info['other_player']}"
                 value += f"\n└ Items: {transfer_info['items']}"
             else:
