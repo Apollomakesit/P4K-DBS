@@ -242,7 +242,7 @@ class Pro4KingsScraper:
         return None
 
     async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
-        """🔥 FIXED: Get player profile WITHOUT deprecated fields (level, respect_points, phone_number, vehicles_count, properties_count)"""
+        """🔥 ENHANCED: Get player profile with improved username and age_ic extraction for VIP players"""
         profile_url = f"{self.base_url}/profile/{player_id}"
         html = await self.fetch_page(profile_url)
 
@@ -252,8 +252,45 @@ class Pro4KingsScraper:
         soup = BeautifulSoup(html, 'lxml')
 
         try:
-            username_elem = soup.select_one('.profile-username, .player-name, h1, h2, h3')
-            username = username_elem.get_text(strip=True) if username_elem else f"Player_{player_id}"
+            # 🔥 ENHANCED USERNAME EXTRACTION - Try multiple selectors including VIP-specific ones
+            username = None
+            username_selectors = [
+                '.profile-username',
+                '.player-name',
+                '.player-name-display',  # 🆕 Added for VIP players
+                '.username',              # 🆕 Added for VIP players
+                '.name-field',            # 🆕 Added for VIP players
+                'h1',
+                'h2',
+                'h3'
+            ]
+            
+            for selector in username_selectors:
+                username_elem = soup.select_one(selector)
+                if username_elem:
+                    text = username_elem.get_text(strip=True)
+                    # Skip if it's just the ID or a title/label
+                    if text and text != player_id and not text.lower().startswith('profil') and len(text) > 1:
+                        username = text
+                        logger.debug(f"Found username '{username}' with selector '{selector}' for player {player_id}")
+                        break
+            
+            # 🆕 FALLBACK: If no username found, try finding any bold/strong text that's not a label
+            if not username:
+                bold_elements = soup.select('strong, b')
+                for elem in bold_elements:
+                    text = elem.get_text(strip=True)
+                    # Look for name-like text (alphabetic, not too short, not a common label)
+                    if text and len(text) >= 3 and any(c.isalpha() for c in text):
+                        if not any(keyword in text.lower() for keyword in ['id', 'profil', 'player', 'nume', 'name', 'ultima', 'status']):
+                            username = text
+                            logger.debug(f"Found username '{username}' from bold text for player {player_id}")
+                            break
+            
+            # Final fallback
+            if not username:
+                username = f"Player_{player_id}"
+                logger.warning(f"⚠️ Could not extract username for player {player_id}, using placeholder")
 
             is_online = bool(soup.select_one('.online-indicator, .status-online, .badge-success, .text-success'))
             last_seen = datetime.now()
@@ -346,12 +383,39 @@ class Pro4KingsScraper:
                         played_hours = float(hours_match.group(1))
                     break
 
+            # 🔥 ENHANCED AGE_IC EXTRACTION
             for key, val in profile_data.items():
                 if any(x in key for x in ['varsta', 'vârstă', 'age', 'ani']):
                     age_match = re.search(r'(\d+)', val)
                     if age_match:
                         age_ic = int(age_match.group(1))
-                    break
+                        logger.debug(f"Found age_ic {age_ic} from key '{key}' for player {player_id}")
+                        break
+            
+            # 🆕 FALLBACK: Search entire page text for age patterns if not found in profile_data
+            if not age_ic:
+                page_text = soup.get_text()
+                # Look for patterns like "Varsta: 25" or "Age IC: 30" or "25 ani"
+                age_patterns = [
+                    r'Vârstă[:\s]+(\d+)',
+                    r'Varsta[:\s]+(\d+)',
+                    r'Age[:\s]+\(?IC\)?[:\s]+(\d+)',
+                    r'Age[:\s]+(\d+)',
+                    r'(\d+)\s+ani',
+                ]
+                
+                for pattern in age_patterns:
+                    match = re.search(pattern, page_text, re.IGNORECASE)
+                    if match:
+                        potential_age = int(match.group(1))
+                        # Sanity check - age should be reasonable (18-99 for IC age)
+                        if 18 <= potential_age <= 99:
+                            age_ic = potential_age
+                            logger.debug(f"Found age_ic {age_ic} using fallback pattern '{pattern}' for player {player_id}")
+                            break
+            
+            if not age_ic:
+                logger.warning(f"⚠️ Could not extract age_ic for player {player_id}")
 
             return PlayerProfile(
                 player_id=player_id,
