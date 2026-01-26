@@ -36,14 +36,22 @@ RUN if [ -f backup.db.gz ]; then \
         echo "✅ Database ready in image: /app/backup_extracted/pro4kings.db ($DB_SIZE)"; \
         ls -lh /app/backup_extracted/pro4kings.db; \
     else \
-        echo "⚠️  backup.db.gz not found - bot will start with empty database"; \
+        echo "⚠️  backup.db.gz not found - will try CSV import"; \
+    fi
+
+# 🆕 Check for CSV file
+RUN if [ -f player_profiles.csv ]; then \
+        echo "📊 CSV file found: player_profiles.csv"; \
+        ls -lh player_profiles.csv; \
+    else \
+        echo "⚠️  player_profiles.csv not found"; \
     fi
 
 # Make entrypoint and scripts executable
 RUN chmod +x entrypoint.sh
 COPY migrate_database.py /app/
-COPY check_backup.py /app/
-RUN chmod +x check_backup.py
+COPY check_backup.py /app/ 2>/dev/null || echo "check_backup.py not found, skipping"
+RUN chmod +x check_backup.py 2>/dev/null || true
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
