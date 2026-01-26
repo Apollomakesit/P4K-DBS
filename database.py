@@ -244,6 +244,7 @@ class Database:
                     'CREATE INDEX IF NOT EXISTS idx_actions_target ON actions(target_player_id)',
                     'CREATE INDEX IF NOT EXISTS idx_actions_timestamp ON actions(timestamp)',
                     'CREATE INDEX IF NOT EXISTS idx_actions_type ON actions(action_type)',
+                    'CREATE INDEX IF NOT EXISTS idx_actions_detail ON actions(action_detail)',
                     'CREATE INDEX IF NOT EXISTS idx_login_events_player ON login_events(player_id)',
                     'CREATE INDEX IF NOT EXISTS idx_login_events_timestamp ON login_events(timestamp)',
                     'CREATE INDEX IF NOT EXISTS idx_players_online ON player_profiles(is_online)',
@@ -614,18 +615,30 @@ class Database:
         return await asyncio.to_thread(self._get_current_online_players_sync)
     
     def _get_player_actions_sync(self, identifier: str, days: int = 7) -> List[Dict]:
-        """🆕 SYNC: Get player actions - BIDIRECTIONAL (sender OR receiver)"""
+        """🆕 SYNC: Get player actions - BIDIRECTIONAL (sender OR receiver)
+        
+        Now includes actions where:
+        1. player_id = identifier (actions BY the player)
+        2. target_player_id = identifier (actions TO the player - migrated)
+        3. action_detail contains the player's ID/name (actions TO the player - non-migrated)
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cutoff = datetime.now() - timedelta(days=days)
             
             if identifier.isdigit():
                 # Query for actions where player is SENDER or RECEIVER
+                # 🆕 ENHANCED: Include actions mentioning player in detail (for old non-migrated actions)
                 cursor.execute('''
                     SELECT * FROM actions
-                    WHERE (player_id = ? OR target_player_id = ?) AND timestamp >= ?
+                    WHERE (
+                        player_id = ? 
+                        OR target_player_id = ?
+                        OR action_detail LIKE ?
+                    )
+                    AND timestamp >= ?
                     ORDER BY timestamp DESC
-                ''', (identifier, identifier, cutoff))
+                ''', (identifier, identifier, f'%({identifier})%', cutoff))
                 results = cursor.fetchall()
                 
                 if results:
@@ -634,9 +647,10 @@ class Database:
             # Search by name (sender or receiver)
             cursor.execute('''
                 SELECT * FROM actions
-                WHERE (player_name LIKE ? OR target_player_name LIKE ?) AND timestamp >= ?
+                WHERE (player_name LIKE ? OR target_player_name LIKE ? OR action_detail LIKE ?) 
+                AND timestamp >= ?
                 ORDER BY timestamp DESC
-            ''', (f'%{identifier}%', f'%{identifier}%', cutoff))
+            ''', (f'%{identifier}%', f'%{identifier}%', f'%{identifier}%', cutoff))
             
             return [dict(row) for row in cursor.fetchall()]
     
