@@ -40,7 +40,7 @@ class PlayerAction:
 
 @dataclass
 class PlayerProfile:
-    """Complete player profile"""
+    """Complete player profile - CLEANED UP (removed 5 deprecated fields)"""
     player_id: str
     username: str
     is_online: bool
@@ -48,14 +48,9 @@ class PlayerProfile:
     faction: Optional[str] = None
     faction_rank: Optional[str] = None
     job: Optional[str] = None
-    level: Optional[int] = None
-    respect_points: Optional[int] = None
     warnings: Optional[int] = None
     played_hours: Optional[float] = None
     age_ic: Optional[int] = None
-    phone_number: Optional[str] = None
-    vehicles_count: Optional[int] = None
-    properties_count: Optional[int] = None
     profile_data: Dict = field(default_factory=dict)
 
 
@@ -247,7 +242,7 @@ class Pro4KingsScraper:
         return None
 
     async def get_player_profile(self, player_id: str) -> Optional[PlayerProfile]:
-        """Get complete player profile with improved faction rank detection"""
+        """🔥 FIXED: Get player profile WITHOUT deprecated fields (level, respect_points, phone_number, vehicles_count, properties_count)"""
         profile_url = f"{self.base_url}/profile/{player_id}"
         html = await self.fetch_page(profile_url)
 
@@ -306,15 +301,13 @@ class Pro4KingsScraper:
                     if val and val != '—':
                         profile_data[keytext] = val
 
+            # Extract fields that still exist in database
             faction = None
             faction_rank = None
             job = None
-            level = None
-            respect_points = None
             warnings = None
             played_hours = None
             age_ic = None
-            phone_number = None
 
             for key, val in profile_data.items():
                 if any(x in key for x in ['fac', 'facțiune', 'faction']):
@@ -340,20 +333,6 @@ class Pro4KingsScraper:
                     break
 
             for key, val in profile_data.items():
-                if any(x in key for x in ['level', 'nivel']):
-                    level_match = re.search(r'(\d+)', val)
-                    if level_match:
-                        level = int(level_match.group(1))
-                    break
-
-            for key, val in profile_data.items():
-                if any(x in key for x in ['respect', 'puncte']):
-                    resp_match = re.search(r'(\d+)', val)
-                    if resp_match:
-                        respect_points = int(resp_match.group(1))
-                    break
-
-            for key, val in profile_data.items():
                 if any(x in key for x in ['warn', 'avertis']):
                     warn_match = re.search(r'(\d+)', val)
                     if warn_match:
@@ -374,16 +353,6 @@ class Pro4KingsScraper:
                         age_ic = int(age_match.group(1))
                     break
 
-            for key, val in profile_data.items():
-                if any(x in key for x in ['telefon', 'phone', 'număr']):
-                    phone_match = re.search(r'(\d+)', val)
-                    if phone_match:
-                        phone_number = phone_match.group(1)
-                    break
-
-            vehicles_count = None
-            properties_count = None
-
             return PlayerProfile(
                 player_id=player_id,
                 username=username,
@@ -392,14 +361,9 @@ class Pro4KingsScraper:
                 faction=faction,
                 faction_rank=faction_rank,
                 job=job,
-                level=level,
-                respect_points=respect_points,
                 warnings=warnings,
                 played_hours=played_hours,
                 age_ic=age_ic,
-                phone_number=phone_number,
-                vehicles_count=vehicles_count,
-                properties_count=properties_count,
                 profile_data=profile_data
             )
 
