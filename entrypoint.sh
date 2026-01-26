@@ -143,30 +143,12 @@ if [ -f "/data/pro4kings.db" ]; then
     fi
 fi
 
-# 🆕 CSV IMPORT (runs after merge to update with latest data)
-if [ -f "/data/pro4kings.db" ] && [ -f "/app/player_profiles.csv" ]; then
-    CURRENT_PROFILES=$(sqlite3 /data/pro4kings.db "SELECT COUNT(*) FROM player_profiles;" 2>/dev/null || echo "0")
-    
-    echo "================================================"
-    echo "📊 CSV Import Check..."
-    echo "   Current database: $CURRENT_PROFILES records"
-    echo "   CSV file: /app/player_profiles.csv"
-    
-    # Always run CSV import to update with latest data (it uses INSERT OR REPLACE)
-    if [ -f "/app/import_csv_profiles.py" ]; then
-        echo "🔄 Running CSV import (updates existing records with latest data)..."
-        python /app/import_csv_profiles.py /app/player_profiles.csv
-        
-        if [ $? -eq 0 ]; then
-            NEW_PROFILES=$(sqlite3 /data/pro4kings.db "SELECT COUNT(*) FROM player_profiles;" 2>/dev/null || echo "0")
-            echo "✅ CSV import complete! Database now has $NEW_PROFILES records"
-        else
-            echo "⚠️  CSV import failed - continuing with existing data"
-        fi
-    else
-        echo "⚠️  import_csv_profiles.py not found - skipping CSV import"
-    fi
-fi
+# ℹ️ CSV IMPORT NOTE:
+# CSV import is handled by bot.py via import_on_startup.py with proper flag file logic.
+# This prevents re-importing the same data on every deployment.
+# The flag file (.csv_imported) is created in /data/ to persist across restarts.
+echo "================================================"
+echo "ℹ️  CSV import will be handled by bot.py on first run (if needed)"
 
 # 📊 Final database statistics
 echo "================================================"
