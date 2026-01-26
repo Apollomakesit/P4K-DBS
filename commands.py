@@ -356,7 +356,11 @@ class FactionPaginationView(discord.ui.View):
         
         for member in page_members:
             status = "🟢" if member.get('is_online') else "⚪"
-            rank = member.get('faction_rank', 'Membru')
+            rank = member.get('faction_rank')
+            
+            # 🔥 FIXED: Handle NULL, empty, and "null" string values
+            if not rank or rank.lower() in ('null', 'none', '', '-'):
+                rank = 'Membru'  # Default rank
             
             # Format username - check if it's a placeholder like "Player_12345"
             username = member['username']
@@ -976,11 +980,11 @@ def setup_commands(bot, db, scraper_getter):
     # FACTION COMMANDS
     # ========================================================================
 
-    @bot.tree.command(name="faction", description="List all members of a faction")
+    @bot.tree.command(name="faction", description="🔥 FIXED: List all members of a faction (auto-refreshes missing ranks)")
     @app_commands.describe(faction_name="Name of faction")
     @app_commands.checks.cooldown(1, 30)
     async def faction_command(interaction: discord.Interaction, faction_name: str):
-        """List all members of a faction with pagination"""
+        """🔥 FIXED: List all members of a faction - auto-refreshes missing ranks before display"""
         await interaction.response.defer()
 
         try:
@@ -989,6 +993,45 @@ def setup_commands(bot, db, scraper_getter):
             if not members:
                 await interaction.followup.send(f"🔍 **Not Found**\n\nNo members found in faction: `{faction_name}`")
                 return
+
+            # 🔥 NEW: Identify members with missing ranks and refresh them
+            members_needing_refresh = []
+            for member in members:
+                rank = member.get('faction_rank')
+                # Check if rank is NULL, empty, "null" string, or other placeholder values
+                if not rank or rank.lower() in ('null', 'none', '', '-', 'n/a'):
+                    members_needing_refresh.append(member['player_id'])
+            
+            # If there are members with missing ranks, refresh them
+            if members_needing_refresh:
+                logger.info(f"🔄 Refreshing {len(members_needing_refresh)} members with missing faction ranks in {faction_name}")
+                
+                scraper = await scraper_getter()
+                
+                # Batch fetch fresh profiles for members with missing ranks
+                fresh_profiles = await scraper.batch_get_profiles(members_needing_refresh[:20])  # Limit to 20 to avoid timeout
+                
+                # Save updated profiles to database
+                for profile in fresh_profiles:
+                    if profile and profile.faction_rank:
+                        profile_dict = {
+                            'player_id': profile.player_id,
+                            'player_name': profile.username,
+                            'is_online': profile.is_online,
+                            'last_connection': profile.last_seen,
+                            'faction': profile.faction,
+                            'faction_rank': profile.faction_rank,
+                            'job': profile.job,
+                            'warns': profile.warnings,
+                            'played_hours': profile.played_hours,
+                            'age_ic': profile.age_ic
+                        }
+                        await db.save_player_profile(profile_dict)
+                
+                logger.info(f"✅ Refreshed {len(fresh_profiles)} faction member profiles")
+                
+                # Re-fetch members from database to get updated ranks
+                members = await db.get_faction_members(faction_name)
 
             # Create pagination view
             view = FactionPaginationView(
@@ -1191,11 +1234,11 @@ def setup_commands(bot, db, scraper_getter):
     # 🆕 PLAYER PROFILE & STATS COMMANDS
     # ========================================================================
     
-    @bot.tree.command(name="player", description="🔥 FIXED: Get complete player profile and stats (faster loading)")
+    @bot.tree.command(name="player", description="🔥 FIXED: Get complete player profile (auto-refreshes missing rank)")
     @app_commands.describe(identifier="Player ID or name")
     @app_commands.checks.cooldown(1, 5)
     async def player_command(interaction: discord.Interaction, identifier: str):
-        """🔥 FIXED: Get complete player profile - no 'null' rank, faster loading"""
+        """🔥 FIXED: Get complete player profile - auto-refreshes if faction exists but rank is missing"""
         await interaction.response.defer()
         
         try:
@@ -1230,6 +1273,38 @@ def setup_commands(bot, db, scraper_getter):
                 )
                 return
             
+            # 🔥 NEW: Check if player has faction but missing rank - refresh if needed
+            faction = player.get('faction')
+            faction_rank = player.get('faction_rank')
+            
+            # If player has a faction but rank is NULL/empty/placeholder, fetch fresh data
+            if faction and faction not in (None, '', 'Civil', 'Fără', 'None', '-', 'N/A'):
+                if not faction_rank or faction_rank.lower() in ('null', 'none', '', '-', 'unknown'):
+                    logger.info(f"🔄 Player {player['player_id']} has faction '{faction}' but missing rank - fetching fresh profile")
+                    
+                    scraper = await scraper_getter()
+                    profile_obj = await scraper.get_player_profile(player['player_id'])
+                    
+                    if profile_obj and profile_obj.faction_rank:
+                        # Update player data with fresh profile
+                        player_update = {
+                            'player_id': profile_obj.player_id,
+                            'player_name': profile_obj.username,
+                            'is_online': profile_obj.is_online,
+                            'last_connection': profile_obj.last_seen,
+                            'faction': profile_obj.faction,
+                            'faction_rank': profile_obj.faction_rank,
+                            'job': profile_obj.job,
+                            'warns': profile_obj.warnings,
+                            'played_hours': profile_obj.played_hours,
+                            'age_ic': profile_obj.age_ic
+                        }
+                        await db.save_player_profile(player_update)
+                        
+                        # Update local player dict with fresh rank
+                        player['faction_rank'] = profile_obj.faction_rank
+                        logger.info(f"✅ Updated rank for player {player['player_id']}: {profile_obj.faction_rank}")
+            
             # Build profile embed
             status_icon = "🟢" if player.get('is_online') else "⚪"
             
@@ -1244,18 +1319,18 @@ def setup_commands(bot, db, scraper_getter):
             status_value = "Online now" if player.get('is_online') else f"Last seen: {format_last_seen(player.get('last_seen'))}"
             embed.add_field(name="Status", value=status_value, inline=True)
             
-            # 🔥 FIXED: Faction/Rank display - don't show "null"
+            # 🔥 FIXED: Faction/Rank display - don't show "null" or "Unknown" after refresh
             faction = player.get('faction')
             faction_rank = player.get('faction_rank')
             
             if faction and faction not in (None, '', 'Civil', 'Fără', 'None', '-', 'N/A'):
                 # Player has a faction
-                if faction_rank and faction_rank not in (None, '', 'null', 'NULL'):
+                if faction_rank and faction_rank not in (None, '', 'null', 'NULL', 'none', 'None'):
                     # Has both faction and rank
                     faction_display = f"{faction}\n├ Rank: {faction_rank}"
                 else:
-                    # Has faction but no rank
-                    faction_display = f"{faction}\n├ Rank: Unknown"
+                    # Has faction but rank is still missing after refresh attempt
+                    faction_display = f"{faction}\n├ Rank: Membru"  # Default to Membru
             else:
                 # No faction
                 faction_display = "No faction"
