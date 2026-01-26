@@ -87,6 +87,28 @@ def deduplicate_actions(actions: List[dict]) -> List[dict]:
     
     return deduplicated
 
+def extract_target_from_detail(action_detail: str) -> tuple:
+    """Extract target_player_id and target_player_name from action_detail text.
+    
+    This is a fallback for old actions that don't have target info in database.
+    
+    Returns: (target_player_id, target_player_name) or (None, None)
+    """
+    if not action_detail:
+        return (None, None)
+    
+    # Pattern: "ia dat lui PlayerName(ID)" or "a dat lui PlayerName(ID)"
+    match = re.search(r'(?:ia|a)\s+dat\s+lui\s+([^(]+)\((\d+)\)', action_detail, re.IGNORECASE)
+    if match:
+        return (match.group(2), match.group(1).strip())
+    
+    # Pattern: "primit de la PlayerName(ID)"
+    match = re.search(r'primit\s+(?:de\s+la|de la)\s+([^(]+)\((\d+)\)', action_detail, re.IGNORECASE)
+    if match:
+        return (match.group(2), match.group(1).strip())
+    
+    return (None, None)
+
 # ========================================================================
 # PAGINATION VIEW
 # ========================================================================
@@ -126,15 +148,22 @@ class ActionsPaginationView(discord.ui.View):
         player_name = action.get('player_name', 'Unknown')
         target_player_name = action.get('target_player_name', '')
         
+        # FALLBACK: If target_player_id is NULL, try to extract from action_detail
+        if not target_player_id and detail:
+            extracted_id, extracted_name = extract_target_from_detail(detail)
+            if extracted_id:
+                target_player_id = extracted_id
+                target_player_name = extracted_name
+        
         # Check if viewing player is sender or receiver
         is_sender = (player_id == viewing_player_id)
         is_receiver = (target_player_id == viewing_player_id)
         
         # Handle item transfers (gave/received)
-        if 'ia dat lui' in detail and (is_sender or is_receiver):
+        if ('ia dat lui' in detail.lower() or 'a dat lui' in detail.lower()) and (is_sender or is_receiver):
             # Extract items from detail
-            match = re.search(r'ia dat lui .+?\(\d+\)\s+(.+)', detail)
-            items = match.group(1).strip() if match else detail.split('ia dat lui')[-1].strip()
+            match = re.search(r'(?:ia|a)\s+dat\s+lui\s+.+?\(\d+\)\s+(.+)', detail, re.IGNORECASE)
+            items = match.group(1).strip() if match else detail.split('lui')[-1].strip()
             
             if is_sender:
                 # Viewing player GAVE to target
