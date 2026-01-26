@@ -114,55 +114,91 @@ class ActionsPaginationView(discord.ui.View):
         self.previous_button.disabled = (self.current_page == 0)
         self.next_button.disabled = (self.current_page >= self.total_pages - 1)
     
-    def _parse_transfer_action(self, action: dict, viewing_player_id: str) -> Optional[Dict[str, str]]:
-        """Parse item transfer actions to determine direction and involved parties.
+    def _format_action_display(self, action: dict, viewing_player_id: str) -> Dict[str, str]:
+        """Format action for display with emojis and proper categorization.
         
-        Args:
-            action: Action dict with player_id and action_detail
-            viewing_player_id: The player whose actions we're viewing
-            
-        Returns:
-            Dict with 'direction' (GAVE/RECEIVED), 'other_player', 'items' or None if not a transfer
+        Returns dict with 'emoji', 'type_label', 'detail_lines'
         """
-        detail = action.get('action_detail', '')
+        action_type = action.get('action_type', 'unknown')
+        detail = action.get('action_detail', 'No details')
         player_id = str(action.get('player_id', ''))
+        target_player_id = str(action.get('target_player_id', '') if action.get('target_player_id') else '')
+        player_name = action.get('player_name', 'Unknown')
+        target_player_name = action.get('target_player_name', '')
         
-        # Check if this is a "ia dat lui" (gave to) action
-        # Pattern: "ia dat lui TargetName(TargetID) QuantityxItem"
-        if 'ia dat lui' in detail:
-            # Extract target player info from the detail text
-            # Pattern: "ia dat lui Name(ID) items"
-            match = re.search(r'ia dat lui (.+?)\((\d+)\)\s+(.+)', detail)
+        # Check if viewing player is sender or receiver
+        is_sender = (player_id == viewing_player_id)
+        is_receiver = (target_player_id == viewing_player_id)
+        
+        # Handle item transfers (gave/received)
+        if 'ia dat lui' in detail and (is_sender or is_receiver):
+            # Extract items from detail
+            match = re.search(r'ia dat lui .+?\(\d+\)\s+(.+)', detail)
+            items = match.group(1).strip() if match else detail.split('ia dat lui')[-1].strip()
             
-            if not match:
-                return None
-            
-            target_name = match.group(1).strip()
-            target_id = match.group(2)
-            items = match.group(3).strip()
-            
-            # Determine direction based on who we're viewing
-            if player_id == viewing_player_id:
+            if is_sender:
                 # Viewing player GAVE to target
                 return {
-                    'direction': 'GAVE',
-                    'other_player': f"{target_name} ({target_id})",
-                    'items': items
+                    'emoji': '📤',
+                    'type_label': 'GAVE',
+                    'detail_lines': [
+                        f"To: {target_player_name} ({target_player_id})" if target_player_name else f"To: ID {target_player_id}",
+                        f"Items: {items}"
+                    ]
                 }
-            elif target_id == viewing_player_id:
-                # Viewing player RECEIVED from source player
-                # Get source player info from the action
-                source_name = action.get('player_name', 'Unknown')
+            elif is_receiver:
+                # Viewing player RECEIVED from sender
                 return {
-                    'direction': 'RECEIVED',
-                    'other_player': f"{source_name} ({player_id})",
-                    'items': items
+                    'emoji': '📥',
+                    'type_label': 'RECEIVED',
+                    'detail_lines': [
+                        f"From: {player_name} ({player_id})",
+                        f"Items: {items}"
+                    ]
                 }
         
-        return None
+        # Handle chest deposits
+        if action_type == 'chest_deposit' or 'pus in chest' in detail:
+            return {
+                'emoji': '📦',
+                'type_label': 'CHEST DEPOSIT',
+                'detail_lines': [f"Detail: {detail}"]
+            }
+        
+        # Handle chest withdrawals
+        if action_type == 'chest_withdraw' or 'retras din chest' in detail or 'scos din chest' in detail:
+            return {
+                'emoji': '📂',
+                'type_label': 'CHEST WITHDRAW',
+                'detail_lines': [f"Detail: {detail}"]
+            }
+        
+        # Handle warnings
+        if action_type == 'warning_received' or 'avertisment' in detail.lower():
+            return {
+                'emoji': '⚠️',
+                'type_label': 'WARNING',
+                'detail_lines': [f"Detail: {detail}"]
+            }
+        
+        # Handle vehicle actions
+        if action_type in ('vehicle_bought', 'vehicle_sold') or 'cumparat' in detail or 'vandut' in detail:
+            emoji = '🚗' if 'cumparat' in detail else '💰'
+            return {
+                'emoji': emoji,
+                'type_label': 'VEHICLE',
+                'detail_lines': [f"Detail: {detail}"]
+            }
+        
+        # Default for other actions
+        return {
+            'emoji': '📋',
+            'type_label': action_type.upper().replace('_', ' '),
+            'detail_lines': [f"Detail: {detail}"]
+        }
     
     def build_embed(self) -> discord.Embed:
-        """Build embed for current page with GAVE/RECEIVED direction indicators"""
+        """Build embed for current page with emojis and proper categorization"""
         start_idx = self.current_page * self.items_per_page
         end_idx = min(start_idx + self.items_per_page, len(self.actions))
         page_actions = self.actions[start_idx:end_idx]
@@ -182,8 +218,6 @@ class ActionsPaginationView(discord.ui.View):
         viewing_player_id = str(self.player_info['player_id'])
         
         for action in page_actions:
-            action_type = action.get('action_type', 'unknown')
-            detail = action.get('action_detail', 'No details')
             timestamp = action.get('timestamp')
             count = action.get('count', 1)
             
@@ -191,27 +225,29 @@ class ActionsPaginationView(discord.ui.View):
                 timestamp = datetime.fromisoformat(timestamp)
             time_str = timestamp.strftime('%Y-%m-%d %H:%M') if timestamp else 'Unknown'
             
-            # Add count indicator if duplicates were found
-            name = f"{action_type} - {time_str}"
+            # Get formatted display info
+            display = self._format_action_display(action, viewing_player_id)
+            
+            # Build field name with emoji and count
+            field_name = f"{display['emoji']} {display['type_label']} - {time_str}"
             if count > 1:
-                name += f" ×{count}"
+                field_name += f" ×{count}"
             
-            # Check if this is an item transfer action
-            transfer_info = self._parse_transfer_action(action, viewing_player_id)
+            # Build field value with detail lines
+            value_lines = []
+            for i, line in enumerate(display['detail_lines']):
+                if i == 0:
+                    value_lines.append(f"├ {line}")
+                elif i == len(display['detail_lines']) - 1:
+                    value_lines.append(f"└ {line}")
+                else:
+                    value_lines.append(f"├ {line}")
             
-            if transfer_info:
-                # Format as GAVE or RECEIVED
-                direction_emoji = "📤" if transfer_info['direction'] == 'GAVE' else "📥"
-                value = f"{direction_emoji} **{transfer_info['direction']}**"
-                value += f"\n├ {'To' if transfer_info['direction'] == 'GAVE' else 'From'}: {transfer_info['other_player']}"
-                value += f"\n└ Items: {transfer_info['items']}"
-            else:
-                # Standard display for non-transfer actions
-                value = f"├ Player: {self.player_info['username']} ({self.player_info['player_id']})\n└ Detail: {detail}"
+            field_value = "\n".join(value_lines)
             
             embed.add_field(
-                name=name,
-                value=value,
+                name=field_name,
+                value=field_value,
                 inline=False
             )
         
