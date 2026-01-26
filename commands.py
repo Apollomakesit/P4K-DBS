@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import logging
 import asyncio
 import os
+import re
 from typing import Optional, List, Dict
 from collections import defaultdict
 
@@ -113,8 +114,50 @@ class ActionsPaginationView(discord.ui.View):
         self.previous_button.disabled = (self.current_page == 0)
         self.next_button.disabled = (self.current_page >= self.total_pages - 1)
     
+    def _parse_transfer_action(self, action: dict, viewing_player_id: str) -> Optional[Dict[str, str]]:
+        """Parse item transfer actions to determine direction and involved parties.
+        
+        Args:
+            action: Action dict with player_id, target_player_id, action_detail
+            viewing_player_id: The player whose actions we're viewing
+            
+        Returns:
+            Dict with 'direction' (GAVE/RECEIVED), 'other_player', 'items' or None if not a transfer
+        """
+        detail = action.get('action_detail', '')
+        player_id = str(action.get('player_id', ''))
+        target_player_id = str(action.get('target_player_id', ''))
+        player_name = action.get('player_name', '')
+        target_player_name = action.get('target_player_name', '')
+        
+        # Check if this is a "ia dat lui" (gave to) action
+        # Pattern: "ia dat lui TargetName(TargetID) QuantityxItem"
+        if 'ia dat lui' in detail:
+            # Extract items (everything after the player name/ID)
+            # Pattern: "ia dat lui Name(ID) items"
+            match = re.search(r'ia dat lui .+?\(\d+\)\s+(.+)', detail)
+            items = match.group(1) if match else detail.split('ia dat lui')[-1].strip()
+            
+            # Determine direction based on who we're viewing
+            if player_id == viewing_player_id:
+                # Viewing player GAVE to target
+                return {
+                    'direction': 'GAVE',
+                    'other_player': f"{target_player_name} ({target_player_id})" if target_player_name else f"ID {target_player_id}",
+                    'items': items
+                }
+            elif target_player_id == viewing_player_id:
+                # Viewing player RECEIVED from source
+                return {
+                    'direction': 'RECEIVED',
+                    'other_player': f"{player_name} ({player_id})" if player_name else f"ID {player_id}",
+                    'items': items
+                }
+        
+        return None
+    
     def build_embed(self) -> discord.Embed:
-        """Build embed for current page"""
+        """Build embed for current page with GAVE/RECEIVED direction indicators"""
         start_idx = self.current_page * self.items_per_page
         end_idx = min(start_idx + self.items_per_page, len(self.actions))
         page_actions = self.actions[start_idx:end_idx]
@@ -131,6 +174,8 @@ class ActionsPaginationView(discord.ui.View):
             timestamp=datetime.now()
         )
         
+        viewing_player_id = str(self.player_info['player_id'])
+        
         for action in page_actions:
             action_type = action.get('action_type', 'unknown')
             detail = action.get('action_detail', 'No details')
@@ -146,7 +191,19 @@ class ActionsPaginationView(discord.ui.View):
             if count > 1:
                 name += f" ×{count}"
             
-            value = f"├ Player: {self.player_info['username']} ({self.player_info['player_id']})\n└ Detail: {detail}"
+            # Check if this is an item transfer action
+            transfer_info = self._parse_transfer_action(action, viewing_player_id)
+            
+            if transfer_info:
+                # Format as GAVE or RECEIVED
+                direction_emoji = "📤" if transfer_info['direction'] == 'GAVE' else "📥"
+                value = f"{direction_emoji} {transfer_info['direction']} {transfer_info['direction'].lower()}"
+                value += f"\n├ {'To' if transfer_info['direction'] == 'GAVE' else 'From'}: {transfer_info['other_player']}"
+                value += f"\n└ Items: {transfer_info['items']}"
+            else:
+                # Standard display for non-transfer actions
+                value = f"├ Player: {self.player_info['username']} ({self.player_info['player_id']})\n└ Detail: {detail}"
+            
             embed.add_field(
                 name=name,
                 value=value,
