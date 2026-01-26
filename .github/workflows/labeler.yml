@@ -1,0 +1,42 @@
+'bot-core':
+  - changed-files:
+    - any-glob-to-any-file: 'bot.py'
+
+'scraper':
+  - changed-files:
+    - any-glob-to-any-file: 'scraper.py'
+
+'database':
+  - changed-files:
+    - any-glob-to-any-file: 
+      - 'database.py'
+      - 'initial_scan.py'
+      - 'import_on_startup.py'
+
+'discord-commands':
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'commands.py'
+      - 'discord_utils.py'
+
+'config':
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'config.py'
+      - '.env.example'
+
+'deployment':
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'railway.json'
+      - 'requirements.txt'
+      - 'Procfile'
+      - 'nixpacks.toml'
+      - 'entrypoint.sh'
+
+'documentation':
+  - changed-files:
+    - any-glob-to-any-file:
+      - '*.md'
