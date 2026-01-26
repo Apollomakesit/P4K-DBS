@@ -92,4 +92,5 @@ scrape_results.json
 # Docker
 docker-compose.override.yml
 
-
+profile_sample.html
+debug_profile_*.html
