@@ -1544,7 +1544,7 @@ def setup_commands(bot, db, scraper_getter):
                 scraper = await scraper_getter()
                 
                 # Batch fetch fresh profiles
-                fresh_profiles = await scraper.batch_get_profiles(members_needing_refresh[:20])  # Limit to 20 to avoid timeout
+                fresh_profiles = await scraper.batch_get_profiles(members_needing_refresh[:100])  # Limit to 100 to avoid timeout
                 
                 # Save updated profiles to database
                 refresh_count = 0
