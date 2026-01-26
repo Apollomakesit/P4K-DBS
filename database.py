@@ -544,6 +544,40 @@ class Database:
         """ASYNC: Update online players snapshot"""
         await asyncio.to_thread(self._update_online_players_sync, online_players)
     
+    def _cleanup_stale_online_players_sync(self, minutes: int = 5) -> int:
+        """🆕 SYNC: Remove stale entries from online_players table
+        
+        Args:
+            minutes: Remove entries older than this many minutes (default: 5)
+            
+        Returns:
+            Number of entries removed
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(minutes=minutes)
+                
+                cursor.execute('''
+                    DELETE FROM online_players
+                    WHERE detected_online_at < ?
+                ''', (cutoff,))
+                
+                removed_count = cursor.rowcount
+                conn.commit()
+                
+                if removed_count > 0:
+                    logger.info(f"🧹 Cleaned up {removed_count} stale online_players entries (older than {minutes} min)")
+                
+                return removed_count
+        except Exception as e:
+            logger.error(f"Error cleaning up stale online players: {e}", exc_info=True)
+            return 0
+    
+    async def cleanup_stale_online_players(self, minutes: int = 5) -> int:
+        """🆕 ASYNC: Remove stale entries from online_players table"""
+        return await asyncio.to_thread(self._cleanup_stale_online_players_sync, minutes)
+    
     def _mark_player_for_update_sync(self, player_id: str, player_name: str) -> None:
         """Mark player for priority update - allows duplicate usernames"""
         try:
@@ -927,21 +961,32 @@ class Database:
         return await asyncio.to_thread(_get_members_sync)
     
     async def get_all_factions_with_counts(self) -> List[Dict]:
-        """🔥 UPDATED: Get all factions with member and CURRENT online counts from online_players table"""
+        """🔥 FIXED: Get all factions with member and CURRENTLY ONLINE counts (last 5 minutes)
+        
+        This method now only counts players who are ACTUALLY online right now (detected in last 5 minutes),
+        not players who were online in the past 24 hours.
+        """
         def _get_factions_sync():
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                
+                # 🔥 FIXED: Filter online_players by time - only last 5 minutes
+                cutoff = datetime.now() - timedelta(minutes=5)
+                
                 cursor.execute('''
                     SELECT 
                         p.faction as faction_name,
                         COUNT(DISTINCT p.player_id) as member_count,
-                        COUNT(DISTINCT o.player_id) as online_count
+                        COUNT(DISTINCT CASE 
+                            WHEN o.detected_online_at >= ? THEN o.player_id 
+                            ELSE NULL 
+                        END) as online_count
                     FROM player_profiles p
                     LEFT JOIN online_players o ON p.player_id = o.player_id
                     WHERE p.faction IS NOT NULL AND p.faction != ''
                     GROUP BY p.faction
                     ORDER BY member_count DESC
-                ''')
+                ''', (cutoff,))
                 return [dict(row) for row in cursor.fetchall()]
         
         return await asyncio.to_thread(_get_factions_sync)
