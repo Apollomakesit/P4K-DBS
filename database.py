@@ -254,6 +254,7 @@ class Database:
                     'CREATE INDEX IF NOT EXISTS idx_rank_history_current ON rank_history(is_current)',
                     'CREATE INDEX IF NOT EXISTS idx_profile_history_player ON profile_history(player_id)',
                     'CREATE INDEX IF NOT EXISTS idx_banned_active ON banned_players(is_active)',
+                    'CREATE INDEX IF NOT EXISTS idx_online_players_detected ON online_players(detected_online_at)',
                 ]
                 
                 for index_sql in indexes:
@@ -614,6 +615,22 @@ class Database:
         """ASYNC: Get currently online players"""
         return await asyncio.to_thread(self._get_current_online_players_sync)
     
+    def _get_online_players_last_24h_count_sync(self) -> int:
+        """🆕 SYNC: Get count of players who were online in last 24 hours"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = datetime.now() - timedelta(hours=24)
+            cursor.execute('''
+                SELECT COUNT(DISTINCT player_id)
+                FROM online_players
+                WHERE detected_online_at >= ?
+            ''', (cutoff,))
+            return cursor.fetchone()[0]
+    
+    async def get_online_players_last_24h_count(self) -> int:
+        """🆕 ASYNC: Get count of players who were online in last 24 hours"""
+        return await asyncio.to_thread(self._get_online_players_last_24h_count_sync)
+    
     def _get_player_actions_sync(self, identifier: str, days: int = 7) -> List[Dict]:
         """🆕 SYNC: Get player actions - BIDIRECTIONAL (sender OR receiver)
         
@@ -806,7 +823,9 @@ class Database:
                 cursor.execute('SELECT COUNT(*) FROM actions')
                 total_actions = cursor.fetchone()[0]
                 
-                cursor.execute('SELECT COUNT(*) FROM online_players')
+                # 🔥 CHANGED: Get count from last 24h instead of current snapshot
+                cutoff = datetime.now() - timedelta(hours=24)
+                cursor.execute('SELECT COUNT(DISTINCT player_id) FROM online_players WHERE detected_online_at >= ?', (cutoff,))
                 online_count = cursor.fetchone()[0]
                 
                 return {
@@ -908,18 +927,19 @@ class Database:
         return await asyncio.to_thread(_get_members_sync)
     
     async def get_all_factions_with_counts(self) -> List[Dict]:
-        """Get all factions with member and online counts, sorted by member count (descending)"""
+        """🔥 UPDATED: Get all factions with member and CURRENT online counts from online_players table"""
         def _get_factions_sync():
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT 
-                        faction as faction_name,
-                        COUNT(*) as member_count,
-                        SUM(CASE WHEN is_online = 1 THEN 1 ELSE 0 END) as online_count
-                    FROM player_profiles
-                    WHERE faction IS NOT NULL AND faction != ''
-                    GROUP BY faction
+                        p.faction as faction_name,
+                        COUNT(DISTINCT p.player_id) as member_count,
+                        COUNT(DISTINCT o.player_id) as online_count
+                    FROM player_profiles p
+                    LEFT JOIN online_players o ON p.player_id = o.player_id
+                    WHERE p.faction IS NOT NULL AND p.faction != ''
+                    GROUP BY p.faction
                     ORDER BY member_count DESC
                 ''')
                 return [dict(row) for row in cursor.fetchall()]
