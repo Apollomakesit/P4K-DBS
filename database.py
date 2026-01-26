@@ -961,7 +961,34 @@ class Database:
                 return dict(row) if row else None
         
         return await asyncio.to_thread(_get_stats_sync)
-    
+
+    async def get_player_stats(self, identifier: str) -> Optional[Dict]:
+        """🆕 Get player stats by ID or name - unified method for commands"""
+        def _get_stats_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Try by ID first
+                if identifier.isdigit():
+                    cursor.execute('''
+                        SELECT * FROM player_profiles WHERE player_id = ?
+                    ''', (identifier,))
+                    row = cursor.fetchone()
+                    if row:
+                        return dict(row)
+                
+                # Try by name (case-insensitive partial match)
+                cursor.execute('''
+                    SELECT * FROM player_profiles 
+                    WHERE username LIKE ? 
+                    ORDER BY is_online DESC, last_seen DESC 
+                    LIMIT 1
+                ''', (f'%{identifier}%',))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        
+        return await asyncio.to_thread(_get_stats_sync)
+
     
     async def cleanup_old_data(self, dry_run: bool = True) -> Dict[str, int]:
         """Cleanup old data"""
