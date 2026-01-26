@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 """
-Comprehensive database merger:
-1. Imports backup database (186K records)
-2. Merges data from 'players' table
-3. Merges data from 'player_profiles' table
-4. Imports CSV (with priority for latest data)
-5. Cleans up legacy 'players' table
+Comprehensive database merger - FIXED VERSION (no database locking)
+Reads from backup separately instead of using ATTACH DATABASE
 """
 import sqlite3
 import os
 import sys
 from datetime import datetime
+import time
 
 def merge_all_databases(volume_db_path='/data/pro4kings.db', 
-                        backup_db_path='/app/backup_extracted/pro4kings.db',
-                        csv_path='/app/player_profiles.csv'):
+                        backup_db_path='/app/backup_extracted/pro4kings.db'):
     """Merge all data sources into player_profiles table"""
     
     if not os.path.exists(volume_db_path):
@@ -76,39 +72,74 @@ def merge_all_databases(volume_db_path='/data/pro4kings.db',
             )
         ''')
         
-        # Step 3: Import from backup database if it exists
+        # Step 3: Import from backup database if it exists (SEPARATE CONNECTION)
         backup_imported = 0
         if os.path.exists(backup_db_path):
             print(f"\n🔄 Step 2: Importing from backup ({backup_db_path})...")
-            cursor.execute(f"ATTACH DATABASE '{backup_db_path}' AS backup_db")
             
-            # Check if backup has player_profiles
-            cursor.execute("SELECT name FROM backup_db.sqlite_master WHERE type='table' AND name='player_profiles'")
-            if cursor.fetchone():
-                # Import from backup, mapping fields correctly
-                cursor.execute('''
-                    INSERT OR REPLACE INTO player_profiles_temp (
-                        player_id, username, is_online, last_seen, first_detected,
-                        faction, faction_rank, job, warnings, played_hours, age_ic
-                    )
-                    SELECT 
-                        CAST(player_id AS TEXT),
-                        COALESCE(player_name, 'Player_' || player_id),
-                        COALESCE(is_online, 0),
-                        last_connection,
-                        CURRENT_TIMESTAMP,
-                        CASE WHEN faction IN ('Civil', 'Fără', 'None', '-', '', 'N/A') THEN NULL ELSE faction END,
-                        CASE WHEN faction_rank IN ('', '-', 'None', 'N/A') THEN NULL ELSE faction_rank END,
-                        NULL,  -- job not in backup
-                        0,     -- warnings not in backup
-                        NULL,  -- played_hours not in backup
-                        NULL   -- age_ic not in backup
-                    FROM backup_db.player_profiles
-                ''')
-                backup_imported = cursor.rowcount
-                print(f"   ✅ Imported {backup_imported:,} records from backup")
+            # Open SEPARATE connection to backup (avoids locking issues)
+            backup_conn = None
+            retry_count = 0
+            max_retries = 3
             
-            cursor.execute("DETACH DATABASE backup_db")
+            while retry_count < max_retries:
+                try:
+                    backup_conn = sqlite3.connect(backup_db_path, timeout=30.0)
+                    backup_conn.row_factory = sqlite3.Row
+                    backup_cursor = backup_conn.cursor()
+                    break
+                except sqlite3.OperationalError as e:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        print(f"   ⚠️  Backup database busy, retrying in 2 seconds... (attempt {retry_count}/{max_retries})")
+                        time.sleep(2)
+                    else:
+                        print(f"   ❌ Could not access backup database after {max_retries} attempts: {e}")
+                        backup_conn = None
+            
+            if backup_conn:
+                # Check if backup has player_profiles
+                backup_cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='player_profiles'")
+                if backup_cursor.fetchone():
+                    print("   📥 Reading records from backup...")
+                    
+                    # Read all records from backup
+                    backup_cursor.execute('''
+                        SELECT 
+                            CAST(player_id AS TEXT) as player_id,
+                            COALESCE(player_name, 'Player_' || player_id) as username,
+                            COALESCE(is_online, 0) as is_online,
+                            last_connection as last_seen,
+                            CURRENT_TIMESTAMP as first_detected,
+                            CASE WHEN faction IN ('Civil', 'Fără', 'None', '-', '', 'N/A') THEN NULL ELSE faction END as faction,
+                            CASE WHEN faction_rank IN ('', '-', 'None', 'N/A') THEN NULL ELSE faction_rank END as faction_rank
+                        FROM player_profiles
+                    ''')
+                    
+                    backup_records = backup_cursor.fetchall()
+                    print(f"   📥 Found {len(backup_records):,} records in backup")
+                    
+                    # Insert into temp table in batches
+                    batch_size = 1000
+                    for i in range(0, len(backup_records), batch_size):
+                        batch = backup_records[i:i+batch_size]
+                        cursor.executemany('''
+                            INSERT OR REPLACE INTO player_profiles_temp (
+                                player_id, username, is_online, last_seen, first_detected,
+                                faction, faction_rank
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ''', [(r['player_id'], r['username'], r['is_online'], r['last_seen'],
+                               r['first_detected'], r['faction'], r['faction_rank']) for r in batch])
+                        
+                        if (i + batch_size) % 10000 == 0:
+                            print(f"   ⏳ Imported {i + batch_size:,} / {len(backup_records):,} records...")
+                    
+                    conn.commit()
+                    backup_imported = len(backup_records)
+                    print(f"   ✅ Imported {backup_imported:,} records from backup")
+                
+                backup_conn.close()
         else:
             print(f"\n⚠️  Backup database not found at {backup_db_path}")
         
@@ -193,15 +224,6 @@ def merge_all_databases(volume_db_path='/data/pro4kings.db',
         print(f"="*60)
         
         conn.close()
-        
-        # Step 9: Now run CSV import if file exists
-        if os.path.exists(csv_path):
-            print(f"\n🔄 Step 7: Importing CSV data (will update existing records)...")
-            print(f"   CSV file: {csv_path}")
-            return final_count
-        else:
-            print(f"\n⚠️  CSV file not found at {csv_path}, skipping CSV import")
-        
         return final_count
         
     except Exception as e:
