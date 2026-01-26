@@ -115,3 +115,29 @@ if __name__ == "__main__":
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     asyncio.run(auto_import_on_startup())
+
+async def should_import_csv(db: Database) -> bool:
+    """Check if we should import CSV (database is empty or very small)"""
+    try:
+        # Check if import has already been done
+        import_flag = '/data/.csv_imported' if os.path.exists('/data') else '.csv_imported'
+        if os.path.exists(import_flag):
+            logger.info("📊 CSV already imported (flag file exists) - skipping")
+            return False
+        
+        stats = await db.get_database_stats()
+        total_players = stats.get('total_players', 0)
+        
+        if total_players < 1000:
+            logger.info(f"📊 Current database has only {total_players:,} players")
+            logger.info("📊 Will import CSV to populate database...")
+            return True
+        else:
+            logger.info(f"📊 Database already has {total_players:,} players - skipping import")
+            # Create flag file to prevent future imports
+            with open(import_flag, 'w') as f:
+                f.write(f"Import completed at {datetime.now()}\n")
+            return False
+    except Exception as e:
+        logger.error(f"Error checking database stats: {e}")
+        return False
