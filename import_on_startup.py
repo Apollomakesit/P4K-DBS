@@ -29,10 +29,27 @@ async def should_import_csv(db: Database) -> bool:
         logger.error(f"Error checking database stats: {e}")
         return False
 
-async def import_csv_profiles(csv_file_path: str = 'player_profiles.csv'):
+async def import_csv_profiles_wrapper(csv_file_path: str = 'player_profiles.csv'):
     """Import player profiles from CSV file"""
-    from import_csv_profiles import import_csv_profiles as do_import
-    await do_import(csv_file_path)
+    try:
+        # Import the actual import function
+        import sys
+        import importlib.util
+        
+        # Load import_csv_profiles.py
+        spec = importlib.util.spec_from_file_location("import_csv", csv_file_path.replace('.csv', '.py'))
+        if spec and spec.loader:
+            import_csv = importlib.util.module_from_spec(spec)
+            sys.modules["import_csv"] = import_csv
+            spec.loader.exec_module(import_csv)
+            await import_csv.import_csv_profiles(csv_file_path)
+        else:
+            # Fallback to direct import
+            from import_csv_profiles import import_csv_profiles
+            await import_csv_profiles(csv_file_path)
+    except Exception as e:
+        logger.error(f"Error importing CSV: {e}", exc_info=True)
+        raise
 
 async def auto_import_on_startup():
     """Import CSV automatically on startup if needed"""
@@ -67,13 +84,15 @@ async def auto_import_on_startup():
             logger.warning(f"⚠️ Searched locations:")
             for path in csv_paths:
                 logger.warning(f"   - {path}")
-            logger.warning("⚠️ Database will start empty - use /scan to populate")
+            logger.warning("⚠️ Database will start with current data - use /scan to add more")
             return
         
         logger.info("="*60)
         logger.info(f"🔄 IMPORTING PLAYER PROFILES FROM {csv_file}")
         logger.info("="*60)
         
+        # Use the existing import function
+        from import_csv_profiles import import_csv_profiles
         await import_csv_profiles(csv_file)
         
         # Verify import
@@ -88,6 +107,7 @@ async def auto_import_on_startup():
         logger.error(f"❌ ERROR DURING AUTO-IMPORT: {e}")
         logger.error("="*60)
         logger.error("Full traceback:", exc_info=True)
+        logger.warning("⚠️ Continuing with current database state...")
 
 if __name__ == "__main__":
     logging.basicConfig(
