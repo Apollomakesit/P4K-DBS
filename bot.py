@@ -81,9 +81,8 @@ def signal_handler(sig, frame):
     
     logger.info("✅ Background tasks stopped")
     
-    # 🔥 NEW: Properly close the scraper before shutting down
     async def cleanup_and_shutdown():
-        global scraper  # 🔥 MOVED HERE - where it's actually used
+        global scraper
         if scraper:
             try:
                 logger.info("🧹 Closing scraper client session...")
