@@ -65,6 +65,7 @@ def signal_handler(sig, frame):
     logger.info(f"\n🛑 Shutdown signal received ({sig}), cleaning up...")
     SHUTDOWN_REQUESTED = True
     
+    # Cancel all background tasks
     if scrape_actions.is_running():
         scrape_actions.cancel()
     if scrape_online_players.is_running():
@@ -79,10 +80,20 @@ def signal_handler(sig, frame):
         scrape_online_priority_actions.cancel()
     
     logger.info("✅ Background tasks stopped")
-    asyncio.create_task(bot.close())
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
+    
+    # 🔥 NEW: Properly close the scraper before shutting down
+    async def cleanup_and_shutdown():
+        global scraper
+        if scraper:
+            try:
+                logger.info("🧹 Closing scraper client session...")
+                await scraper.__aexit__(None, None, None)
+                logger.info("✅ Scraper closed successfully")
+            except Exception as e:
+                logger.error(f"Error closing scraper: {e}")
+        await bot.close()
+    
+    asyncio.create_task(cleanup_and_shutdown())
 
 def verify_environment():
     issues = []
