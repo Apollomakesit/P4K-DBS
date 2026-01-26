@@ -1168,59 +1168,6 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in player command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
     
-    @bot.tree.command(name="actions", description="View player's recent actions")
-    @app_commands.describe(
-        identifier="Player ID or name",
-        days="Number of days to look back (default: 7)"
-    )
-    @app_commands.checks.cooldown(1, 10)
-    async def actions_command(interaction: discord.Interaction, identifier: str, days: int = 7):
-        """View player's recent actions with pagination and deduplication"""
-        await interaction.response.defer()
-        
-        try:
-            # Get player info first
-            player = await db.get_player_stats(identifier)
-            
-            if not player:
-                await interaction.followup.send(
-                    f"🔍 **Not Found**\n\nNo player found with identifier: `{identifier}`"
-                )
-                return
-            
-            # Get actions
-            actions = await db.get_player_actions(player['player_id'], days=days)
-            
-            if not actions:
-                embed = discord.Embed(
-                    title=f"📝 Actions for {player['username']}",
-                    description=f"No actions found in the last {days} days",
-                    color=discord.Color.orange(),
-                    timestamp=datetime.now()
-                )
-                embed.set_footer(text=f"Player ID: {player['player_id']}")
-                await interaction.followup.send(embed=embed)
-                return
-            
-            # Create pagination view
-            view = ActionsPaginationView(
-                actions=actions,
-                player_info=player,
-                days=days,
-                author_id=interaction.user.id,
-                original_count=len(actions)
-            )
-            
-            # Send initial page
-            embed = view.build_embed()
-            message = await interaction.followup.send(embed=embed, view=view)
-            view.message = message
-            
-        except Exception as e:
-            logger.error(f"Error in actions command: {e}", exc_info=True)
-            await interaction.followup.send(f"❌ **Error:** {str(e)}")
-
-    
     # ========================================================================
     # ADMIN COMMANDS
     # ========================================================================
