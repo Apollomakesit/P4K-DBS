@@ -267,64 +267,68 @@ class Database:
             raise
     
     # 🔥 ASYNC WRAPPER: All public methods now use asyncio.to_thread()
-    
-    def _save_player_profile_sync(self, profile) -> None:
-        """🔥 UPDATED SYNC: Save/update player profile with change tracking (removed 5 fields)"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
+
+def _save_player_profile_sync(self, profile) -> None:
+    """🔥 UPDATED SYNC: Save/update player profile with change tracking (removed 5 fields)"""
+    try:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get current values to detect changes (removed level, respect_points from SELECT)
+            cursor.execute('''
+                SELECT faction, faction_rank, job, warnings
+                FROM player_profiles WHERE player_id = ?
+            ''', (profile['player_id'],))
+            old_data = cursor.fetchone()
+            
+            username = profile.get('player_name') or profile.get('username', f"Player_{profile['player_id']}")
+            last_seen = profile.get('last_connection') or profile.get('last_seen', datetime.now())
+            
+            # 🔥 UPDATED: Insert or update player (removed 5 fields: level, respect_points, phone_number, vehicles_count, properties_count)
+            cursor.execute('''
+                INSERT INTO player_profiles (
+                    player_id, username, is_online, last_seen,
+                    faction, faction_rank, job, warnings,
+                    played_hours, age_ic,
+                    last_profile_update
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(player_id) DO UPDATE SET
+                    username = excluded.username,
+                    is_online = excluded.is_online,
+                    last_seen = excluded.last_seen,
+                    faction = excluded.faction,
+                    faction_rank = excluded.faction_rank,
+                    job = excluded.job,
+                    warnings = excluded.warnings,
+                    played_hours = excluded.played_hours,
+                    age_ic = excluded.age_ic,
+                    last_profile_update = CURRENT_TIMESTAMP
+            ''', (
+                profile['player_id'],
+                username,
+                profile.get('is_online', False),
+                last_seen,
+                profile.get('faction'),
+                profile.get('faction_rank'),
+                profile.get('job'),
+                profile.get('warns') or profile.get('warnings'),
+                profile.get('played_hours'),
+                profile.get('age_ic')
+            ))
+            
+            # Track faction rank changes
+            if old_data:
+                old_faction = old_data['faction']
+                old_rank = old_data['faction_rank']
+                new_faction = profile.get('faction')
+                new_rank = profile.get('faction_rank')
                 
-                # Get current values to detect changes (removed level, respect_points from SELECT)
-                cursor.execute('''
-                    SELECT faction, faction_rank, job, warnings
-                    FROM player_profiles WHERE player_id = ?
-                ''', (profile['player_id'],))
-                old_data = cursor.fetchone()
-                
-                username = profile.get('player_name') or profile.get('username', f"Player_{profile['player_id']}")
-                last_seen = profile.get('last_connection') or profile.get('last_seen', datetime.now())
-                
-                # 🔥 UPDATED: Insert or update player (removed 5 fields: level, respect_points, phone_number, vehicles_count, properties_count)
-                cursor.execute('''
-                    INSERT INTO player_profiles (
-                        player_id, username, is_online, last_seen,
-                        faction, faction_rank, job, warnings,
-                        played_hours, age_ic,
-                        last_profile_update
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(player_id) DO UPDATE SET
-                        username = excluded.username,
-                        is_online = excluded.is_online,
-                        last_seen = excluded.last_seen,
-                        faction = excluded.faction,
-                        faction_rank = excluded.faction_rank,
-                        job = excluded.job,
-                        warnings = excluded.warnings,
-                        played_hours = excluded.played_hours,
-                        age_ic = excluded.age_ic,
-                        last_profile_update = CURRENT_TIMESTAMP
-                ''', (
-                    profile['player_id'],
-                    username,
-                    profile.get('is_online', False),
-                    last_seen,
-                    profile.get('faction'),
-                    profile.get('faction_rank'),
-                    profile.get('job'),
-                    profile.get('warns') or profile.get('warnings'),
-                    profile.get('played_hours'),
-                    profile.get('age_ic')
-                ))
-                
-                # Track faction rank changes
-                if old_data:
-                    old_faction = old_data['faction']
-                    old_rank = old_data['faction_rank']
-                    new_faction = profile.get('faction')
-                    new_rank = profile.get('faction_rank')
-                    
-                    if (old_faction != new_faction or old_rank != new_rank) and new_rank:
+                # 🔥 FIXED: Only track rank history for players WITH valid factions
+                # Skip if faction is NULL or civilian values
+                if (old_faction != new_faction or old_rank != new_rank) and new_rank and new_faction:
+                    # Check if faction is valid (not civilian/empty)
+                    if new_faction not in (None, '', 'Civil', 'Fără', 'None', '-', 'N/A'):
                         if old_rank:
                             cursor.execute('''
                                 UPDATE rank_history
@@ -336,26 +340,26 @@ class Database:
                             INSERT INTO rank_history (player_id, faction, rank_name, is_current)
                             VALUES (?, ?, ?, TRUE)
                         ''', (profile['player_id'], new_faction, new_rank))
-                    
-                    # 🔥 UPDATED: Track other field changes (removed level, respect_points)
-                    fields = ['faction', 'job', 'warnings']
-                    new_values = [new_faction, profile.get('job'), profile.get('warns') or profile.get('warnings')]
-                    
-                    for i, field in enumerate(fields):
-                        old_val = str(old_data[i]) if old_data[i] is not None else None
-                        new_val = str(new_values[i]) if new_values[i] is not None else None
-                        
-                        if old_val != new_val and new_val is not None:
-                            cursor.execute('''
-                                INSERT INTO profile_history (player_id, field_name, old_value, new_value)
-                                VALUES (?, ?, ?, ?)
-                            ''', (profile['player_id'], field, old_val, new_val))
                 
-                conn.commit()
-        except Exception as e:
-            logger.error(f"Error saving player profile {profile.get('player_id')}: {e}", exc_info=True)
-            raise
-    
+                # 🔥 UPDATED: Track other field changes (removed level, respect_points)
+                fields = ['faction', 'job', 'warnings']
+                new_values = [new_faction, profile.get('job'), profile.get('warns') or profile.get('warnings')]
+                
+                for i, field in enumerate(fields):
+                    old_val = str(old_data[i]) if old_data[i] is not None else None
+                    new_val = str(new_values[i]) if new_values[i] is not None else None
+                    
+                    if old_val != new_val and new_val is not None:
+                        cursor.execute('''
+                            INSERT INTO profile_history (player_id, field_name, old_value, new_value)
+                            VALUES (?, ?, ?, ?)
+                        ''', (profile['player_id'], field, old_val, new_val))
+            
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Error saving player profile {profile.get('player_id')}: {e}", exc_info=True)
+        raise
+
     async def save_player_profile(self, profile) -> None:
         """ASYNC: Save/update player profile"""
         await asyncio.to_thread(self._save_player_profile_sync, profile)
