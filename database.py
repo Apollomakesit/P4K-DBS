@@ -927,21 +927,31 @@ class Database:
         return await asyncio.to_thread(_get_members_sync)
     
     async def get_all_factions_with_counts(self) -> List[Dict]:
-        """🔥 UPDATED: Get all factions with member and CURRENT online counts from online_players table"""
+        """🔥 FIXED: Get all factions with member and CURRENTLY ONLINE counts
+        
+        Now filters online_players table by detected_online_at to only count
+        players who were detected online in the last 3 minutes (task runs every 60s).
+        This fixes the bug where /factionlist showed all-time online counts.
+        """
         def _get_factions_sync():
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                # 🔥 CRITICAL FIX: Only count players detected online in last 3 minutes
+                cutoff = datetime.now() - timedelta(minutes=3)
                 cursor.execute('''
                     SELECT 
                         p.faction as faction_name,
                         COUNT(DISTINCT p.player_id) as member_count,
-                        COUNT(DISTINCT o.player_id) as online_count
+                        COUNT(DISTINCT CASE 
+                            WHEN o.detected_online_at >= ? THEN o.player_id 
+                            ELSE NULL 
+                        END) as online_count
                     FROM player_profiles p
                     LEFT JOIN online_players o ON p.player_id = o.player_id
                     WHERE p.faction IS NOT NULL AND p.faction != ''
                     GROUP BY p.faction
                     ORDER BY member_count DESC
-                ''')
+                ''', (cutoff,))
                 return [dict(row) for row in cursor.fetchall()]
         
         return await asyncio.to_thread(_get_factions_sync)
