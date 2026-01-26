@@ -561,7 +561,7 @@ class Pro4KingsScraper:
         return actions[:limit]
 
     def parse_action_entry(self, entry) -> Optional[PlayerAction]:
-        """Enhanced action parser with multiple patterns"""
+        """🔥 FIXED: Enhanced action parser with correct patterns for 'ia dat lui' and chest actions"""
         try:
             text = entry.get_text(strip=True)
             if not text or len(text) < 15:
@@ -577,6 +577,7 @@ class Pro4KingsScraper:
                 except:
                     pass
 
+            # Warning pattern
             warning_match = re.search(
                 r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+un\s+avertisment,\s+de\s+la\s+administratorul\s+([^(]+)\((\d+)\)\s*,\s*motiv:\s*(.+?)(?=\d{4}-\d{2}-\d{2}|$)',
                 text,
@@ -596,45 +597,76 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
 
-            chest_match = re.search(
-                r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(pus\s+in|scos\s+din)\s+chest\s*(?:ID:\s*)?(\d+)?\s+x(\d+)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|$)',
+            # 🔥 FIXED: Chest withdraw pattern - matches "a retras din chest"
+            chest_withdraw_match = re.search(
+                r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
                 text,
                 re.IGNORECASE
             )
-            if chest_match:
-                action_type = "chest_deposit" if "pus in" in chest_match.group(3).lower() else "chest_withdraw"
-                full_detail = f"{chest_match.group(3)} chest {chest_match.group(4) or ''} x{chest_match.group(5)} {chest_match.group(6).strip()}"
-
+            if chest_withdraw_match:
+                chest_id = chest_withdraw_match.group(3)
+                quantity = chest_withdraw_match.group(4)
+                item_name = chest_withdraw_match.group(5).strip().rstrip('.')
+                
                 return PlayerAction(
-                    player_id=chest_match.group(2),
-                    player_name=chest_match.group(1).strip(),
-                    action_type=action_type,
-                    action_detail=full_detail,
-                    item_name=chest_match.group(6).strip(),
-                    item_quantity=int(chest_match.group(5)),
+                    player_id=chest_withdraw_match.group(2),
+                    player_name=chest_withdraw_match.group(1).strip(),
+                    action_type="chest_withdraw",
+                    action_detail=f"a retras din chest(id {chest_id}), {quantity}x {item_name}.",
+                    item_name=item_name,
+                    item_quantity=int(quantity),
                     timestamp=timestamp,
                     raw_text=text
                 )
 
+            # 🔥 FIXED: Chest deposit pattern - matches "pus in chest"
+            chest_deposit_match = re.search(
+                r'Jucatorul\s+([^(]+)\((\d+)\)\s+a?\s*pus\s+in\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
+                text,
+                re.IGNORECASE
+            )
+            if chest_deposit_match:
+                chest_id = chest_deposit_match.group(3)
+                quantity = chest_deposit_match.group(4)
+                item_name = chest_deposit_match.group(5).strip().rstrip('.')
+                
+                return PlayerAction(
+                    player_id=chest_deposit_match.group(2),
+                    player_name=chest_deposit_match.group(1).strip(),
+                    action_type="chest_deposit",
+                    action_detail=f"pus in chest(id {chest_id}), {quantity}x {item_name}.",
+                    item_name=item_name,
+                    item_quantity=int(quantity),
+                    timestamp=timestamp,
+                    raw_text=text
+                )
+
+            # 🔥 FIXED: Item given pattern - matches "ia dat lui" (not "a dat lui")
             gave_match = re.search(
-                r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+dat\s+lui\s+([^(]+)\((\d+)\)\s+x(\d+)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|$)',
+                r'Jucatorul\s+([^(]+)\((\d+)\)\s+(?:i)?a\s+dat\s+lui\s+([^(]+)\((\d+)\)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
                 text,
                 re.IGNORECASE
             )
             if gave_match:
+                # Extract items (everything after the target player info)
+                items_text = gave_match.group(5).strip()
+                # Remove leading comma if present
+                items_text = items_text.lstrip(', ')
+                
                 return PlayerAction(
                     player_id=gave_match.group(2),
                     player_name=gave_match.group(1).strip(),
                     action_type="item_given",
-                    action_detail=f"Dat {gave_match.group(6).strip()} către {gave_match.group(3).strip()}",
-                    item_name=gave_match.group(6).strip(),
-                    item_quantity=int(gave_match.group(5)),
+                    action_detail=f"ia dat lui {gave_match.group(3).strip()}({gave_match.group(4)}) {items_text}",
+                    item_name=items_text,
+                    item_quantity=None,  # Quantity is in items_text
                     target_player_id=gave_match.group(4),
                     target_player_name=gave_match.group(3).strip(),
                     timestamp=timestamp,
                     raw_text=text
                 )
 
+            # Item received pattern
             received_match = re.search(
                 r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+de\s+la\s+([^(]+)\((\d+)\)\s+x(\d+)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|$)',
                 text,
@@ -654,6 +686,7 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
 
+            # Vehicle pattern
             vehicle_match = re.search(
                 r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
                 text,
@@ -670,6 +703,7 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
 
+            # Property pattern
             property_match = re.search(
                 r'Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(casa|afacere|proprietate)\s*(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
                 text,
@@ -686,6 +720,7 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
 
+            # Generic pattern for any other "Jucatorul" action
             generic_match = re.search(
                 r'Jucatorul\s+([^(]+)\((\d+)\)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)',
                 text,
@@ -701,6 +736,7 @@ class Pro4KingsScraper:
                     raw_text=text
                 )
 
+            # Fallback for unmatched "jucatorul" mentions
             if 'jucatorul' in text.lower():
                 return PlayerAction(
                     player_id=None,
