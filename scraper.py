@@ -263,6 +263,11 @@ class Pro4KingsScraper:
                 'h1',
                 'h2',
                 'h3'
+                '.profile-header h1',
+                '.profile-header h2',
+                '.card-title',
+                '.player-info .name',
+                '[data-username]',  # Sometimes stored as data attribute
             ]
             
             for selector in username_selectors:
