@@ -83,7 +83,7 @@ def signal_handler(sig, frame):
     
     # 🔥 NEW: Properly close the scraper before shutting down
     async def cleanup_and_shutdown():
-        global scraper
+        global scraper  # 🔥 MOVED HERE - where it's actually used
         if scraper:
             try:
                 logger.info("🧹 Closing scraper client session...")
