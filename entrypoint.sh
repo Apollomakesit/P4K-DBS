@@ -198,5 +198,5 @@ echo "================================================"
 # Enable strict error handling ONLY for the bot startup
 set -e
 
-# Start the bot (use exec to replace shell process)
-exec python bot.py
+# Execute the bot
+exec python /app/bot.py
