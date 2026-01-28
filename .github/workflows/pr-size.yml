@@ -14,12 +14,7 @@ jobs:
       - uses: codelytv/pr-size-labeler@v1
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          xs_label: 'size/xs'
-          xs_max_size: 25
-          s_label: 'size/s'
-          s_max_size: 100
-          m_label: 'size/m'
-          m_max_size: 300
-          l_label: 'size/l'
-          l_max_size: 600
-          xl_label: 'size/xl'
+          xs_max_size: '25'
+          s_max_size: '100'
+          m_max_size: '300'
+          l_max_size: '600'
