@@ -1,5 +1,8 @@
 [phases.install]
 cmds = ["pip install -r requirements.txt"]
 
+[phases.setup]
+aptPkgs = ["sqlite3", "gzip"]
+
 [start]
-cmd = "python bot.py"
+cmd = "bash entrypoint.sh"
