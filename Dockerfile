@@ -3,60 +3,56 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies including build tools for Brotli AND gzip
+# Install system dependencies (minimal, no build tools unless needed)
 RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    python3-dev \
     gzip \
     sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Copy requirements first for better Docker layer caching
 COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application code (this copies everything that exists)
 COPY . .
 
 # Create directories for data, logs, and backup storage
 RUN mkdir -p /data /app/logs /app/backup_extracted
 
 # ============================================================================
-# EXTRACT DATABASE TO IMAGE (not to /data which will be overwritten by volume)
+# CONDITIONALLY EXTRACT DATABASE (only if file exists)
 # ============================================================================
-# Extract backup.db.gz to /app/backup_extracted/ (in the image, not in /data volume)
 RUN if [ -f backup.db.gz ]; then \
         echo "📦 Extracting backup.db.gz to image..."; \
-        gunzip -c backup.db.gz > /app/backup_extracted/pro4kings.db; \
-        DB_SIZE=$(du -h /app/backup_extracted/pro4kings.db | cut -f1); \
-        echo "✅ Database ready in image: /app/backup_extracted/pro4kings.db ($DB_SIZE)"; \
-        ls -lh /app/backup_extracted/pro4kings.db; \
+        gunzip -c backup.db.gz > /app/backup_extracted/pro4kings.db && \
+        DB_SIZE=$(du -h /app/backup_extracted/pro4kings.db | cut -f1) && \
+        echo "✅ Database extracted: /app/backup_extracted/pro4kings.db ($DB_SIZE)"; \
     else \
-        echo "⚠️  backup.db.gz not found - will try CSV import"; \
+        echo "ℹ️  No backup.db.gz - database will be created at runtime"; \
     fi
 
-# 🆕 Check for CSV file
+# Check for CSV file (informational only, doesn't fail if missing)
 RUN if [ -f player_profiles.csv ]; then \
-        echo "📊 CSV file found: player_profiles.csv"; \
-        ls -lh player_profiles.csv; \
+        CSV_SIZE=$(du -h player_profiles.csv | cut -f1); \
+        echo "📊 CSV file found: player_profiles.csv ($CSV_SIZE)"; \
     else \
-        echo "⚠️  player_profiles.csv not found"; \
+        echo "ℹ️  No CSV file - bot will create empty database"; \
     fi
 
-# Make entrypoint and migration scripts executable
+# Make entrypoint executable
 RUN chmod +x entrypoint.sh
 
-# Make Python scripts executable if they exist
-RUN if [ -f migrate_database.py ]; then chmod +x migrate_database.py; fi
-RUN if [ -f check_backup.py ]; then chmod +x check_backup.py; fi
-
 # Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV DATABASE_PATH=/data/pro4kings.db
+ENV PYTHONUNBUFFERED=1 \
+    DATABASE_PATH=/data/pro4kings.db \
+    PYTHONDONTWRITEBYTECODE=1
 
-# 🔥 USE ENTRYPOINT INSTEAD OF CMD (can't be overridden by Railway)
+# Healthcheck for Railway (optional but recommended)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)"
+
+# Use entrypoint script for startup
 ENTRYPOINT ["./entrypoint.sh"]
