@@ -1001,27 +1001,6 @@ async def force_sync(ctx):
         await ctx.send(f"❌ **Eroare la sincronizare**: {str(e)}")
         logger.error(f"Force sync error: {e}", exc_info=True)
 
-
-@bot.tree.command(name="config", description="Display bot configuration")
-async def show_config(interaction: discord.Interaction):
-    """Display current bot configuration"""
-    # Check if user is admin
-    if interaction.user.id not in Config.ADMIN_USER_IDS:
-        await interaction.response.send_message(
-            "❌ This command is only available to administrators!",
-            ephemeral=True
-        )
-        return
-    
-    embed = discord.Embed(
-        title="⚙️ Bot Configuration",
-        description=Config.display(),
-        color=discord.Color.blue(),
-        timestamp=datetime.now()
-    )
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
 # ============================================================================
 # MAIN ENTRY POINT
 # ============================================================================
