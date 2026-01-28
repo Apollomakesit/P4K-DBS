@@ -13,9 +13,21 @@ import re
 import tracemalloc
 import psutil
 
-from config import Config
+# 🔥 SET UP LOGGING FIRST (before using logger)
+tracemalloc.start()
 
-# 🔥 Validate configuration on startup
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+# 🔥 NOW validate configuration (after logger is defined)
 config_issues = Config.validate()
 if config_issues:
     logger.error("❌ Configuration validation failed:")
@@ -41,14 +53,11 @@ logger.info(f"• Scraper Workers: {Config.SCRAPER_MAX_CONCURRENT}")
 logger.info(f"• Database: {Config.DATABASE_PATH}")
 logger.info(f"{'='*60}\n")
 
-from commands import setup_commands
-
-tracemalloc.start()
-
+# 🔥 NOW define the rest of your bot variables
 COMMANDS_SYNCED = False
 SYNC_LOCK = asyncio.Lock()
-
 SCAN_IN_PROGRESS = False
+
 SCAN_STATS = {
     'start_time': None,
     'scanned': 0,
@@ -66,7 +75,7 @@ TASK_HEALTH = {
     'update_missing_faction_ranks': {'last_run': None, 'is_running': False, 'error_count': 0},
     'scrape_vip_actions': {'last_run': None, 'is_running': False, 'error_count': 0},
     'scrape_online_priority_actions': {'last_run': None, 'is_running': False, 'error_count': 0},
-    'cleanup_stale_data': {'last_run': None, 'is_running': False, 'error_count': 0},  # ADD THIS
+    'cleanup_stale_data': {'last_run': None, 'is_running': False, 'error_count': 0},
     'task_watchdog': {'last_run': None, 'is_running': False, 'error_count': 0},
 }
 
