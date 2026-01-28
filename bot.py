@@ -172,9 +172,9 @@ async def get_or_recreate_scraper(max_concurrent=None):
         scraper = None
     
     if scraper is None:
-        concurrent = max_concurrent if max_concurrent else 5
+        concurrent = max_concurrent if max_concurrent else Config.SCRAPER_MAX_CONCURRENT
         logger.info(f"🔄 Creating new scraper instance (max_concurrent={concurrent})...")
-        scraper = Pro4KingsScraper(max_concurrent=concurrent)
+        scraper = Pro4KingsScraper(max_concurrent=Config.SCRAPER_MAX_CONCURRENT)
         await scraper.__aenter__()
         logger.info(f"✅ Scraper initialized with {concurrent} workers")
     
@@ -184,8 +184,8 @@ async def get_or_recreate_scraper(max_concurrent=None):
             await scraper.__aexit__(None, None, None)
         except:
             pass
-        concurrent = max_concurrent if max_concurrent else 5
-        scraper = Pro4KingsScraper(max_concurrent=concurrent)
+        concurrent = max_concurrent if max_concurrent else Config.SCRAPER_MAX_CONCURRENT
+        scraper = Pro4KingsScraper(max_concurrent=Config.SCRAPER_MAX_CONCURRENT)
         await scraper.__aenter__()
     
     return scraper
@@ -467,7 +467,7 @@ async def before_task_watchdog():
     await bot.wait_until_ready()
     await asyncio.sleep(120)
 
-@tasks.loop(seconds=30)
+@tasks.loop(seconds=Config.SCRAPE_ACTIONS_INTERVAL)
 async def scrape_actions():
     if SHUTDOWN_REQUESTED:
         return
@@ -704,7 +704,7 @@ async def scrape_online_priority_actions_error(error):
     logger.error(f"❌ scrape_online_priority_actions task error: {error}", exc_info=error)
     TASK_HEALTH['scrape_online_priority_actions']['error_count'] += 1
 
-@tasks.loop(seconds=60)
+@tasks.loop(seconds=Config.SCRAPE_ONLINE_INTERVAL)
 async def scrape_online_players():
     if SHUTDOWN_REQUESTED:
         return
@@ -929,3 +929,24 @@ if __name__ == '__main__':
         logger.error(f"❌ Fatal error: {e}", exc_info=True)
     finally:
         logger.info("🛑 Bot shutdown complete")
+
+@bot.tree.command(name="config", description="Display bot configuration")
+async def show_config(interaction: discord.Interaction):
+    """Display current bot configuration"""
+    
+    # Check if user is admin
+    if interaction.user.id not in Config.ADMIN_USER_IDS:
+        await interaction.response.send_message(
+            "❌ This command is only available to administrators!",
+            ephemeral=True
+        )
+        return
+    
+    embed = discord.Embed(
+        title="⚙️ Bot Configuration",
+        description=Config.display(),
+        color=discord.Color.blue(),
+        timestamp=datetime.now()
+    )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
