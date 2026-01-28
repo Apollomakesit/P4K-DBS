@@ -682,9 +682,91 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in health command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
-  # ========================================================================
+    # ========================================================================
     # ADMIN COMMANDS
     # ========================================================================
+
+@bot.tree.command(name="cleanup", description="[ADMIN] Cleanup old database records")
+async def cleanup_db(interaction: discord.Interaction):
+    """Cleanup old database records (dry run first)"""
+    
+    # Permission check - restrict to server admins
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ You need Administrator permissions to use this command!",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.defer()
+    
+    try:
+        # First show what would be deleted (dry run)
+        dry_results = await db.cleanup_old_data(dry_run=True)
+        
+        embed = discord.Embed(
+            title="🧹 Database Cleanup Preview",
+            description="These records would be deleted:",
+            color=discord.Color.orange()
+        )
+        
+        total = 0
+        for table, count in dry_results.items():
+            embed.add_field(
+                name=f"📋 {table}",
+                value=f"{count:,} records",
+                inline=True
+            )
+            total += count
+        
+        embed.set_footer(text=f"Total: {total:,} records • Use '/cleanup confirm' to proceed")
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: {e}")
+
+@bot.tree.command(name="cleanup_confirm", description="[ADMIN] Actually perform database cleanup")
+async def cleanup_db_confirm(interaction: discord.Interaction):
+    """Actually perform the cleanup"""
+    
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ You need Administrator permissions!",
+            ephemeral=True
+        )
+        return
+    
+    await interaction.response.defer()
+    
+    try:
+        # Perform actual cleanup
+        results = await db.cleanup_old_data(dry_run=False)
+        
+        embed = discord.Embed(
+            title="✅ Database Cleanup Complete",
+            description="Successfully deleted old records:",
+            color=discord.Color.green()
+        )
+        
+        total = 0
+        for table, count in results.items():
+            embed.add_field(
+                name=f"📋 {table}",
+                value=f"{count:,} deleted",
+                inline=True
+            )
+            total += count
+        
+        embed.set_footer(text=f"Total deleted: {total:,} records")
+        
+        await interaction.followup.send(embed=embed)
+        logger.info(f"✅ Database cleanup performed by {interaction.user}: {total:,} records deleted")
+        
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: {e}")
+        logger.error(f"Cleanup error: {e}", exc_info=True)
+
 
 @bot.tree.command(name="memory", description="Show bot memory usage and statistics")
 async def memory_stats(interaction: discord.Interaction):
