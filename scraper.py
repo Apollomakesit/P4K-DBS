@@ -779,14 +779,14 @@ class Pro4KingsScraper:
                 quantity = chestdepositmatch.group(4)
                 itemname = chestdepositmatch.group(5).strip().rstrip(".")
                 return PlayerAction(
-                    playerid=chestdepositmatch.group(2),
-                    playername=chestdepositmatch.group(1).strip(),
-                    actiontype="chestdeposit",
-                    actiondetail=f"pus in chest #{chestid}, {quantity}x {itemname}.",
-                    itemname=itemname,
-                    itemquantity=int(quantity),
+                    player_id=chestdepositmatch.group(2),
+                    player_name=chestdepositmatch.group(1).strip(),
+                    action_type="chestdeposit",
+                    action_detail=f"pus in chest #{chestid}, {quantity}x {itemname}.",
+                    item_name=itemname,
+                    item_quantity=int(quantity),
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             # FIXED: Chest withdraw pattern - matches a retras din chest
@@ -800,14 +800,14 @@ class Pro4KingsScraper:
                 quantity = chestwithdrawmatch.group(4)
                 itemname = chestwithdrawmatch.group(5).strip().rstrip(".")
                 return PlayerAction(
-                    playerid=chestwithdrawmatch.group(2),
-                    playername=chestwithdrawmatch.group(1).strip(),
-                    actiontype="chestwithdraw",
-                    actiondetail=f"a retras din chest(id {chestid}), {quantity}x {itemname}.",
-                    itemname=itemname,
-                    itemquantity=int(quantity),
+                    player_id=chestwithdrawmatch.group(2),
+                    player_name=chestwithdrawmatch.group(1).strip(),
+                    action_type="chestwithdraw",
+                    action_detail=f"a retras din chest(id {chestid}), {quantity}x {itemname}.",
+                    item_name=itemname,
+                    item_quantity=int(quantity),
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             # FIXED: Chest withdraw pattern - matches a retras din chest
@@ -821,14 +821,14 @@ class Pro4KingsScraper:
                 quantity = chestwithdrawmatch.group(4)
                 itemname = chestwithdrawmatch.group(5).strip().rstrip(".")
                 return PlayerAction(
-                    playerid=chestwithdrawmatch.group(2),
-                    playername=chestwithdrawmatch.group(1).strip(),
-                    actiontype="chestwithdraw",
-                    actiondetail=f"a retras din chest(id {chestid}), {quantity}x {itemname}.",
-                    itemname=itemname,
-                    itemquantity=int(quantity),
+                    player_id=chestwithdrawmatch.group(2),
+                    player_name=chestwithdrawmatch.group(1).strip(),
+                    action_type="chestwithdraw",
+                    action_detail=f"a retras din chest(id {chestid}), {quantity}x {itemname}.",
+                    item_name=itemname,
+                    item_quantity=int(quantity),
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             # Item received pattern
@@ -839,16 +839,16 @@ class Pro4KingsScraper:
             )
             if receivedmatch:
                 return PlayerAction(
-                    playerid=receivedmatch.group(2),
-                    playername=receivedmatch.group(1).strip(),
-                    actiontype="itemreceived",
-                    actiondetail=f"Primit {receivedmatch.group(6).strip()} de la {receivedmatch.group(3).strip()}",
-                    itemname=receivedmatch.group(6).strip(),
-                    itemquantity=int(receivedmatch.group(5)),
-                    targetplayerid=receivedmatch.group(4),
-                    targetplayername=receivedmatch.group(3).strip(),
+                    player_id=receivedmatch.group(2),
+                    player_name=receivedmatch.group(1).strip(),
+                    action_type="itemreceived",
+                    action_detail=f"Primit {receivedmatch.group(6).strip()} de la {receivedmatch.group(3).strip()}",
+                    item_name=receivedmatch.group(6).strip(),
+                    item_quantity=int(receivedmatch.group(5)),
+                    targetplayer_id=receivedmatch.group(4),
+                    targetplayer_name=receivedmatch.group(3).strip(),
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             # FIXED: Item given pattern - matches i-a dat lui not a dat lui
@@ -861,16 +861,16 @@ class Pro4KingsScraper:
                 itemstext = gavematch.group(5).strip()
                 itemstext = itemstext.lstrip(",")
                 return PlayerAction(
-                    playerid=gavematch.group(2),
-                    playername=gavematch.group(1).strip(),
-                    actiontype="itemgiven",
-                    actiondetail=f"i-a dat lui {gavematch.group(3).strip()}({gavematch.group(4)}) {itemstext}",
-                    itemname=itemstext,
-                    itemquantity=None,
-                    targetplayerid=gavematch.group(4),
-                    targetplayername=gavematch.group(3).strip(),
+                    player_id=gavematch.group(2),
+                    player_name=gavematch.group(1).strip(),
+                    action_type="itemgiven",
+                    action_detail=f"i-a dat lui {gavematch.group(3).strip()}({gavematch.group(4)}) {itemstext}",
+                    item_name=itemstext,
+                    item_quantity=None,
+                    targetplayer_id=gavematch.group(4),
+                    targetplayer_name=gavematch.group(3).strip(),
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             # Property pattern
@@ -886,12 +886,12 @@ class Pro4KingsScraper:
                     else "propertysold"
                 )
                 return PlayerAction(
-                    playerid=propertymatch.group(2),
-                    playername=propertymatch.group(1).strip(),
-                    actiontype=actiontype,
-                    actiondetail=f"{propertymatch.group(3)} {propertymatch.group(4)}",
+                    player_id=propertymatch.group(2),
+                    player_name=propertymatch.group(1).strip(),
+                    action_type=actiontype,
+                    action_detail=f"{propertymatch.group(3)} {propertymatch.group(4)}",
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             # Vehicle pattern
@@ -907,12 +907,12 @@ class Pro4KingsScraper:
                     else "vehiclesold"
                 )
                 return PlayerAction(
-                    playerid=vehiclematch.group(2),
-                    playername=vehiclematch.group(1).strip(),
-                    actiontype=actiontype,
-                    actiondetail=vehiclematch.group(4).strip(),
+                    player_id=vehiclematch.group(2),
+                    player_name=vehiclematch.group(1).strip(),
+                    action_type=actiontype,
+                    action_detail=vehiclematch.group(4).strip(),
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             # Contract pattern for vehicle transfers
@@ -931,16 +931,16 @@ class Pro4KingsScraper:
                 vehicleinfo = vehiclematch.group(1) if vehiclematch else "Vehicle"
 
                 return PlayerAction(
-                    playerid=fromid,
-                    playername=fromname,
-                    actiontype="contract",
-                    actiondetail=f"Contract with {toname}({toid}) {vehicleinfo}",
-                    itemname=vehicleinfo,
-                    itemquantity=None,
-                    targetplayerid=toid,
-                    targetplayername=toname,
+                    player_id=fromid,
+                    player_name=fromname,
+                    action_type="contract",
+                    action_detail=f"Contract with {toname}({toid}) {vehicleinfo}",
+                    item_name=vehicleinfo,
+                    item_quantity=None,
+                    targetplayer_id=toid,
+                    targetplayer_name=toname,
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             # Warning pattern
@@ -951,16 +951,16 @@ class Pro4KingsScraper:
             )
             if warningmatch:
                 return PlayerAction(
-                    playerid=warningmatch.group(2),
-                    playername=warningmatch.group(1).strip(),
-                    actiontype="warningreceived",
-                    actiondetail=f"Avertisment de la {warningmatch.group(3).strip()}",
-                    adminid=warningmatch.group(4),
-                    adminname=warningmatch.group(3).strip(),
-                    warningcount=None,
+                    player_id=warningmatch.group(2),
+                    player_name=warningmatch.group(1).strip(),
+                    action_type="warningreceived",
+                    action_detail=f"Avertisment de la {warningmatch.group(3).strip()}",
+                    admin_id=warningmatch.group(4),
+                    admin_name=warningmatch.group(3).strip(),
+                    warning_count=None,
                     reason=warningmatch.group(5).strip(),
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             # Generic pattern for any other Jucatorul action
@@ -971,12 +971,12 @@ class Pro4KingsScraper:
             )
             if genericmatch:
                 return PlayerAction(
-                    playerid=genericmatch.group(2),
-                    playername=genericmatch.group(1).strip(),
-                    actiontype="other",
-                    actiondetail=genericmatch.group(3).strip(),
+                    player_id=genericmatch.group(2),
+                    player_name=genericmatch.group(1).strip(),
+                    action_type="other",
+                    action_detail=genericmatch.group(3).strip(),
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             # Warning pattern
@@ -987,16 +987,16 @@ class Pro4KingsScraper:
             )
             if warningmatch:
                 return PlayerAction(
-                    playerid=warningmatch.group(2),
-                    playername=warningmatch.group(1).strip(),
-                    actiontype="warningreceived",
-                    actiondetail=f"Avertisment de la {warningmatch.group(3).strip()}",
-                    adminid=warningmatch.group(4),
-                    adminname=warningmatch.group(3).strip(),
-                    warningcount=None,
+                    player_id=warningmatch.group(2),
+                    player_name=warningmatch.group(1).strip(),
+                    action_type="warningreceived",
+                    action_detail=f"Avertisment de la {warningmatch.group(3).strip()}",
+                    admin_id=warningmatch.group(4),
+                    admin_name=warningmatch.group(3).strip(),
+                    warning_count=None,
                     reason=warningmatch.group(5).strip(),
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             # OTHER - Admin jail pattern
@@ -1012,26 +1012,26 @@ class Pro4KingsScraper:
                     )
                     if playermatch:
                         return PlayerAction(
-                            playerid=playermatch.group(2),
-                            playername=playermatch.group(1).strip(),
-                            actiontype="adminjail",
-                            actiondetail=f"Admin jail {adminjailmatch.group(1)} checkpoints, reason: {adminjailmatch.group(4)}",
-                            adminid=adminjailmatch.group(3),
-                            adminname=adminjailmatch.group(2).strip(),
+                            player_id=playermatch.group(2),
+                            player_name=playermatch.group(1).strip(),
+                            action_type="adminjail",
+                            action_detail=f"Admin jail {adminjailmatch.group(1)} checkpoints, reason: {adminjailmatch.group(4)}",
+                            admin_id=adminjailmatch.group(3),
+                            admin_name=adminjailmatch.group(2).strip(),
                             reason=adminjailmatch.group(4),
                             timestamp=timestamp,
-                            rawtext=text,
+                            raw_text=text,
                         )
 
             # Fallback for unmatched jucatorul mentions
             if "jucatorul" in text.lower():
                 return PlayerAction(
-                    playerid=None,
-                    playername=None,
-                    actiontype="unknown",
-                    actiondetail=text[:200],
+                    player_id=None,
+                    player_name=None,
+                    action_type="unknown",
+                    action_detail=text[:200],
                     timestamp=timestamp,
-                    rawtext=text,
+                    raw_text=text,
                 )
 
             return None
