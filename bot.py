@@ -36,8 +36,9 @@ TASK_HEALTH = {
     'update_pending_profiles': {'last_run': None, 'is_running': False, 'error_count': 0},
     'check_banned_players': {'last_run': None, 'is_running': False, 'error_count': 0},
     'update_missing_faction_ranks': {'last_run': None, 'is_running': False, 'error_count': 0},
-    'scrape_vip_actions': {'last_run': None, 'is_running': False, 'error_count': 0},  # ADD THIS
-    'scrape_online_priority_actions': {'last_run': None, 'is_running': False, 'error_count': 0},  # ADD THIS
+    'scrape_vip_actions': {'last_run': None, 'is_running': False, 'error_count': 0},
+    'scrape_online_priority_actions': {'last_run': None, 'is_running': False, 'error_count': 0},
+    'cleanup_stale_data': {'last_run': None, 'is_running': False, 'error_count': 0},  # ADD THIS
     'task_watchdog': {'last_run': None, 'is_running': False, 'error_count': 0},
 }
 
@@ -78,7 +79,9 @@ def signal_handler(sig, frame):
         scrape_vip_actions.cancel()
     if scrape_online_priority_actions.is_running():
         scrape_online_priority_actions.cancel()
-    
+    if cleanup_stale_data.is_running():  # ADD THIS
+        cleanup_stale_data.cancel()
+        
     logger.info("✅ Background tasks stopped")
     
     # 🔥 NEW: Properly close the scraper before shutting down
@@ -169,6 +172,10 @@ async def on_ready():
     
     if not verify_environment():
         logger.error("❌ Environment verification failed! Bot may not work correctly.")
+    if not cleanup_stale_data.is_running():
+        cleanup_stale_data.start()
+        logger.info('✓ Started: cleanup_stale_data (10min interval)')
+
     
     # 🔥 AUTO-IMPORT CSV DATA ON FIRST RUN (for Railway persistence)
     try:
@@ -340,6 +347,27 @@ async def inspect_database_tables():
     except Exception as e:
         logger.error(f"❌ Error inspecting database: {e}", exc_info=True)
 
+@tasks.loop(minutes=10)
+async def cleanup_stale_data():
+    """Cleanup stale online player entries every 10 minutes"""
+    if SHUTDOWN_REQUESTED:
+        return
+    try:
+        removed = await db.cleanup_stale_online_players(minutes=5)
+        if removed > 0:
+            logger.info(f"🧹 Cleaned up {removed} stale online entries (older than 5 min)")
+    except Exception as e:
+        logger.error(f"❌ Error in cleanup task: {e}", exc_info=True)
+
+@cleanup_stale_data.before_loop
+async def before_cleanup_stale_data():
+    await bot.wait_until_ready()
+    logger.info("✓ cleanup_stale_data task ready")
+
+@cleanup_stale_data.error
+async def cleanup_stale_data_error(error):
+    logger.error(f"❌ cleanup_stale_data task error: {error}", exc_info=error)
+
 @tasks.loop(minutes=5)
 async def task_watchdog():
     if SHUTDOWN_REQUESTED:
@@ -348,47 +376,58 @@ async def task_watchdog():
     now = datetime.now()
     issues = []
     
+    # Check scrape_actions
     if TASK_HEALTH['scrape_actions']['last_run']:
         elapsed = (now - TASK_HEALTH['scrape_actions']['last_run']).total_seconds()
         if elapsed > 120:
-            issues.append("scrape_actions hasn't run in 2+ minutes")
-            if not scrape_actions.is_running():
-                logger.warning("🔄 Restarting crashed task: scrape_actions")
-                scrape_actions.restart()
+            # Only report if task is NOT currently running
+            if not TASK_HEALTH['scrape_actions']['is_running']:
+                issues.append("scrape_actions hasn't run in 2+ minutes")
+                if not scrape_actions.is_running():
+                    logger.warning("🔄 Restarting crashed task: scrape_actions")
+                    scrape_actions.restart()
     
+    # Check scrape_online_players
     if TASK_HEALTH['scrape_online_players']['last_run']:
         elapsed = (now - TASK_HEALTH['scrape_online_players']['last_run']).total_seconds()
         if elapsed > 180:
-            issues.append("scrape_online_players hasn't run in 3+ minutes")
-            if not scrape_online_players.is_running():
-                logger.warning("🔄 Restarting crashed task: scrape_online_players")
-                scrape_online_players.restart()
+            if not TASK_HEALTH['scrape_online_players']['is_running']:
+                issues.append("scrape_online_players hasn't run in 3+ minutes")
+                if not scrape_online_players.is_running():
+                    logger.warning("🔄 Restarting crashed task: scrape_online_players")
+                    scrape_online_players.restart()
     
+    # Check update_pending_profiles
     if TASK_HEALTH['update_pending_profiles']['last_run']:
         elapsed = (now - TASK_HEALTH['update_pending_profiles']['last_run']).total_seconds()
         if elapsed > 360:
-            issues.append("update_pending_profiles hasn't run in 6+ minutes")
-            if not update_pending_profiles.is_running():
-                logger.warning("🔄 Restarting crashed task: update_pending_profiles")
-                update_pending_profiles.restart()
+            if not TASK_HEALTH['update_pending_profiles']['is_running']:
+                issues.append("update_pending_profiles hasn't run in 6+ minutes")
+                if not update_pending_profiles.is_running():
+                    logger.warning("🔄 Restarting crashed task: update_pending_profiles")
+                    update_pending_profiles.restart()
     
+    # Check VIP actions task
     if Config.VIP_PLAYER_IDS and TASK_HEALTH['scrape_vip_actions']['last_run']:
         elapsed = (now - TASK_HEALTH['scrape_vip_actions']['last_run']).total_seconds()
         max_interval = Config.VIP_SCAN_INTERVAL * 5
         if elapsed > max_interval:
-            issues.append(f"scrape_vip_actions hasn't run in {elapsed:.0f}s")
-            if not scrape_vip_actions.is_running():
-                logger.warning("🔄 Restarting crashed task: scrape_vip_actions")
-                scrape_vip_actions.restart()
+            if not TASK_HEALTH['scrape_vip_actions']['is_running']:
+                issues.append(f"scrape_vip_actions hasn't run in {elapsed:.0f}s")
+                if not scrape_vip_actions.is_running():
+                    logger.warning("🔄 Restarting crashed task: scrape_vip_actions")
+                    scrape_vip_actions.restart()
     
+    # Check online priority task
     if Config.TRACK_ONLINE_PLAYERS_PRIORITY and TASK_HEALTH['scrape_online_priority_actions']['last_run']:
         elapsed = (now - TASK_HEALTH['scrape_online_priority_actions']['last_run']).total_seconds()
         max_interval = Config.ONLINE_PLAYERS_SCAN_INTERVAL * 5
         if elapsed > max_interval:
-            issues.append(f"scrape_online_priority_actions hasn't run in {elapsed:.0f}s")
-            if not scrape_online_priority_actions.is_running():
-                logger.warning("🔄 Restarting crashed task: scrape_online_priority_actions")
-                scrape_online_priority_actions.restart()
+            if not TASK_HEALTH['scrape_online_priority_actions']['is_running']:
+                issues.append(f"scrape_online_priority_actions hasn't run in {elapsed:.0f}s")
+                if not scrape_online_priority_actions.is_running():
+                    logger.warning("🔄 Restarting crashed task: scrape_online_priority_actions")
+                    scrape_online_priority_actions.restart()
     
     if issues:
         logger.warning(f"⚠️ Task health issues detected: {', '.join(issues)}")
