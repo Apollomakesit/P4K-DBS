@@ -425,7 +425,7 @@ class FactionPaginationView(discord.ui.View):
         )
 
         for member in page_members:
-            status = "🟢" if member.get("is_online") else "⚪"
+            status = "🟢" if member.get("isonline") else "🔴"
             rank = member.get("faction_rank")
 
             # Handle NULL, empty, and "null" string values
