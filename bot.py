@@ -649,7 +649,7 @@ async def scrape_actions():
                 "raw_text": action.raw_text,
             }
 
-            if not await db.action_exists(action.timestamp, action.raw_text):
+            if not await db.actionexists(action.timestamp, action.raw_text):
                 await db.save_action(action_dict)
                 new_count += 1
 
@@ -750,7 +750,7 @@ async def scrape_vip_actions():
                     "raw_text": action.raw_text,
                 }
 
-                if not await db.action_exists(action.timestamp, action.raw_text):
+                if not await db.actionexists(action.timestamp, action.raw_text):
                     await db.save_action(action_dict)
                     new_count += 1
 
@@ -810,7 +810,7 @@ async def scrape_online_priority_actions():
     TASK_HEALTH["scrape_online_priority_actions"]["is_running"] = True
 
     try:
-        online_players = await db.get_current_online_players()
+        online_players = await db.getcurrentonlineplayers()
         if not online_players:
             return
 
@@ -842,7 +842,7 @@ async def scrape_online_priority_actions():
                     "raw_text": action.raw_text,
                 }
 
-                if not await db.action_exists(action.timestamp, action.raw_text):
+                if not await db.actionexists(action.timestamp, action.raw_text):
                     await db.save_action(action_dict)
                     new_count += 1
 
@@ -905,7 +905,7 @@ async def scrape_online_players():
         online_players = await scraper_instance.get_online_players()
         current_time = datetime.now()
 
-        previous_online = await db.get_current_online_players()
+        previous_online = await db.getcurrentonlineplayers()
         previous_ids = {p["player_id"] for p in previous_online}
         current_ids = {p["player_id"] for p in online_players}
 
@@ -973,7 +973,7 @@ async def update_pending_profiles():
 
     try:
         scraper_instance = await get_or_recreate_scraper()
-        pending_ids = await db.get_players_pending_update(
+        pending_ids = await db.getplayerspendingupdate(
             limit=Config.PROFILES_UPDATE_BATCH
         )
 
