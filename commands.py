@@ -816,54 +816,6 @@ async def memory_stats(interaction: discord.Interaction):
             ephemeral=True
         )
 
-    @bot.tree.command(name="memory", description="Show bot memory usage and statistics")
-    sync def memory_stats(interaction: discord.Interaction):
-        """Display memory usage statistics"""
-        try:
-            import tracemalloc
-            import psutil
-            import os
-        
-            # Memory tracing
-            current, peak = tracemalloc.get_traced_memory()
-        
-            # System memory
-            process = psutil.Process(os.getpid())
-            mem_info = process.memory_info()
-            sys_mem = psutil.virtual_memory()
-        
-            embed = discord.Embed(
-                title="📊 Bot Memory Statistics",
-                color=discord.Color.blue(),
-                timestamp=datetime.now()
-            )
-        
-            embed.add_field(
-                name="🔍 Traced Memory",
-                value=f"Current: {current / 1024**2:.2f} MB\nPeak: {peak / 1024**2:.2f} MB",
-                inline=True
-            )
-        
-            embed.add_field(
-                name="💾 Process Memory",
-                value=f"RSS: {mem_info.rss / 1024**2:.2f} MB\nVMS: {mem_info.vms / 1024**2:.2f} MB",
-                inline=True
-            )
-        
-            embed.add_field(
-                name="🖥️ System Memory",
-                value=f"Used: {sys_mem.percent}%\nAvailable: {sys_mem.available / 1024**3:.2f} GB",
-                inline=True
-            )
-            
-            await interaction.response.send_message(embed=embed)
-        
-        except Exception as e:
-            await interaction.response.send_message(
-                f"❌ Error getting memory stats: {e}",
-                ephemeral=True
-            )
-
     @bot.tree.command(name="cleanup_old_data", description="Remove old data based on retention policy (Admin only)")
     @app_commands.describe(
         dry_run="Preview without deleting (default: true)",
