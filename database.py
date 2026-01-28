@@ -524,28 +524,27 @@ class Database:
         """ASYNC: Save action to database"""
         await asyncio.to_thread(self._save_action_sync, action)
 
-def _action_exists_sync(self, timestamp: datetime, text: str) -> bool:
-    """🔥 SYNC: Check if action exists - improved duplicate detection with 2-second window"""
-    try:
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            # 🔥 FIXED: Use 2-second window instead of exact timestamp match
-            time_window_start = timestamp - timedelta(seconds=2)
-            time_window_end = timestamp + timedelta(seconds=2)
-            
-            cursor.execute(
-                """
-                SELECT 1 FROM actions 
-                WHERE timestamp BETWEEN ? AND ? 
-                AND raw_text = ? 
-                LIMIT 1
-                """,
-                (time_window_start, time_window_end, text),
-            )
-            return cursor.fetchone() is not None
-    except Exception as e:
-        logger.error(f"Error checking action existence: {e}")
-        return False
+    def _action_exists_sync(self, timestamp: datetime, text: str) -> bool:
+        """SYNC: Check if action exists - improved duplicate detection with 2-second window"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                time_window_start = timestamp - timedelta(seconds=2)
+                time_window_end = timestamp + timedelta(seconds=2)
+
+                cursor.execute(
+                    """
+                    SELECT 1 FROM actions 
+                    WHERE timestamp BETWEEN ? AND ? 
+                    AND raw_text = ? 
+                    LIMIT 1
+                    """,
+                    (time_window_start, time_window_end, text),
+                )
+                return cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Error checking action existence: {e}")
+            return False
 
 
 async def action_exists(self, timestamp: datetime, text: str) -> bool:
