@@ -356,7 +356,7 @@ async def log_database_startup_info():
             return
 
         # Get stats
-        stats = await db.get_database_stats()
+        stats = await db.getdatabasestats()
         total_players = stats.get("total_players", 0)
         total_actions = stats.get("total_actions", 0)
         online_count = stats.get("online_count", 0)
@@ -366,9 +366,9 @@ async def log_database_startup_info():
         logger.info(f"🟢 Online Now: {online_count:,}")
 
         # Recent activity
-        actions_24h = await db.get_actions_count_last_24h()
-        logins_today = await db.get_logins_count_today()
-        banned_count = await db.get_active_bans_count()
+        actions_24h = await db.getactionscountlast24h()
+        logins_today = await db.getloginscounttoday()
+        banned_count = await db.getactivebandscount()
 
         logger.info(f"📈 Actions (24h): {actions_24h:,}")
         logger.info(f"🔑 Logins Today: {logins_today:,}")
@@ -456,7 +456,7 @@ async def cleanup_stale_data():
     TASK_HEALTH["cleanup_stale_data"]["is_running"] = True
 
     try:
-        removed = await db.cleanup_stale_online_players(minutes=5)
+        removed = await db.cleanupstaleonlineplayers(minutes=5)
         if removed > 0:
             logger.info(
                 f"🧹 Cleaned up {removed} stale online entries (older than 5 min)"
@@ -649,13 +649,13 @@ async def scrape_actions():
                 "raw_text": action.raw_text,
             }
 
-            if not await db.action_exists(action.timestamp, action.raw_text):
-                await db.save_action(action_dict)
+            if not await db.actionexists(action.timestamp, action.raw_text):
+                await db.saveaction(action_dict)
                 new_count += 1
 
                 if action.player_id:
                     new_player_ids.add((action.player_id, action.player_name))
-                    await db.mark_player_for_update(
+                    await db.markplayerforupdate(
                         action.player_id, action.player_name
                     )
 
@@ -663,7 +663,7 @@ async def scrape_actions():
                     new_player_ids.add(
                         (action.target_player_id, action.target_player_name)
                     )
-                    await db.mark_player_for_update(
+                    await db.markplayerforupdate(
                         action.target_player_id, action.target_player_name
                     )
 
@@ -750,13 +750,13 @@ async def scrape_vip_actions():
                     "raw_text": action.raw_text,
                 }
 
-                if not await db.action_exists(action.timestamp, action.raw_text):
-                    await db.save_action(action_dict)
+                if not await db.actionexists(action.timestamp, action.raw_text):
+                    await db.saveaction(action_dict)
                     new_count += 1
 
                     if action.player_id:
                         new_player_ids.add((action.player_id, action.player_name))
-                        await db.mark_player_for_update(
+                        await db.markplayerforupdate(
                             action.player_id, action.player_name
                         )
 
@@ -764,7 +764,7 @@ async def scrape_vip_actions():
                         new_player_ids.add(
                             (action.target_player_id, action.target_player_name)
                         )
-                        await db.mark_player_for_update(
+                        await db.markplayerforupdate(
                             action.target_player_id, action.target_player_name
                         )
 
@@ -810,7 +810,7 @@ async def scrape_online_priority_actions():
     TASK_HEALTH["scrape_online_priority_actions"]["is_running"] = True
 
     try:
-        online_players = await db.get_current_online_players()
+        online_players = await db.getcurrentonlineplayers()
         if not online_players:
             return
 
@@ -842,13 +842,13 @@ async def scrape_online_priority_actions():
                     "raw_text": action.raw_text,
                 }
 
-                if not await db.action_exists(action.timestamp, action.raw_text):
-                    await db.save_action(action_dict)
+                if not await db.actionexists(action.timestamp, action.raw_text):
+                    await db.saveaction(action_dict)
                     new_count += 1
 
                     if action.player_id:
                         new_player_ids.add((action.player_id, action.player_name))
-                        await db.mark_player_for_update(
+                        await db.markplayerforupdate(
                             action.player_id, action.player_name
                         )
 
@@ -856,7 +856,7 @@ async def scrape_online_priority_actions():
                         new_player_ids.add(
                             (action.target_player_id, action.target_player_name)
                         )
-                        await db.mark_player_for_update(
+                        await db.markplayerforupdate(
                             action.target_player_id, action.target_player_name
                         )
 
@@ -905,7 +905,7 @@ async def scrape_online_players():
         online_players = await scraper_instance.get_online_players()
         current_time = datetime.now()
 
-        previous_online = await db.get_current_online_players()
+        previous_online = await db.getcurrentonlineplayers()
         previous_ids = {p["player_id"] for p in previous_online}
         current_ids = {p["player_id"] for p in online_players}
 
@@ -913,10 +913,10 @@ async def scrape_online_players():
 
         for player in online_players:
             if player["player_id"] in new_logins:
-                await db.save_login(
+                await db.savelogin(
                     player["player_id"], player["player_name"], current_time
                 )
-                await db.mark_player_for_update(
+                await db.markplayerforupdate(
                     player["player_id"], player["player_name"]
                 )
                 logger.info(
@@ -925,13 +925,13 @@ async def scrape_online_players():
 
         logouts = previous_ids - current_ids
         for player_id in logouts:
-            await db.save_logout(player_id, current_time)
+            await db.savelogout(player_id, current_time)
             logger.info(f"🔴 Logout detected: Player {player_id}")
 
-        await db.update_online_players(online_players)
+        await db.updateonlineplayers(online_players)
 
         for player in online_players:
-            await db.mark_player_for_update(player["player_id"], player["player_name"])
+            await db.markplayerforupdate(player["player_id"], player["player_name"])
 
         if new_logins or logouts:
             logger.info(
@@ -973,7 +973,7 @@ async def update_pending_profiles():
 
     try:
         scraper_instance = await get_or_recreate_scraper()
-        pending_ids = await db.get_players_pending_update(
+        pending_ids = await db.getplayerspendingupdate(
             limit=Config.PROFILES_UPDATE_BATCH
         )
 
@@ -996,8 +996,8 @@ async def update_pending_profiles():
                 "played_hours": profile.played_hours,
                 "age_ic": profile.age_ic,
             }
-            await db.save_player_profile(profile_dict)
-            await db.reset_player_priority(profile.player_id)
+            await db.saveplayerprofile(profile_dict)
+            await db.resetplayerpriority(profile.player_id)
 
         logger.info(f"✓ Updated {len(results)}/{len(pending_ids)} profiles")
         TASK_HEALTH["update_pending_profiles"]["error_count"] = 0
@@ -1055,7 +1055,7 @@ async def update_missing_faction_ranks():
                 f"🎯 Targeting {len(player_ids)} players with missing faction ranks"
             )
             for player_id in player_ids:
-                await db.mark_player_for_update(player_id, f"Player_{player_id}")
+                await db.markplayerforupdate(player_id, f"Player_{player_id}")
 
         TASK_HEALTH["update_missing_faction_ranks"]["error_count"] = 0
 
@@ -1094,9 +1094,9 @@ async def check_banned_players():
         current_ban_ids = {ban["player_id"] for ban in banned if ban.get("player_id")}
 
         for ban_data in banned:
-            await db.save_banned_player(ban_data)
+            await db.savebannedplayer(ban_data)
 
-        await db.mark_expired_bans(current_ban_ids)
+        await db.markexpiredbans(current_ban_ids)
         logger.info(f"✓ Updated {len(banned)} banned players")
         TASK_HEALTH["check_banned_players"]["error_count"] = 0
 
