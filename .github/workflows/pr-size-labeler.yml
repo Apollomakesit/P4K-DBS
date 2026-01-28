@@ -1,20 +1,25 @@
 name: PR Size Labeler
-
 on:
   pull_request:
-    types: [opened, reopened, synchronize]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
-  label:
+  label-pr-size:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
-      - name: Label PR based on size
-        uses: cbrgm/pr-size-labeler-action@v1
+      - uses: codelytv/pr-size-labeler@v1
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          github_repository: ${{ github.repository }}
-          github_pr_number: ${{ github.event.number }}
-          config_file_path: '.github/pull-request-size.yml'
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          xs_label: 'size/xs'
+          xs_max_size: 25
+          s_label: 'size/s'
+          s_max_size: 100
+          m_label: 'size/m'
+          m_max_size: 300
+          l_label: 'size/l'
+          l_max_size: 600
+          xl_label: 'size/xl'
