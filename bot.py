@@ -13,6 +13,34 @@ import re
 import tracemalloc
 import psutil
 
+from config import Config
+
+# 🔥 Validate configuration on startup
+config_issues = Config.validate()
+if config_issues:
+    logger.error("❌ Configuration validation failed:")
+    for issue in config_issues:
+        logger.error(f"   • {issue}")
+    if "DISCORD_TOKEN is not set" in config_issues:
+        logger.error("❌ CRITICAL: Cannot start without DISCORD_TOKEN!")
+        sys.exit(1)
+    else:
+        logger.warning("⚠️ Bot will start but some features may not work correctly")
+else:
+    logger.info("✅ Configuration validated successfully")
+
+# Display configuration
+logger.info(f"\n{'='*60}")
+logger.info("📋 LOADED CONFIGURATION")
+logger.info(f"{'='*60}")
+logger.info(f"• VIP Players: {len(Config.VIP_PLAYER_IDS)}")
+logger.info(f"• VIP Scan Interval: {Config.VIP_SCAN_INTERVAL}s")
+logger.info(f"• Online Priority Tracking: {'Enabled' if Config.TRACK_ONLINE_PLAYERS_PRIORITY else 'Disabled'}")
+logger.info(f"• Online Scan Interval: {Config.ONLINE_PLAYERS_SCAN_INTERVAL}s")
+logger.info(f"• Scraper Workers: {Config.SCRAPER_MAX_CONCURRENT}")
+logger.info(f"• Database: {Config.DATABASE_PATH}")
+logger.info(f"{'='*60}\n")
+
 from commands import setup_commands
 
 tracemalloc.start()
