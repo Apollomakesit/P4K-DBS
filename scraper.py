@@ -768,219 +768,270 @@ class Pro4KingsScraper:
                     raw_text=text,
                 )
 
-        # FIXED: Chest deposit pattern - matches "pus in chest"
-        chestdepositmatch = re.search(
-            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+a\s+pus\s+in\s+chest\s+#(\d+),\s+x(\d+)\s+(.+?)\.\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+Jucatorul",
-            text,
-            re.IGNORECASE,
-        )
-        if chestdepositmatch:
-            chestid = chestdepositmatch.group(3)
-            quantity = chestdepositmatch.group(4)
-            itemname = chestdepositmatch.group(5).strip().rstrip(".")
-            return PlayerAction(
-                playerid=chestdepositmatch.group(2),
-                playername=chestdepositmatch.group(1).strip(),
-                actiontype="chestdeposit",
-                actiondetail=f"pus in chest #{chestid}, {quantity}x {itemname}.",
-                itemname=itemname,
-                itemquantity=int(quantity),
-                timestamp=timestamp,
-                rawtext=text,
-            )
-
-        # FIXED: Chest withdraw pattern - matches "a retras din chest"
-        chestwithdrawmatch = re.search(
-            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\s+id\s+#(\d+),\s+x(\d+)\s+([^\.]+)\.",
-            text,
-            re.IGNORECASE,
-        )
-        if chestwithdrawmatch:
-            chestid = chestwithdrawmatch.group(3)
-            quantity = chestwithdrawmatch.group(4)
-            itemname = chestwithdrawmatch.group(5).strip().rstrip(".")
-            return PlayerAction(
-                playerid=chestwithdrawmatch.group(2),
-                playername=chestwithdrawmatch.group(1).strip(),
-                actiontype="chestwithdraw",
-                actiondetail=f"a retras din chest id #{chestid}, {quantity}x {itemname}.",
-                itemname=itemname,
-                itemquantity=int(quantity),
-                timestamp=timestamp,
-                rawtext=text,
-            )
-
-        # Contract pattern for vehicle transfers
-        contractmatch = re.search(
-            r"Contract\s+([^\(]+)\((\d+)\)\s+([^\(]+)\((\d+)\)",
-            text,
-            re.IGNORECASE,
-        )
-        if contractmatch:
-            fromname = contractmatch.group(1).strip()
-            fromid = contractmatch.group(2)
-            toname = contractmatch.group(3).strip()
-            toid = contractmatch.group(4)
-            vehiclematch = re.search(r"\[(.*?)\]", text)
-            vehicleinfo = vehiclematch.group(1) if vehiclematch else "Vehicle"
-            
-            return PlayerAction(
-                playerid=fromid,
-                playername=fromname,
-                actiontype="contract",
-                actiondetail=f"Contract with {toname}({toid}): {vehicleinfo}",
-                itemname=vehicleinfo,
-                itemquantity=None,
-                targetplayerid=toid,
-                targetplayername=toname,
-                timestamp=timestamp,
-                rawtext=text,
-            )
-
-        # Property pattern
-        propertymatch = re.search(
-            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+(a\s+cumparat|a\s+vandut)\s+(casa|afacere|proprietate)\s+([^\.]+)\.",
-            text,
-            re.IGNORECASE,
-        )
-        if propertymatch:
-            actiontype = "propertybought" if "cumparat" in propertymatch.group(3).lower() else "propertysold"
-            return PlayerAction(
-                playerid=propertymatch.group(2),
-                playername=propertymatch.group(1).strip(),
-                actiontype=actiontype,
-                actiondetail=f"{propertymatch.group(3)} {propertymatch.group(4)}",
-                timestamp=timestamp,
-                rawtext=text,
-            )
-
-        # FIXED: Item given pattern - matches "i-a dat lui" not "a dat lui"
-        gavematch = re.search(
-            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+i-a\s+dat\s+lui\s+([^\(]+)\((\d+)\)\s+(.+)",
-            text,
-            re.IGNORECASE,
-        )
-        if gavematch:
-            itemstext = gavematch.group(5).strip()
-            itemstext = itemstext.lstrip(",")
-            return PlayerAction(
-                playerid=gavematch.group(2),
-                playername=gavematch.group(1).strip(),
-                actiontype="itemgiven",
-                actiondetail=f"i-a dat lui {gavematch.group(3).strip()}({gavematch.group(4)}): {itemstext}",
-                itemname=itemstext,
-                itemquantity=None,
-                targetplayerid=gavematch.group(4),
-                targetplayername=gavematch.group(3).strip(),
-                timestamp=timestamp,
-                rawtext=text,
-            )
-
-        # Item received pattern
-        receivedmatch = re.search(
-            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+a\s+primit\s+de\s+la\s+([^\(]+)\((\d+)\)\s+x(\d+)\s+([^\.]+)",
-            text,
-            re.IGNORECASE,
-        )
-        if receivedmatch:
-            return PlayerAction(
-                playerid=receivedmatch.group(2),
-                playername=receivedmatch.group(1).strip(),
-                actiontype="itemreceived",
-                actiondetail=f"Primit {receivedmatch.group(6).strip()} de la {receivedmatch.group(3).strip()}",
-                itemname=receivedmatch.group(6).strip(),
-                itemquantity=int(receivedmatch.group(5)),
-                targetplayerid=receivedmatch.group(4),
-                targetplayername=receivedmatch.group(3).strip(),
-                timestamp=timestamp,
-                rawtext=text,
-            )
-
-        # Vehicle pattern
-        vehiclematch = re.search(
-            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+(a\s+cumparat|a\s+vandut)\s+([^\.]+)\.",
-            text,
-            re.IGNORECASE,
-        )
-        if vehiclematch:
-            actiontype = "vehiclebought" if "cumparat" in vehiclematch.group(3).lower() else "vehiclesold"
-            return PlayerAction(
-                playerid=vehiclematch.group(2),
-                playername=vehiclematch.group(1).strip(),
-                actiontype=actiontype,
-                actiondetail=vehiclematch.group(4).strip(),
-                timestamp=timestamp,
-                rawtext=text,
-            )
-
-        # Warning pattern
-        warningmatch = re.search(
-            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+a\s+primit\s+un\s+avertisment\s+de\s+la\s+administratorul\s+([^\(]+)\((\d+)\),\s+motiv\s+'([^']+)'",
-            text,
-            re.IGNORECASE,
-        )
-        if warningmatch:
-            return PlayerAction(
-                playerid=warningmatch.group(2),
-                playername=warningmatch.group(1).strip(),
-                actiontype="warningreceived",
-                actiondetail=f"Avertisment de la {warningmatch.group(3).strip()}",
-                adminid=warningmatch.group(4),
-                adminname=warningmatch.group(3).strip(),
-                warningcount=None,
-                reason=warningmatch.group(5).strip(),
-                timestamp=timestamp,
-                rawtext=text,
-            )
-
-        # OTHER - Admin jail pattern
-        if "admin jail" in text.lower():
-            adminjailmatch = re.search(
-                r"a\s+primit\s+admin\s+jail\s+(\d+).*?administratorul\s+([^\(]+)\((\d+)\).*?motiv\s+'([^']+)'",
+            # FIXED: Chest deposit pattern - matches "pus in chest"
+            chestdepositmatch = re.search(
+                r"Jucatorul\s+([^\(]+)\((\d+)\)\s+a\s+pus\s+in\s+chest\s+#(\d+),\s+x(\d+)\s+(.+?)\.\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+Jucatorul",
                 text,
                 re.IGNORECASE,
             )
-            if adminjailmatch:
-                playermatch = re.search(r"Jucatorul\s+([^\(]+)\((\d+)\)", text, re.IGNORECASE)
-                if playermatch:
-                    return PlayerAction(
-                        playerid=playermatch.group(2),
-                        playername=playermatch.group(1).strip(),
-                        actiontype="adminjail",
-                        actiondetail=f"Admin jail {adminjailmatch.group(1)} checkpoints, reason: {adminjailmatch.group(4)}",
-                        adminid=adminjailmatch.group(3),
-                        adminname=adminjailmatch.group(2).strip(),
-                        reason=adminjailmatch.group(4),
-                        timestamp=timestamp,
-                        rawtext=text,
-                    )
+            if chestdepositmatch:
+                chestid = chestdepositmatch.group(3)
+                quantity = chestdepositmatch.group(4)
+                itemname = chestdepositmatch.group(5).strip().rstrip(".")
+                return PlayerAction(
+                    playerid=chestdepositmatch.group(2),
+                    playername=chestdepositmatch.group(1).strip(),
+                    actiontype="chestdeposit",
+                    actiondetail=f"pus in chest #{chestid}, {quantity}x {itemname}.",
+                    itemname=itemname,
+                    itemquantity=int(quantity),
+                    timestamp=timestamp,
+                    rawtext=text,
+                )
 
-            # Generic pattern for any other "Jucatorul" action
-            generic_match = re.search(
+            # FIXED: Chest withdraw pattern - matches a retras din chest
+            chestwithdrawmatch = re.search(
+                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\(id\s+([^)]+)\),\s+(\d+)x\s+(.+?)\.",
+                text,
+                re.IGNORECASE,
+            )
+            if chestwithdrawmatch:
+                chestid = chestwithdrawmatch.group(3)
+                quantity = chestwithdrawmatch.group(4)
+                itemname = chestwithdrawmatch.group(5).strip().rstrip(".")
+                return PlayerAction(
+                    playerid=chestwithdrawmatch.group(2),
+                    playername=chestwithdrawmatch.group(1).strip(),
+                    actiontype="chestwithdraw",
+                    actiondetail=f"a retras din chest(id {chestid}), {quantity}x {itemname}.",
+                    itemname=itemname,
+                    itemquantity=int(quantity),
+                    timestamp=timestamp,
+                    rawtext=text,
+                )
+
+            # FIXED: Chest withdraw pattern - matches a retras din chest
+            chestwithdrawmatch = re.search(
+                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\(id\s+([^)]+)\),\s+(\d+)x\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul)",
+                text,
+                re.IGNORECASE,
+            )
+            if chestwithdrawmatch:
+                chestid = chestwithdrawmatch.group(3)
+                quantity = chestwithdrawmatch.group(4)
+                itemname = chestwithdrawmatch.group(5).strip().rstrip(".")
+                return PlayerAction(
+                    playerid=chestwithdrawmatch.group(2),
+                    playername=chestwithdrawmatch.group(1).strip(),
+                    actiontype="chestwithdraw",
+                    actiondetail=f"a retras din chest(id {chestid}), {quantity}x {itemname}.",
+                    itemname=itemname,
+                    itemquantity=int(quantity),
+                    timestamp=timestamp,
+                    rawtext=text,
+                )
+
+            # Item received pattern
+            receivedmatch = re.search(
+                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+de\s+la\s+([^(]+)\((\d+)\)\s+(\d+)x\s+(.+?)\.",
+                text,
+                re.IGNORECASE,
+            )
+            if receivedmatch:
+                return PlayerAction(
+                    playerid=receivedmatch.group(2),
+                    playername=receivedmatch.group(1).strip(),
+                    actiontype="itemreceived",
+                    actiondetail=f"Primit {receivedmatch.group(6).strip()} de la {receivedmatch.group(3).strip()}",
+                    itemname=receivedmatch.group(6).strip(),
+                    itemquantity=int(receivedmatch.group(5)),
+                    targetplayerid=receivedmatch.group(4),
+                    targetplayername=receivedmatch.group(3).strip(),
+                    timestamp=timestamp,
+                    rawtext=text,
+                )
+
+            # FIXED: Item given pattern - matches i-a dat lui not a dat lui
+            gavematch = re.search(
+                r"Jucatorul\s+([^(]+)\((\d+)\)\s+i-a\s+dat\s+lui\s+([^(]+)\((\d+)\)\s+(.+?)\.",
+                text,
+                re.IGNORECASE,
+            )
+            if gavematch:
+                itemstext = gavematch.group(5).strip()
+                itemstext = itemstext.lstrip(",")
+                return PlayerAction(
+                    playerid=gavematch.group(2),
+                    playername=gavematch.group(1).strip(),
+                    actiontype="itemgiven",
+                    actiondetail=f"i-a dat lui {gavematch.group(3).strip()}({gavematch.group(4)}) {itemstext}",
+                    itemname=itemstext,
+                    itemquantity=None,
+                    targetplayerid=gavematch.group(4),
+                    targetplayername=gavematch.group(3).strip(),
+                    timestamp=timestamp,
+                    rawtext=text,
+                )
+
+            # Property pattern
+            propertymatch = re.search(
+                r"Jucatorul\s+([^(]+)\((\d+)\)\s+(a\s+cumparat|a\s+vandut)\s+(casa|afacere|proprietate)(.+?)\.",
+                text,
+                re.IGNORECASE,
+            )
+            if propertymatch:
+                actiontype = (
+                    "propertybought"
+                    if "cumparat" in propertymatch.group(3).lower()
+                    else "propertysold"
+                )
+                return PlayerAction(
+                    playerid=propertymatch.group(2),
+                    playername=propertymatch.group(1).strip(),
+                    actiontype=actiontype,
+                    actiondetail=f"{propertymatch.group(3)} {propertymatch.group(4)}",
+                    timestamp=timestamp,
+                    rawtext=text,
+                )
+
+            # Vehicle pattern
+            vehiclematch = re.search(
+                r"Jucatorul\s+([^(]+)\((\d+)\)\s+(a\s+cumparat|a\s+vandut)(.+?)\.",
+                text,
+                re.IGNORECASE,
+            )
+            if vehiclematch:
+                actiontype = (
+                    "vehiclebought"
+                    if "cumparat" in vehiclematch.group(3).lower()
+                    else "vehiclesold"
+                )
+                return PlayerAction(
+                    playerid=vehiclematch.group(2),
+                    playername=vehiclematch.group(1).strip(),
+                    actiontype=actiontype,
+                    actiondetail=vehiclematch.group(4).strip(),
+                    timestamp=timestamp,
+                    rawtext=text,
+                )
+
+            # Contract pattern for vehicle transfers
+            contractmatch = re.search(
+                r"Contract\s+([^(]+)\((\d+)\)\s+->\s+([^(]+)\((\d+)\)",
+                text,
+                re.IGNORECASE,
+            )
+            if contractmatch:
+                fromname = contractmatch.group(1).strip()
+                fromid = contractmatch.group(2)
+                toname = contractmatch.group(3).strip()
+                toid = contractmatch.group(4)
+
+                vehiclematch = re.search(r"(.+?)\.", text)
+                vehicleinfo = vehiclematch.group(1) if vehiclematch else "Vehicle"
+
+                return PlayerAction(
+                    playerid=fromid,
+                    playername=fromname,
+                    actiontype="contract",
+                    actiondetail=f"Contract with {toname}({toid}) {vehicleinfo}",
+                    itemname=vehicleinfo,
+                    itemquantity=None,
+                    targetplayerid=toid,
+                    targetplayername=toname,
+                    timestamp=timestamp,
+                    rawtext=text,
+                )
+
+            # Warning pattern
+            warningmatch = re.search(
+                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+un\s+avertisment\s+de\s+la\s+administratorul\s+([^(]+)\((\d+)\)\s*,\s*motiv:\s*(.+?)(?=\d{4}-\d{2}-\d{2}|$)",
+                text,
+                re.IGNORECASE,
+            )
+            if warningmatch:
+                return PlayerAction(
+                    playerid=warningmatch.group(2),
+                    playername=warningmatch.group(1).strip(),
+                    actiontype="warningreceived",
+                    actiondetail=f"Avertisment de la {warningmatch.group(3).strip()}",
+                    adminid=warningmatch.group(4),
+                    adminname=warningmatch.group(3).strip(),
+                    warningcount=None,
+                    reason=warningmatch.group(5).strip(),
+                    timestamp=timestamp,
+                    rawtext=text,
+                )
+
+            # Generic pattern for any other Jucatorul action
+            genericmatch = re.search(
                 r"Jucatorul\s+([^(]+)\((\d+)\)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)",
                 text,
                 re.IGNORECASE,
             )
-            if generic_match:
+            if genericmatch:
                 return PlayerAction(
-                    player_id=generic_match.group(2),
-                    player_name=generic_match.group(1).strip(),
-                    action_type="other",
-                    action_detail=generic_match.group(3).strip(),
+                    playerid=genericmatch.group(2),
+                    playername=genericmatch.group(1).strip(),
+                    actiontype="other",
+                    actiondetail=genericmatch.group(3).strip(),
                     timestamp=timestamp,
-                    raw_text=text,
+                    rawtext=text,
                 )
 
+            # Warning pattern
+            warningmatch = re.search(
+                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+un\s+avertisment\s+de\s+la\s+administratorul\s+([^(]+)\((\d+)\)\s*,\s*motiv:\s*(.+?)\.",
+                text,
+                re.IGNORECASE,
+            )
+            if warningmatch:
+                return PlayerAction(
+                    playerid=warningmatch.group(2),
+                    playername=warningmatch.group(1).strip(),
+                    actiontype="warningreceived",
+                    actiondetail=f"Avertisment de la {warningmatch.group(3).strip()}",
+                    adminid=warningmatch.group(4),
+                    adminname=warningmatch.group(3).strip(),
+                    warningcount=None,
+                    reason=warningmatch.group(5).strip(),
+                    timestamp=timestamp,
+                    rawtext=text,
+                )
 
-            # Fallback for unmatched "jucatorul" mentions
+            # OTHER - Admin jail pattern
+            if "admin jail" in text.lower():
+                adminjailmatch = re.search(
+                    r"a\s+primit\s+admin\s+jail\s+(.+?)\s+checkpoints.+?administratorul\s+([^(]+)\((\d+)\)\s*,\s*motiv:\s*(.+?)\.",
+                    text,
+                    re.IGNORECASE,
+                )
+                if adminjailmatch:
+                    playermatch = re.search(
+                        r"Jucatorul\s+([^(]+)\((\d+)\)", text, re.IGNORECASE
+                    )
+                    if playermatch:
+                        return PlayerAction(
+                            playerid=playermatch.group(2),
+                            playername=playermatch.group(1).strip(),
+                            actiontype="adminjail",
+                            actiondetail=f"Admin jail {adminjailmatch.group(1)} checkpoints, reason: {adminjailmatch.group(4)}",
+                            adminid=adminjailmatch.group(3),
+                            adminname=adminjailmatch.group(2).strip(),
+                            reason=adminjailmatch.group(4),
+                            timestamp=timestamp,
+                            rawtext=text,
+                        )
+
+            # Fallback for unmatched jucatorul mentions
             if "jucatorul" in text.lower():
                 return PlayerAction(
-                    player_id=None,
-                    player_name=None,
-                    action_type="unknown",
-                    action_detail=text[:200],
+                    playerid=None,
+                    playername=None,
+                    actiontype="unknown",
+                    actiondetail=text[:200],
                     timestamp=timestamp,
-                    raw_text=text,
+                    rawtext=text,
                 )
 
             return None
