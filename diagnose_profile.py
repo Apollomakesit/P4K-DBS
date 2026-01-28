@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 import re
 import sys
 
+
 async def diagnose_profile(player_id: str = "155733"):
     """Fetch and analyze profile HTML structure"""
     url = f"https://panel.pro4kings.ro/profile/{player_id}"
@@ -126,7 +127,9 @@ async def diagnose_profile(player_id: str = "155733"):
         except Exception as e:
             print(f"❌ ERROR: {e}")
             import traceback
+
             traceback.print_exc()
+
 
 if __name__ == "__main__":
     # Get player ID from command line or use default
