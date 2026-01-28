@@ -686,135 +686,135 @@ def setup_commands(bot, db, scraper_getter):
     # ADMIN COMMANDS
     # ========================================================================
 
-@bot.tree.command(name="cleanup", description="[ADMIN] Cleanup old database records")
-async def cleanup_db(interaction: discord.Interaction):
-    """Cleanup old database records (dry run first)"""
+    @bot.tree.command(name="cleanup", description="[ADMIN] Cleanup old database records")
+    async def cleanup_db(interaction: discord.Interaction):
+        """Cleanup old database records (dry run first)"""
     
-    # Permission check - restrict to server admins
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(
-            "❌ You need Administrator permissions to use this command!",
-            ephemeral=True
-        )
-        return
+        # Permission check - restrict to server admins
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ You need Administrator permissions to use this command!",
+                ephemeral=True
+            )
+            return
     
-    await interaction.response.defer()
+        await interaction.response.defer()
     
-    try:
-        # First show what would be deleted (dry run)
-        dry_results = await db.cleanup_old_data(dry_run=True)
+        try:
+            # First show what would be deleted (dry run)
+            dry_results = await db.cleanup_old_data(dry_run=True)
         
-        embed = discord.Embed(
-            title="🧹 Database Cleanup Preview",
-            description="These records would be deleted:",
-            color=discord.Color.orange()
-        )
+            embed = discord.Embed(
+                title="🧹 Database Cleanup Preview",
+                description="These records would be deleted:",
+                color=discord.Color.orange()
+            )
         
-        total = 0
-        for table, count in dry_results.items():
+            total = 0
+            for table, count in dry_results.items():
+                embed.add_field(
+                    name=f"📋 {table}",
+                    value=f"{count:,} records",
+                    inline=True
+                )
+                total += count
+        
+            embed.set_footer(text=f"Total: {total:,} records • Use '/cleanup confirm' to proceed")
+        
+            await interaction.followup.send(embed=embed)
+        
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}")
+
+    @bot.tree.command(name="cleanup_confirm", description="[ADMIN] Actually perform database cleanup")
+    async def cleanup_db_confirm(interaction: discord.Interaction):
+        """Actually perform the cleanup"""
+    
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ You need Administrator permissions!",
+                ephemeral=True
+            )
+            return
+    
+        await interaction.response.defer()
+    
+        try:
+            # Perform actual cleanup
+            results = await db.cleanup_old_data(dry_run=False)
+        
+            embed = discord.Embed(
+                title="✅ Database Cleanup Complete",
+                description="Successfully deleted old records:",
+                color=discord.Color.green()
+            )
+        
+            total = 0
+            for table, count in results.items():
+                embed.add_field(
+                    name=f"📋 {table}",
+                   value=f"{count:,} deleted",
+                    inline=True
+                )
+                total += count
+        
+            embed.set_footer(text=f"Total deleted: {total:,} records")
+        
+            await interaction.followup.send(embed=embed)
+            logger.info(f"✅ Database cleanup performed by {interaction.user}: {total:,} records deleted")
+        
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}")
+            logger.error(f"Cleanup error: {e}", exc_info=True)
+
+
+    @bot.tree.command(name="memory", description="Show bot memory usage and statistics")
+    async def memory_stats(interaction: discord.Interaction):
+        """Display memory usage statistics"""
+        try:
+            import tracemalloc
+            import psutil
+            import os
+        
+            # Memory tracing
+            current, peak = tracemalloc.get_traced_memory()
+        
+            # System memory
+            process = psutil.Process(os.getpid())
+            mem_info = process.memory_info()
+            sys_mem = psutil.virtual_memory()
+        
+            embed = discord.Embed(
+                title="📊 Bot Memory Statistics",
+                color=discord.Color.blue(),
+                timestamp=datetime.now()
+            )
+        
             embed.add_field(
-                name=f"📋 {table}",
-                value=f"{count:,} records",
+                name="🔍 Traced Memory",
+                value=f"Current: {current / 1024**2:.2f} MB\nPeak: {peak / 1024**2:.2f} MB",
+                inline=True
+           )
+        
+            embed.add_field(
+                name="💾 Process Memory",
+                value=f"RSS: {mem_info.rss / 1024**2:.2f} MB\nVMS: {mem_info.vms / 1024**2:.2f} MB",
                 inline=True
             )
-            total += count
         
-        embed.set_footer(text=f"Total: {total:,} records • Use '/cleanup confirm' to proceed")
-        
-        await interaction.followup.send(embed=embed)
-        
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error: {e}")
-
-@bot.tree.command(name="cleanup_confirm", description="[ADMIN] Actually perform database cleanup")
-async def cleanup_db_confirm(interaction: discord.Interaction):
-    """Actually perform the cleanup"""
-    
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(
-            "❌ You need Administrator permissions!",
-            ephemeral=True
-        )
-        return
-    
-    await interaction.response.defer()
-    
-    try:
-        # Perform actual cleanup
-        results = await db.cleanup_old_data(dry_run=False)
-        
-        embed = discord.Embed(
-            title="✅ Database Cleanup Complete",
-            description="Successfully deleted old records:",
-            color=discord.Color.green()
-        )
-        
-        total = 0
-        for table, count in results.items():
             embed.add_field(
-                name=f"📋 {table}",
-                value=f"{count:,} deleted",
+                name="🖥️ System Memory",
+                value=f"Used: {sys_mem.percent}%\nAvailable: {sys_mem.available / 1024**3:.2f} GB",
                 inline=True
             )
-            total += count
         
-        embed.set_footer(text=f"Total deleted: {total:,} records")
+            await interaction.response.send_message(embed=embed)
         
-        await interaction.followup.send(embed=embed)
-        logger.info(f"✅ Database cleanup performed by {interaction.user}: {total:,} records deleted")
-        
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error: {e}")
-        logger.error(f"Cleanup error: {e}", exc_info=True)
-
-
-@bot.tree.command(name="memory", description="Show bot memory usage and statistics")
-async def memory_stats(interaction: discord.Interaction):
-    """Display memory usage statistics"""
-    try:
-        import tracemalloc
-        import psutil
-        import os
-        
-        # Memory tracing
-        current, peak = tracemalloc.get_traced_memory()
-        
-        # System memory
-        process = psutil.Process(os.getpid())
-        mem_info = process.memory_info()
-        sys_mem = psutil.virtual_memory()
-        
-        embed = discord.Embed(
-            title="📊 Bot Memory Statistics",
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
-        )
-        
-        embed.add_field(
-            name="🔍 Traced Memory",
-            value=f"Current: {current / 1024**2:.2f} MB\nPeak: {peak / 1024**2:.2f} MB",
-            inline=True
-        )
-        
-        embed.add_field(
-            name="💾 Process Memory",
-            value=f"RSS: {mem_info.rss / 1024**2:.2f} MB\nVMS: {mem_info.vms / 1024**2:.2f} MB",
-            inline=True
-        )
-        
-        embed.add_field(
-            name="🖥️ System Memory",
-            value=f"Used: {sys_mem.percent}%\nAvailable: {sys_mem.available / 1024**3:.2f} GB",
-            inline=True
-        )
-        
-        await interaction.response.send_message(embed=embed)
-        
-    except Exception as e:
-        await interaction.response.send_message(
-            f"❌ Error getting memory stats: {e}",
-            ephemeral=True
-        )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Error getting memory stats: {e}",
+                ephemeral=True
+            )
 
     @bot.tree.command(name="cleanup_old_data", description="Remove old data based on retention policy (Admin only)")
     @app_commands.describe(
