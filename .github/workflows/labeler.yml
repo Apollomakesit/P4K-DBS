@@ -1,42 +1,16 @@
-'bot-core':
-  - changed-files:
-    - any-glob-to-any-file: 'bot.py'
+name: Auto Labeler
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
 
-'scraper':
-  - changed-files:
-    - any-glob-to-any-file: 'scraper.py'
+permissions:
+  contents: read
+  pull-requests: write
 
-'database':
-  - changed-files:
-    - any-glob-to-any-file: 
-      - 'database.py'
-      - 'initial_scan.py'
-      - 'import_on_startup.py'
-
-'discord-commands':
-  - changed-files:
-    - any-glob-to-any-file:
-      - 'commands.py'
-      - 'discord_utils.py'
-
-'config':
-  - changed-files:
-    - any-glob-to-any-file:
-      - 'config.py'
-      - '.env.example'
-
-'deployment':
-  - changed-files:
-    - any-glob-to-any-file:
-      - 'Dockerfile'
-      - 'docker-compose.yml'
-      - 'railway.json'
-      - 'requirements.txt'
-      - 'Procfile'
-      - 'nixpacks.toml'
-      - 'entrypoint.sh'
-
-'documentation':
-  - changed-files:
-    - any-glob-to-any-file:
-      - '*.md'
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@v5
+        with:
+          repo-token: "${{ secrets.GITHUB_TOKEN }}"
