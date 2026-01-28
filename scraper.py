@@ -790,6 +790,55 @@ class Pro4KingsScraper:
                     raw_text=text,
                 )
 
+            # Contract pattern for vehicle transfers
+contractmatch = re.search(
+    r"Contract\s+([^\(]+)\((\d+)\)\s+([^\(]+)\((\d+)\).*?'(\d+)'\s+\[(.*?)\],\s*'(\d+)'\s+\[(.*?)\].*?(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
+    text,
+    re.IGNORECASE
+)
+if contractmatch:
+    fromname = contractmatch.group(1).strip()
+    fromid = contractmatch.group(2)
+    toname = contractmatch.group(3).strip()
+    toid = contractmatch.group(4)
+    vehicle_info = contractmatch.group(6).strip()  # Vehicle name
+    
+    return PlayerAction(
+        playerid=fromid,
+        playername=fromname,
+        actiontype="contract",
+        actiondetail=f"Contract - transferred vehicle to {toname}({toid}): {vehicle_info}",
+        itemname=vehicle_info,
+        itemquantity=None,
+        targetplayerid=toid,
+        targetplayername=toname,
+        timestamp=timestamp,
+        rawtext=text,
+    )
+
+# OTHER - Admin jail pattern
+adminjailmatch = re.search(
+    r"OTHER.*?a\s+primit\s+admin\s+jail\s+(\d+).*?de\s+la\s+administratorul\s+([^\(]+)\((\d+)\),\s+motiv\s+'([^']+)'.*?(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})",
+    text,
+    re.IGNORECASE
+)
+if adminjailmatch:
+    # Extract from the full text to get player info
+    playermatch = re.search(r"Jucatorul\s+([^\(]+)\((\d+)\)", text, re.IGNORECASE)
+    if playermatch:
+        return PlayerAction(
+            playerid=playermatch.group(2),
+            playername=playermatch.group(1).strip(),
+            actiontype="adminjail",
+            actiondetail=f"Admin jail {adminjailmatch.group(1)} checkpoints from {adminjailmatch.group(2).strip()}, reason: '{adminjailmatch.group(4)}'",
+            adminid=adminjailmatch.group(3),
+            adminname=adminjailmatch.group(2).strip(),
+            reason=adminjailmatch.group(4),
+            timestamp=timestamp,
+            rawtext=text,
+        )
+
+
             # 🔥 FIXED: Item given pattern - matches "ia dat lui" (not "a dat lui")
             gave_match = re.search(
                 r"Jucatorul\s+([^(]+)\((\d+)\)\s+(?:i)?a\s+dat\s+lui\s+([^(]+)\((\d+)\)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)",
@@ -892,6 +941,7 @@ class Pro4KingsScraper:
                     timestamp=timestamp,
                     raw_text=text,
                 )
+
 
             # Fallback for unmatched "jucatorul" mentions
             if "jucatorul" in text.lower():
