@@ -1,6 +1,7 @@
 #!/bin/bash
 
-set -e
+# Use lenient error handling - don't exit on non-critical errors
+set +e
 
 echo "🚀 Starting P4K Database Bot..."
 echo "================================================"
@@ -88,7 +89,7 @@ if [ -f "/data/pro4kings.db" ]; then
         fi
     fi
     
-    # Run merge if needed
+    # Run merge if needed (non-critical - continue even if it fails)
     if [ "$NEEDS_MERGE" -eq "1" ]; then
         echo "================================================"
         echo "🔄 Running comprehensive database merge..."
@@ -98,30 +99,38 @@ if [ -f "/data/pro4kings.db" ]; then
         echo "   - Current 'player_profiles' table (if exists)"
         
         if [ -f "/app/merge_database.py" ]; then
-            python /app/merge_database.py
-            
-            if [ $? -ne 0 ]; then
-                echo "❌ Database merge failed! Trying fallback migration..."
-                python /app/migrate_database.py /data/pro4kings.db
+            echo "   Attempting merge with merge_database.py..."
+            python /app/merge_database.py || {
+                echo "⚠️  Database merge script failed or not available"
+                echo "   Trying fallback migration..."
                 
-                if [ $? -ne 0 ]; then
-                    echo "❌ Migration also failed! Check logs above."
-                    exit 1
+                if [ -f "/app/migrate_database.py" ]; then
+                    python /app/migrate_database.py /data/pro4kings.db || {
+                        echo "⚠️  Migration also failed or not available"
+                        echo "   Continuing with existing database..."
+                    }
+                else
+                    echo "⚠️  migrate_database.py not found - skipping migration"
+                    echo "   Continuing with existing database..."
                 fi
-            fi
+            }
         else
-            echo "⚠️  merge_database.py not found, using legacy migration..."
-            python /app/migrate_database.py /data/pro4kings.db
+            echo "⚠️  merge_database.py not found"
             
-            if [ $? -ne 0 ]; then
-                echo "❌ Migration failed! Check logs above."
-                exit 1
+            if [ -f "/app/migrate_database.py" ]; then
+                echo "   Attempting migration with migrate_database.py..."
+                python /app/migrate_database.py /data/pro4kings.db || {
+                    echo "⚠️  Migration failed - continuing with existing database..."
+                }
+            else
+                echo "⚠️  migrate_database.py not found - skipping migration"
+                echo "   Continuing with existing database..."
             fi
         fi
         
-        # Verify merge/migration worked
+        # Verify merge/migration worked (informational only)
         echo "================================================"
-        echo "🔍 Post-merge verification..."
+        echo "🔍 Post-migration verification..."
         FINAL_PROFILES=$(sqlite3 /data/pro4kings.db "SELECT COUNT(*) FROM player_profiles;" 2>/dev/null || echo "0")
         REMAINING_PLAYERS=$(sqlite3 /data/pro4kings.db "SELECT COUNT(*) FROM players;" 2>/dev/null || echo "0")
         
@@ -129,15 +138,13 @@ if [ -f "/data/pro4kings.db" ]; then
         echo "   'players' table: $REMAINING_PLAYERS records"
         
         if [ "$FINAL_PROFILES" -eq "0" ] && [ "$PLAYERS_COUNT" -gt "0" ]; then
-            echo "❌ ERROR: Merge failed! No records in player_profiles"
-            exit 1
+            echo "   ⚠️  WARNING: No records in player_profiles after migration"
+            echo "   Bot will attempt CSV import or create fresh database"
+        elif [ "$REMAINING_PLAYERS" -gt "0" ]; then
+            echo "   ℹ️  Legacy 'players' table still exists (migration incomplete)"
+        else
+            echo "   ✅ Migration completed! Database has $FINAL_PROFILES player profiles"
         fi
-        
-        if [ "$REMAINING_PLAYERS" -gt "0" ]; then
-            echo "   ℹ️  Legacy 'players' table still exists (will be cleaned up on next restart)"
-        fi
-        
-        echo "✅ Merge successful! Database has $FINAL_PROFILES player profiles"
     else
         echo "   ✅ Database schema is current - no migration needed"
     fi
@@ -168,24 +175,28 @@ if [ -f "/data/pro4kings.db" ]; then
     
     if [ "$FINAL_PROFILES" -eq "0" ]; then
         echo "   ⚠️  WARNING: Database is empty! Bot will start with no player data"
+        echo "   CSV import will attempt to populate database on startup"
     elif [ "$FINAL_PROFILES" -lt "1000" ]; then
         echo "   ⚠️  WARNING: Low player count ($FINAL_PROFILES) - expected 100K+"
     else
         echo "   ✅ Database ready for production!"
     fi
 else
-    echo "   ❌ Database file not found!"
-    exit 1
+    echo "   ⚠️  WARNING: Database file not found at /data/pro4kings.db!"
+    echo "   Bot will create a new database on startup"
 fi
 
 echo "================================================"
 echo "🔍 Running profile diagnostics..."
-python /app/diagnose_profile.py 155733 || true
+python /app/diagnose_profile.py 155733 2>/dev/null || echo "   (diagnostics skipped)"
 echo "================================================"
 
 echo "================================================"
 echo "🤖 Starting Discord bot..."
 echo "================================================"
+
+# Enable strict error handling ONLY for the bot startup
+set -e
 
 # Start the bot (use exec to replace shell process)
 exec python bot.py
