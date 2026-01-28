@@ -1136,66 +1136,55 @@ async def action_exists(self, timestamp: datetime, text: str) -> bool:
         return await asyncio.to_thread(_get_history_sync)
 
     async def get_faction_members(self, faction_name: str) -> List[Dict]:
-    """🔥 UPDATED: Get faction members with accurate online status (last 2 minutes only)"""
+        """Get faction members with accurate online status (last 2 minutes only)"""
 
-    def _get_members_sync():
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
+        def _get_members_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(minutes=2)
+                cursor.execute(
+                    """
+                    SELECT 
+                        p.*,
+                        CASE 
+                            WHEN o.detected_online_at >= ? THEN 1 
+                            ELSE 0 
+                        END as is_online
+                    FROM player_profiles p
+                    LEFT JOIN online_players o ON p.player_id = o.player_id
+                    WHERE p.faction = ?
+                    ORDER BY is_online DESC, p.last_seen DESC
+                """,
+                    (cutoff, faction_name),
+                )
+                return [dict(row) for row in cursor.fetchall()]
 
-            # 🔥 FIXED: Changed to 2 minutes for more accurate online status
-            cutoff = datetime.now() - timedelta(minutes=2)
+        return await asyncio.to_thread(_get_members_sync)
 
-            cursor.execute(
-                """
-                SELECT 
-                    p.*,
-                    CASE 
-                        WHEN o.detected_online_at >= ? THEN 1 
-                        ELSE 0 
-                    END as is_online
-                FROM player_profiles p
-                LEFT JOIN online_players o ON p.player_id = o.player_id
-                WHERE p.faction = ?
-                ORDER BY is_online DESC, p.last_seen DESC
-            """,
-                (cutoff, faction_name),
-            )
-            return [dict(row) for row in cursor.fetchall()]
+    async def get_all_factions_with_counts(self) -> List[Dict]:
+        """Get all factions with member and CURRENTLY ONLINE counts (last 2 minutes)"""
 
-    return await asyncio.to_thread(_get_members_sync)
+        def _get_factions_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(minutes=2)
+                cursor.execute(
+                    """
+                    SELECT 
+                        p.faction as faction_name,
+                        COUNT(DISTINCT p.player_id) as member_count,
+                        COUNT(DISTINCT CASE WHEN o.detected_online_at >= ? THEN o.player_id ELSE NULL END) as online_count
+                    FROM player_profiles p
+                    LEFT JOIN online_players o ON p.player_id = o.player_id
+                    WHERE p.faction IS NOT NULL AND p.faction != ''
+                    GROUP BY p.faction
+                    ORDER BY member_count DESC
+                """,
+                    (cutoff,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
 
-
-async def get_all_factions_with_counts(self) -> List[Dict]:
-    """🔥 FIXED: Get all factions with member and CURRENTLY ONLINE counts (last 2 minutes)
-    
-    This method now only counts players who are ACTUALLY online right now (detected in last 2 minutes),
-    not players who were online in the past 24 hours.
-    """
-
-    def _get_factions_sync():
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-
-            # 🔥 FIXED: Changed to 2 minutes for accurate online count
-            cutoff = datetime.now() - timedelta(minutes=2)
-
-            cursor.execute(
-                """
-                SELECT 
-                    p.faction as faction_name,
-                    COUNT(DISTINCT p.player_id) as member_count,
-                    COUNT(DISTINCT CASE WHEN o.detected_online_at >= ? THEN o.player_id ELSE NULL END) as online_count
-                FROM player_profiles p
-                LEFT JOIN online_players o ON p.player_id = o.player_id
-                WHERE p.faction IS NOT NULL AND p.faction != ''
-                GROUP BY p.faction
-                ORDER BY member_count DESC
-            """,
-                (cutoff,),
-            )
-            return [dict(row) for row in cursor.fetchall()]
-
-    return await asyncio.to_thread(_get_factions_sync)
+        return await asyncio.to_thread(_get_factions_sync)
 
 
     async def get_recent_promotions(self, days: int = 7) -> List[Dict]:
