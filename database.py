@@ -551,8 +551,6 @@ async def action_exists(self, timestamp: datetime, text: str) -> bool:
     """🔥 ASYNC: Check if action exists"""
     return await asyncio.to_thread(self._action_exists_sync, timestamp, text)
 
-
-
     async def action_exists(self, timestamp: datetime, text: str) -> bool:
         """ASYNC: Check if action exists"""
         return await asyncio.to_thread(self._action_exists_sync, timestamp, text)
@@ -1185,7 +1183,6 @@ async def action_exists(self, timestamp: datetime, text: str) -> bool:
                 return [dict(row) for row in cursor.fetchall()]
 
         return await asyncio.to_thread(_get_factions_sync)
-
 
     async def get_recent_promotions(self, days: int = 7) -> List[Dict]:
         """Get recent promotions"""
