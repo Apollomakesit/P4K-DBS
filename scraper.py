@@ -790,42 +790,48 @@ class Pro4KingsScraper:
                     raw_text=text,
                 )
 
-            # Contract pattern for vehicle transfers
+# Contract pattern for vehicle transfers
 contractmatch = re.search(
     r"Contract\s+([^\(]+)\((\d+)\)\s+([^\(]+)\((\d+)\).*?'(\d+)'\s+\[(.*?)\],\s*'(\d+)'\s+\[(.*?)\].*?(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
     text,
     re.IGNORECASE
 )
 if contractmatch:
-    fromname = contractmatch.group(1).strip()
-    fromid = contractmatch.group(2)
-    toname = contractmatch.group(3).strip()
-    toid = contractmatch.group(4)
-    vehicle_info = contractmatch.group(6).strip()  # Vehicle name
+    from_name = contractmatch.group(1).strip()
+    from_id = contractmatch.group(2)
+    to_name = contractmatch.group(3).strip()
+    to_id = contractmatch.group(4)
+    vehicle_info = contractmatch.group(6).strip()
     
     return PlayerAction(
-        playerid=fromid,
-        playername=fromname,
+        playerid=from_id,
+        playername=from_name,
         actiontype="contract",
-        actiondetail=f"Contract - transferred vehicle to {toname}({toid}): {vehicle_info}",
+        actiondetail=f"Contract - transferred vehicle to {to_name}({to_id}): {vehicle_info}",
         itemname=vehicle_info,
         itemquantity=None,
-        targetplayerid=toid,
-        targetplayername=toname,
+        targetplayerid=to_id,
+        targetplayername=to_name,
         timestamp=timestamp,
         rawtext=text,
     )
 
+
 # OTHER - Admin jail pattern
 adminjailmatch = re.search(
-    r"OTHER.*?a\s+primit\s+admin\s+jail\s+(\d+).*?de\s+la\s+administratorul\s+([^\(]+)\((\d+)\),\s+motiv\s+'([^']+)'.*?(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})",
+    r"a\s+primit\s+admin\s+jail\s+(\d+).*?de\s+la\s+administratorul\s+([^\(]+)\((\d+)\),\s+motiv\s+'([^']+)'",
     text,
     re.IGNORECASE
 )
 if adminjailmatch:
-    # Extract from the full text to get player info
+    # Extract player info from the beginning
     playermatch = re.search(r"Jucatorul\s+([^\(]+)\((\d+)\)", text, re.IGNORECASE)
     if playermatch:
+        try:
+            timestamp = datetime.strptime(timestampmatch.group(1), "%Y-%m-%d %H:%M") if timestampmatch else datetime.now()
+        except:
+            pass
+        
         return PlayerAction(
             playerid=playermatch.group(2),
             playername=playermatch.group(1).strip(),
