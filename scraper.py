@@ -789,6 +789,27 @@ class Pro4KingsScraper:
                 rawtext=text,
             )
 
+        # FIXED: Chest withdraw pattern - matches "a retras din chest"
+        chestwithdrawmatch = re.search(
+            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\s+id\s+#(\d+),\s+x(\d+)\s+([^\.]+)\.",
+            text,
+            re.IGNORECASE,
+        )
+        if chestwithdrawmatch:
+            chestid = chestwithdrawmatch.group(3)
+            quantity = chestwithdrawmatch.group(4)
+            itemname = chestwithdrawmatch.group(5).strip().rstrip(".")
+            return PlayerAction(
+                playerid=chestwithdrawmatch.group(2),
+                playername=chestwithdrawmatch.group(1).strip(),
+                actiontype="chestwithdraw",
+                actiondetail=f"a retras din chest id #{chestid}, {quantity}x {itemname}.",
+                itemname=itemname,
+                itemquantity=int(quantity),
+                timestamp=timestamp,
+                rawtext=text,
+            )
+
         # Contract pattern for vehicle transfers
         contractmatch = re.search(
             r"Contract\s+([^\(]+)\((\d+)\)\s+([^\(]+)\((\d+)\)",
@@ -796,165 +817,143 @@ class Pro4KingsScraper:
             re.IGNORECASE,
         )
         if contractmatch:
-            from_name = contractmatch.group(1).strip()
-            from_id = contractmatch.group(2)
-            to_name = contractmatch.group(3).strip()
-            to_id = contractmatch.group(4)
+            fromname = contractmatch.group(1).strip()
+            fromid = contractmatch.group(2)
+            toname = contractmatch.group(3).strip()
+            toid = contractmatch.group(4)
+            vehiclematch = re.search(r"\[(.*?)\]", text)
+            vehicleinfo = vehiclematch.group(1) if vehiclematch else "Vehicle"
             
-            # Extract vehicle info from the raw text
-            vehicle_match = re.search(r"\[(.*?)\]", text)
-            vehicle_info = vehicle_match.group(1) if vehicle_match else "Vehicle"
-
             return PlayerAction(
-                playerid=from_id,
-                playername=from_name,
+                playerid=fromid,
+                playername=fromname,
                 actiontype="contract",
-                actiondetail=f"Contract with {to_name}({to_id}): {vehicle_info}",
-                itemname=vehicle_info,
+                actiondetail=f"Contract with {toname}({toid}): {vehicleinfo}",
+                itemname=vehicleinfo,
                 itemquantity=None,
-                targetplayerid=to_id,
-                targetplayername=to_name,
+                targetplayerid=toid,
+                targetplayername=toname,
                 timestamp=timestamp,
                 rawtext=text,
             )
 
-        # FIXED: Item given pattern - matches "ia dat lui" not "a dat lui"
-        gavematch = re.search(
-
-        # Contract pattern for vehicle transfers
-        contractmatch = re.search(
-            r"Contract\s+([^\(]+)\((\d+)\)\s+([^\(]+)\((\d+)\).*?'(\d+)'\s+\[(.*?)\],\s*'(\d+)'\s+\[(.*?)\].*?(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
+        # Property pattern
+        propertymatch = re.search(
+            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+(a\s+cumparat|a\s+vandut)\s+(casa|afacere|proprietate)\s+([^\.]+)\.",
             text,
             re.IGNORECASE,
         )
-        if contractmatch:
-            from_name = contractmatch.group(1).strip()
-            from_id = contractmatch.group(2)
-            to_name = contractmatch.group(3).strip()
-            to_id = contractmatch.group(4)
-            vehicle_info = contractmatch.group(6).strip()
-
+        if propertymatch:
+            actiontype = "propertybought" if "cumparat" in propertymatch.group(3).lower() else "propertysold"
             return PlayerAction(
-                playerid=from_id,
-                playername=from_name,
-                actiontype="contract",
-                actiondetail=f"Contract - transferred vehicle to {to_name}({to_id}): {vehicle_info}",
-                itemname=vehicle_info,
-                itemquantity=None,
-                targetplayerid=to_id,
-                targetplayername=to_name,
+                playerid=propertymatch.group(2),
+                playername=propertymatch.group(1).strip(),
+                actiontype=actiontype,
+                actiondetail=f"{propertymatch.group(3)} {propertymatch.group(4)}",
                 timestamp=timestamp,
                 rawtext=text,
             )
 
-
-            # 🔥 FIXED: Item given pattern - matches "ia dat lui" (not "a dat lui")
-            gave_match = re.search(
-                r"Jucatorul\s+([^(]+)\((\d+)\)\s+(?:i)?a\s+dat\s+lui\s+([^(]+)\((\d+)\)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)",
-                text,
-                re.IGNORECASE,
+        # FIXED: Item given pattern - matches "i-a dat lui" not "a dat lui"
+        gavematch = re.search(
+            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+i-a\s+dat\s+lui\s+([^\(]+)\((\d+)\)\s+(.+)",
+            text,
+            re.IGNORECASE,
+        )
+        if gavematch:
+            itemstext = gavematch.group(5).strip()
+            itemstext = itemstext.lstrip(",")
+            return PlayerAction(
+                playerid=gavematch.group(2),
+                playername=gavematch.group(1).strip(),
+                actiontype="itemgiven",
+                actiondetail=f"i-a dat lui {gavematch.group(3).strip()}({gavematch.group(4)}): {itemstext}",
+                itemname=itemstext,
+                itemquantity=None,
+                targetplayerid=gavematch.group(4),
+                targetplayername=gavematch.group(3).strip(),
+                timestamp=timestamp,
+                rawtext=text,
             )
-            if gave_match:
-                # Extract items (everything after the target player info)
-                items_text = gave_match.group(5).strip()
-                # Remove leading comma if present
-                items_text = items_text.lstrip(", ")
 
-                return PlayerAction(
-                    player_id=gave_match.group(2),
-                    player_name=gave_match.group(1).strip(),
-                    action_type="item_given",
-                    action_detail=f"ia dat lui {gave_match.group(3).strip()}({gave_match.group(4)}) {items_text}",
-                    item_name=items_text,
-                    item_quantity=None,  # Quantity is in items_text
-                    target_player_id=gave_match.group(4),
-                    target_player_name=gave_match.group(3).strip(),
-                    timestamp=timestamp,
-                    raw_text=text,
-                )
-
-            # Item received pattern
-            received_match = re.search(
-                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+de\s+la\s+([^(]+)\((\d+)\)\s+x(\d+)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|$)",
-                text,
-                re.IGNORECASE,
+        # Item received pattern
+        receivedmatch = re.search(
+            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+a\s+primit\s+de\s+la\s+([^\(]+)\((\d+)\)\s+x(\d+)\s+([^\.]+)",
+            text,
+            re.IGNORECASE,
+        )
+        if receivedmatch:
+            return PlayerAction(
+                playerid=receivedmatch.group(2),
+                playername=receivedmatch.group(1).strip(),
+                actiontype="itemreceived",
+                actiondetail=f"Primit {receivedmatch.group(6).strip()} de la {receivedmatch.group(3).strip()}",
+                itemname=receivedmatch.group(6).strip(),
+                itemquantity=int(receivedmatch.group(5)),
+                targetplayerid=receivedmatch.group(4),
+                targetplayername=receivedmatch.group(3).strip(),
+                timestamp=timestamp,
+                rawtext=text,
             )
-            if received_match:
-                return PlayerAction(
-                    player_id=received_match.group(2),
-                    player_name=received_match.group(1).strip(),
-                    action_type="item_received",
-                    action_detail=f"Primit {received_match.group(6).strip()} de la {received_match.group(3).strip()}",
-                    item_name=received_match.group(6).strip(),
-                    item_quantity=int(received_match.group(5)),
-                    target_player_id=received_match.group(4),
-                    target_player_name=received_match.group(3).strip(),
-                    timestamp=timestamp,
-                    raw_text=text,
-                )
 
-            # Vehicle pattern
-            vehicle_match = re.search(
-                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)",
-                text,
-                re.IGNORECASE,
+        # Vehicle pattern
+        vehiclematch = re.search(
+            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+(a\s+cumparat|a\s+vandut)\s+([^\.]+)\.",
+            text,
+            re.IGNORECASE,
+        )
+        if vehiclematch:
+            actiontype = "vehiclebought" if "cumparat" in vehiclematch.group(3).lower() else "vehiclesold"
+            return PlayerAction(
+                playerid=vehiclematch.group(2),
+                playername=vehiclematch.group(1).strip(),
+                actiontype=actiontype,
+                actiondetail=vehiclematch.group(4).strip(),
+                timestamp=timestamp,
+                rawtext=text,
             )
-            if vehicle_match:
-                action_type = (
-                    "vehicle_bought"
-                    if "cumparat" in vehicle_match.group(3).lower()
-                    else "vehicle_sold"
-                )
-                return PlayerAction(
-                    player_id=vehicle_match.group(2),
-                    player_name=vehicle_match.group(1).strip(),
-                    action_type=action_type,
-                    action_detail=vehicle_match.group(4).strip(),
-                    timestamp=timestamp,
-                    raw_text=text,
-                )
 
-            # Property pattern
-            property_match = re.search(
-                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(casa|afacere|proprietate)\s*(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)",
-                text,
-                re.IGNORECASE,
+        # Warning pattern
+        warningmatch = re.search(
+            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+a\s+primit\s+un\s+avertisment\s+de\s+la\s+administratorul\s+([^\(]+)\((\d+)\),\s+motiv\s+'([^']+)'",
+            text,
+            re.IGNORECASE,
+        )
+        if warningmatch:
+            return PlayerAction(
+                playerid=warningmatch.group(2),
+                playername=warningmatch.group(1).strip(),
+                actiontype="warningreceived",
+                actiondetail=f"Avertisment de la {warningmatch.group(3).strip()}",
+                adminid=warningmatch.group(4),
+                adminname=warningmatch.group(3).strip(),
+                warningcount=None,
+                reason=warningmatch.group(5).strip(),
+                timestamp=timestamp,
+                rawtext=text,
             )
-            if property_match:
-                action_type = (
-                    "property_bought"
-                    if "cumparat" in property_match.group(3).lower()
-                    else "property_sold"
-                )
-                return PlayerAction(
-                    player_id=property_match.group(2),
-                    player_name=property_match.group(1).strip(),
-                    action_type=action_type,
-                    action_detail=f"{property_match.group(3)} {property_match.group(4)}",
-                    timestamp=timestamp,
-                    raw_text=text,
-                )
 
         # OTHER - Admin jail pattern
-        adminjailmatch = re.search(
-            r"a\s+primit\s+admin\s+jail\s+(\d+).*?de\s+la\s+administratorul\s+([^\(]+)\((\d+)\),\s+motiv\s+'([^']+)'",
-            text,
-            re.IGNORECASE,
-        )
-        if adminjailmatch:
-            playermatch = re.search(r"Jucatorul\s+([^\(]+)\((\d+)\)", text, re.IGNORECASE)
-            if playermatch:
-                return PlayerAction(
-                    playerid=playermatch.group(2),
-                    playername=playermatch.group(1).strip(),
-                    actiontype="adminjail",
-                    actiondetail=f"Admin jail {adminjailmatch.group(1)} checkpoints from {adminjailmatch.group(2).strip()}, reason: '{adminjailmatch.group(4)}'",
-                    adminid=adminjailmatch.group(3),
-                    adminname=adminjailmatch.group(2).strip(),
-                    reason=adminjailmatch.group(4),
-                    timestamp=timestamp,
-                    rawtext=text,
-                )
+        if "admin jail" in text.lower():
+            adminjailmatch = re.search(
+                r"a\s+primit\s+admin\s+jail\s+(\d+).*?administratorul\s+([^\(]+)\((\d+)\).*?motiv\s+'([^']+)'",
+                text,
+                re.IGNORECASE,
+            )
+            if adminjailmatch:
+                playermatch = re.search(r"Jucatorul\s+([^\(]+)\((\d+)\)", text, re.IGNORECASE)
+                if playermatch:
+                    return PlayerAction(
+                        playerid=playermatch.group(2),
+                        playername=playermatch.group(1).strip(),
+                        actiontype="adminjail",
+                        actiondetail=f"Admin jail {adminjailmatch.group(1)} checkpoints, reason: {adminjailmatch.group(4)}",
+                        adminid=adminjailmatch.group(3),
+                        adminname=adminjailmatch.group(2).strip(),
+                        reason=adminjailmatch.group(4),
+                        timestamp=timestamp,
+                        rawtext=text,
+                    )
 
             # Generic pattern for any other "Jucatorul" action
             generic_match = re.search(
