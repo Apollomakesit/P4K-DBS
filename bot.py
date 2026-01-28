@@ -655,9 +655,7 @@ async def scrape_actions():
 
                 if action.player_id:
                     new_player_ids.add((action.player_id, action.player_name))
-                    await db.markplayerforupdate(
-                        action.player_id, action.player_name
-                    )
+                    await db.markplayerforupdate(action.player_id, action.player_name)
 
                 if action.target_player_id:
                     new_player_ids.add(
@@ -916,9 +914,7 @@ async def scrape_online_players():
                 await db.savelogin(
                     player["player_id"], player["player_name"], current_time
                 )
-                await db.markplayerforupdate(
-                    player["player_id"], player["player_name"]
-                )
+                await db.markplayerforupdate(player["player_id"], player["player_name"])
                 logger.info(
                     f"🟢 Login detected: {player['player_name']} ({player['player_id']})"
                 )
