@@ -790,59 +790,31 @@ class Pro4KingsScraper:
                     raw_text=text,
                 )
 
-# Contract pattern for vehicle transfers
-contractmatch = re.search(
-    r"Contract\s+([^\(]+)\((\d+)\)\s+([^\(]+)\((\d+)\).*?'(\d+)'\s+\[(.*?)\],\s*'(\d+)'\s+\[(.*?)\].*?(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
-    text,
-    re.IGNORECASE
-)
-if contractmatch:
-    from_name = contractmatch.group(1).strip()
-    from_id = contractmatch.group(2)
-    to_name = contractmatch.group(3).strip()
-    to_id = contractmatch.group(4)
-    vehicle_info = contractmatch.group(6).strip()
-    
-    return PlayerAction(
-        playerid=from_id,
-        playername=from_name,
-        actiontype="contract",
-        actiondetail=f"Contract - transferred vehicle to {to_name}({to_id}): {vehicle_info}",
-        itemname=vehicle_info,
-        itemquantity=None,
-        targetplayerid=to_id,
-        targetplayername=to_name,
-        timestamp=timestamp,
-        rawtext=text,
-    )
-
-
-# OTHER - Admin jail pattern
-adminjailmatch = re.search(
-    r"a\s+primit\s+admin\s+jail\s+(\d+).*?de\s+la\s+administratorul\s+([^\(]+)\((\d+)\),\s+motiv\s+'([^']+)'",
-    text,
-    re.IGNORECASE
-)
-if adminjailmatch:
-    # Extract player info from the beginning
-    playermatch = re.search(r"Jucatorul\s+([^\(]+)\((\d+)\)", text, re.IGNORECASE)
-    if playermatch:
-        try:
-            timestamp = datetime.strptime(timestampmatch.group(1), "%Y-%m-%d %H:%M") if timestampmatch else datetime.now()
-        except:
-            pass
-        
-        return PlayerAction(
-            playerid=playermatch.group(2),
-            playername=playermatch.group(1).strip(),
-            actiontype="adminjail",
-            actiondetail=f"Admin jail {adminjailmatch.group(1)} checkpoints from {adminjailmatch.group(2).strip()}, reason: '{adminjailmatch.group(4)}'",
-            adminid=adminjailmatch.group(3),
-            adminname=adminjailmatch.group(2).strip(),
-            reason=adminjailmatch.group(4),
-            timestamp=timestamp,
-            rawtext=text,
+        # Contract pattern for vehicle transfers
+        contractmatch = re.search(
+            r"Contract\s+([^\(]+)\((\d+)\)\s+([^\(]+)\((\d+)\).*?'(\d+)'\s+\[(.*?)\],\s*'(\d+)'\s+\[(.*?)\].*?(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
+            text,
+            re.IGNORECASE,
         )
+        if contractmatch:
+            from_name = contractmatch.group(1).strip()
+            from_id = contractmatch.group(2)
+            to_name = contractmatch.group(3).strip()
+            to_id = contractmatch.group(4)
+            vehicle_info = contractmatch.group(6).strip()
+
+            return PlayerAction(
+                playerid=from_id,
+                playername=from_name,
+                actiontype="contract",
+                actiondetail=f"Contract - transferred vehicle to {to_name}({to_id}): {vehicle_info}",
+                itemname=vehicle_info,
+                itemquantity=None,
+                targetplayerid=to_id,
+                targetplayername=to_name,
+                timestamp=timestamp,
+                rawtext=text,
+            )
 
 
             # 🔥 FIXED: Item given pattern - matches "ia dat lui" (not "a dat lui")
@@ -930,6 +902,27 @@ if adminjailmatch:
                     action_detail=f"{property_match.group(3)} {property_match.group(4)}",
                     timestamp=timestamp,
                     raw_text=text,
+                )
+
+        # OTHER - Admin jail pattern
+        adminjailmatch = re.search(
+            r"a\s+primit\s+admin\s+jail\s+(\d+).*?de\s+la\s+administratorul\s+([^\(]+)\((\d+)\),\s+motiv\s+'([^']+)'",
+            text,
+            re.IGNORECASE,
+        )
+        if adminjailmatch:
+            playermatch = re.search(r"Jucatorul\s+([^\(]+)\((\d+)\)", text, re.IGNORECASE)
+            if playermatch:
+                return PlayerAction(
+                    playerid=playermatch.group(2),
+                    playername=playermatch.group(1).strip(),
+                    actiontype="adminjail",
+                    actiondetail=f"Admin jail {adminjailmatch.group(1)} checkpoints from {adminjailmatch.group(2).strip()}, reason: '{adminjailmatch.group(4)}'",
+                    adminid=adminjailmatch.group(3),
+                    adminname=adminjailmatch.group(2).strip(),
+                    reason=adminjailmatch.group(4),
+                    timestamp=timestamp,
+                    rawtext=text,
                 )
 
             # Generic pattern for any other "Jucatorul" action
