@@ -768,27 +768,58 @@ class Pro4KingsScraper:
                     raw_text=text,
                 )
 
-            # 🔥 FIXED: Chest deposit pattern - matches "pus in chest"
-            chest_deposit_match = re.search(
-                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a?\s*pus\s+in\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)",
-                text,
-                re.IGNORECASE,
+        # FIXED: Chest deposit pattern - matches "pus in chest"
+        chestdepositmatch = re.search(
+            r"Jucatorul\s+([^\(]+)\((\d+)\)\s+a\s+pus\s+in\s+chest\s+#(\d+),\s+x(\d+)\s+(.+?)\.\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+Jucatorul",
+            text,
+            re.IGNORECASE,
+        )
+        if chestdepositmatch:
+            chestid = chestdepositmatch.group(3)
+            quantity = chestdepositmatch.group(4)
+            itemname = chestdepositmatch.group(5).strip().rstrip(".")
+            return PlayerAction(
+                playerid=chestdepositmatch.group(2),
+                playername=chestdepositmatch.group(1).strip(),
+                actiontype="chestdeposit",
+                actiondetail=f"pus in chest #{chestid}, {quantity}x {itemname}.",
+                itemname=itemname,
+                itemquantity=int(quantity),
+                timestamp=timestamp,
+                rawtext=text,
             )
-            if chest_deposit_match:
-                chest_id = chest_deposit_match.group(3)
-                quantity = chest_deposit_match.group(4)
-                item_name = chest_deposit_match.group(5).strip().rstrip(".")
 
-                return PlayerAction(
-                    player_id=chest_deposit_match.group(2),
-                    player_name=chest_deposit_match.group(1).strip(),
-                    action_type="chest_deposit",
-                    action_detail=f"pus in chest(id {chest_id}), {quantity}x {item_name}.",
-                    item_name=item_name,
-                    item_quantity=int(quantity),
-                    timestamp=timestamp,
-                    raw_text=text,
-                )
+        # Contract pattern for vehicle transfers
+        contractmatch = re.search(
+            r"Contract\s+([^\(]+)\((\d+)\)\s+([^\(]+)\((\d+)\)",
+            text,
+            re.IGNORECASE,
+        )
+        if contractmatch:
+            from_name = contractmatch.group(1).strip()
+            from_id = contractmatch.group(2)
+            to_name = contractmatch.group(3).strip()
+            to_id = contractmatch.group(4)
+            
+            # Extract vehicle info from the raw text
+            vehicle_match = re.search(r"\[(.*?)\]", text)
+            vehicle_info = vehicle_match.group(1) if vehicle_match else "Vehicle"
+
+            return PlayerAction(
+                playerid=from_id,
+                playername=from_name,
+                actiontype="contract",
+                actiondetail=f"Contract with {to_name}({to_id}): {vehicle_info}",
+                itemname=vehicle_info,
+                itemquantity=None,
+                targetplayerid=to_id,
+                targetplayername=to_name,
+                timestamp=timestamp,
+                rawtext=text,
+            )
+
+        # FIXED: Item given pattern - matches "ia dat lui" not "a dat lui"
+        gavematch = re.search(
 
         # Contract pattern for vehicle transfers
         contractmatch = re.search(
