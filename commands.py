@@ -151,7 +151,7 @@ class ActionsPaginationView(discord.ui.View):
         days: int,
         author_id: int,
         items_per_page: int = 10,
-        original_count: int = None,
+        original_count: Optional[int] = None,
     ):
         super().__init__(timeout=180)  # 3 minutes timeout
         # Deduplicate actions before storing
@@ -162,6 +162,7 @@ class ActionsPaginationView(discord.ui.View):
         self.author_id = author_id
         self.items_per_page = items_per_page
         self.current_page = 0
+        self.message: Optional[discord.Message] = None  # Store message reference
         self.total_pages = (
             (len(self.actions) + items_per_page - 1) // items_per_page
             if self.actions
@@ -178,7 +179,7 @@ class ActionsPaginationView(discord.ui.View):
 
     def _format_action_display(
         self, action: dict, viewing_player_id: str
-    ) -> Dict[str, str]:
+    ) -> Dict[str, str | List[str]]:
         """Format action for display with emojis and proper categorization.
 
         Returns dict with 'emoji', 'type_label', 'detail_lines'
@@ -411,12 +412,13 @@ class ActionsPaginationView(discord.ui.View):
     async def on_timeout(self):
         """Disable buttons when view times out"""
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         try:
             # Try to edit the message to disable buttons
             if self.message:
                 await self.message.edit(view=self)
-        except:
+        except Exception:
             pass
 
 
@@ -436,6 +438,7 @@ class FactionPaginationView(discord.ui.View):
         self.author_id = author_id
         self.items_per_page = items_per_page
         self.current_page = 0
+        self.message: Optional[discord.Message] = None  # Store message reference
         self.total_pages = (
             (len(self.members) + items_per_page - 1) // items_per_page
             if self.members
@@ -526,12 +529,13 @@ class FactionPaginationView(discord.ui.View):
     async def on_timeout(self):
         """Disable buttons when view times out"""
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         try:
             # Try to edit the message to disable buttons
             if self.message:
                 await self.message.edit(view=self)
-        except:
+        except Exception:
             pass
 
 
@@ -542,13 +546,13 @@ class OnlinePaginationView(discord.ui.View):
         self,
         players: List[dict],
         author_id: int,
-        db_instance,
+        faction_map: Dict[str, str],
         items_per_page: int = 20,
     ):
         super().__init__(timeout=180)  # 3 minutes timeout
         self.players = players
         self.author_id = author_id
-        self.db = db_instance
+        self.faction_map = faction_map  # Pre-fetched faction data
         self.items_per_page = items_per_page
         self.current_page = 0
         self.total_pages = (
@@ -556,7 +560,7 @@ class OnlinePaginationView(discord.ui.View):
             if self.players
             else 1
         )
-        self.message = None
+        self.message: Optional[discord.Message] = None
         self.update_buttons()
 
     def update_buttons(self):
@@ -581,20 +585,8 @@ class OnlinePaginationView(discord.ui.View):
             player_name = player.get("player_name", "Unknown")
             player_id = player.get("player_id", "?")
 
-            # Try to get faction from player_profiles
-            faction = "Unknown"
-            try:
-                with self.db.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "SELECT faction FROM player_profiles WHERE player_id = ?",
-                        (player_id,),
-                    )
-                    row = cursor.fetchone()
-                    if row and row["faction"]:
-                        faction = row["faction"]
-            except:
-                pass
+            # Use pre-fetched faction data (no DB access needed)
+            faction = self.faction_map.get(str(player_id), "Unknown")
 
             embed.add_field(
                 name=f"🟢 {player_name} ({player_id})",
@@ -640,11 +632,12 @@ class OnlinePaginationView(discord.ui.View):
     async def on_timeout(self):
         """Disable buttons when view times out"""
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         try:
             if self.message:
                 await self.message.edit(view=self)
-        except:
+        except Exception:
             pass
 
 
@@ -664,8 +657,6 @@ def format_time_duration(seconds: float) -> str:
 
 async def resolve_player_info(db, scraper, identifier):
     """Helper to get player info by ID or name"""
-    import re
-
     # Try as direct ID first
     if isinstance(identifier, int) or (
         isinstance(identifier, str) and identifier.isdigit()
@@ -933,7 +924,8 @@ def setup_commands(bot, db, scraper_getter):
         """Cleanup old database records (dry run first)"""
 
         # Permission check - restrict to server admins
-        if not interaction.user.guild_permissions.administrator:
+        member = interaction.user
+        if not isinstance(member, discord.Member) or not member.guild_permissions.administrator:
             await interaction.response.send_message(
                 "❌ You need Administrator permissions to use this command!",
                 ephemeral=True,
@@ -974,7 +966,8 @@ def setup_commands(bot, db, scraper_getter):
     async def cleanup_db_confirm(interaction: discord.Interaction):
         """Actually perform the cleanup"""
 
-        if not interaction.user.guild_permissions.administrator:
+        member = interaction.user
+        if not isinstance(member, discord.Member) or not member.guild_permissions.administrator:
             await interaction.response.send_message(
                 "❌ You need Administrator permissions!", ephemeral=True
             )
@@ -1860,7 +1853,7 @@ def setup_commands(bot, db, scraper_getter):
     )
     @app_commands.checks.cooldown(1, 30)
     async def actions_command(
-        interaction: discord.Interaction, identifier: str, days: Optional[int] = 7
+        interaction: discord.Interaction, identifier: str, days: int = 7
     ):
         """Get player's recent actions with pagination and deduplication"""
         await interaction.response.defer()
@@ -1914,7 +1907,7 @@ def setup_commands(bot, db, scraper_getter):
     )
     @app_commands.checks.cooldown(1, 10)
     async def sessions_command(
-        interaction: discord.Interaction, identifier: str, days: Optional[int] = 7
+        interaction: discord.Interaction, identifier: str, days: int = 7
     ):
         """View player's gaming sessions"""
         await interaction.response.defer()
@@ -2203,7 +2196,7 @@ def setup_commands(bot, db, scraper_getter):
     @app_commands.describe(days="Days to look back (default: 7, max: 30)")
     @app_commands.checks.cooldown(1, 30)
     async def promotions_command(
-        interaction: discord.Interaction, days: Optional[int] = 7
+        interaction: discord.Interaction, days: int = 7
     ):
         """Recent faction promotions"""
         await interaction.response.defer()
@@ -2322,11 +2315,29 @@ def setup_commands(bot, db, scraper_getter):
                 await interaction.followup.send("📊 **No Players Online**")
                 return
 
+            # 🔥 Pre-fetch all faction data for online players (async)
+            def _get_factions_sync():
+                faction_map = {}
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    player_ids = [p.get("player_id") for p in online_players if p.get("player_id")]
+                    if player_ids:
+                        placeholders = ",".join("?" * len(player_ids))
+                        cursor.execute(
+                            f"SELECT player_id, faction FROM player_profiles WHERE player_id IN ({placeholders})",
+                            player_ids,
+                        )
+                        for row in cursor.fetchall():
+                            faction_map[str(row["player_id"])] = row["faction"] or "Unknown"
+                return faction_map
+
+            faction_map = await asyncio.to_thread(_get_factions_sync)
+
             # 🆕 Create pagination view for handling 500+ players
             view = OnlinePaginationView(
                 players=online_players,
                 author_id=interaction.user.id,
-                db_instance=db,
+                faction_map=faction_map,
             )
 
             embed = view.build_embed()
