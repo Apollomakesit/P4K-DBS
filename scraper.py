@@ -1096,7 +1096,44 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 17: Any "Jucatorul" action not matched above - mark as "other" but still extract player info
+        # 🔥 PATTERN 17: License plate sale - "Vanzarea de placute dintre jucatorii Player1(ID) si Player2(ID) a fost finalizata..."
+        # Example: "Vanzarea de placute dintre jucatorii k1m(174052) si idn(160848) a fost finalizata. ([174052] k1m a oferit numarul..."
+        plate_sale_match = re.search(
+            r"Vanzarea\s+de\s+placute\s+dintre\s+jucatorii\s+([^(]+)\((\d+)\)\s+si\s+([^(]+)\((\d+)\)\s+a\s+fost\s+finalizata\.\s*\(\[(\d+)\]\s+([^\s]+)\s+a\s+oferit\s+numarul\s+sau\s+de\s+inmatriculare\s+\(([^)]+)\)\s+jucatorului\s+\[(\d+)\]\s+([^\s]+)\s+pe\s+vehiculul\s+([^,]+),\s*pentru\s+suma\s+de\s+(\d+)",
+            text, re.IGNORECASE
+        )
+        if plate_sale_match:
+            player1_name = plate_sale_match.group(1).strip()
+            player1_id = plate_sale_match.group(2)
+            player2_name = plate_sale_match.group(3).strip()
+            player2_id = plate_sale_match.group(4)
+            giver_id = plate_sale_match.group(5)
+            plate_number = plate_sale_match.group(7)
+            receiver_id = plate_sale_match.group(8)
+            vehicle = plate_sale_match.group(10).strip()
+            price = plate_sale_match.group(11)
+            
+            # Determine who gave the plate
+            if giver_id == player1_id:
+                giver_name = player1_name
+                receiver_name = player2_name
+            else:
+                giver_name = player2_name
+                receiver_name = player1_name
+            
+            return PlayerAction(
+                player_id=giver_id,
+                player_name=giver_name,
+                action_type="license_plate_sale",
+                action_detail=f"Vândut plăcuță ({plate_number}) lui {receiver_name} pe {vehicle} pentru {price}$",
+                item_name=f"Plăcuță: {plate_number}",
+                target_player_id=receiver_id,
+                target_player_name=receiver_name,
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 18: Any "Jucatorul" action not matched above - mark as "other" but still extract player info
         generic_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
