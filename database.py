@@ -547,9 +547,10 @@ class Database:
             return False
 
 
-async def action_exists(self, timestamp: datetime, text: str) -> bool:
-    """🔥 ASYNC: Check if action exists"""
-    return await asyncio.to_thread(self._action_exists_sync, timestamp, text)
+
+    async def action_exists(self, timestamp: datetime, text: str) -> bool:
+        """🔥 ASYNC: Check if action exists"""
+        return await asyncio.to_thread(self._action_exists_sync, timestamp, text)
 
     def _save_login_sync(
         self, player_id: str, player_name: str, timestamp: datetime
