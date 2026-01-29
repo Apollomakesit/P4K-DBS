@@ -1112,7 +1112,7 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 15: Non-Jucatorul actions with player IDs (like contracts without "Jucatorul" prefix)
+        # 🔥 PATTERN 18: Non-Jucatorul actions with player IDs (like contracts without "Jucatorul" prefix)
         if re.search(r"\(\d+\)", text):
             id_match = re.search(r"([^(]+)\((\d+)\)", text)
             if id_match:
@@ -1125,7 +1125,7 @@ class Pro4KingsScraper:
                     raw_text=text,
                 )
         
-        # 🔥 PATTERN 16: CATCH-ALL - Save ANY action text even if no patterns match
+        # 🔥 PATTERN 19: CATCH-ALL - Save ANY action text even if no patterns match
         if len(text) >= 10:
             logger.debug(f"⚠️ Unrecognized action pattern saved as 'unknown': {text[:80]}...")
             return PlayerAction(
