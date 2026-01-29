@@ -35,8 +35,8 @@ class PlayerAction:
     admin_name: Optional[str] = None
     warning_count: Optional[str] = None
     reason: Optional[str] = None
-    timestamp: datetime = None
-    raw_text: str = None
+    timestamp: Optional[datetime] = None
+    raw_text: Optional[str] = None
 
 
 @dataclass
@@ -159,6 +159,10 @@ class Pro4KingsScraper:
 
     async def fetch_page(self, url: str, retries: int = 3) -> Optional[str]:
         """Fetch page with TokenBucket rate limiting and adaptive throttling"""
+        if self.client is None:
+            logger.error("HTTP client not initialized! Call __aenter__ first.")
+            return None
+
         async with self.semaphore:
             # ✅ Apply TokenBucket rate limiting
             await self.rate_limiter.acquire()
@@ -845,8 +849,8 @@ class Pro4KingsScraper:
                     action_detail=f"Primit {receivedmatch.group(6).strip()} de la {receivedmatch.group(3).strip()}",
                     item_name=receivedmatch.group(6).strip(),
                     item_quantity=int(receivedmatch.group(5)),
-                    targetplayer_id=receivedmatch.group(4),
-                    targetplayer_name=receivedmatch.group(3).strip(),
+                    target_player_id=receivedmatch.group(4),
+                    target_player_name=receivedmatch.group(3).strip(),
                     timestamp=timestamp,
                     raw_text=text,
                 )
@@ -867,8 +871,8 @@ class Pro4KingsScraper:
                     action_detail=f"i-a dat lui {gavematch.group(3).strip()}({gavematch.group(4)}) {itemstext}",
                     item_name=itemstext,
                     item_quantity=None,
-                    targetplayer_id=gavematch.group(4),
-                    targetplayer_name=gavematch.group(3).strip(),
+                    target_player_id=gavematch.group(4),
+                    target_player_name=gavematch.group(3).strip(),
                     timestamp=timestamp,
                     raw_text=text,
                 )
@@ -937,8 +941,8 @@ class Pro4KingsScraper:
                     action_detail=f"Contract with {toname}({toid}) {vehicleinfo}",
                     item_name=vehicleinfo,
                     item_quantity=None,
-                    targetplayer_id=toid,
-                    targetplayer_name=toname,
+                    target_player_id=toid,
+                    target_player_name=toname,
                     timestamp=timestamp,
                     raw_text=text,
                 )
@@ -1200,9 +1204,8 @@ class Pro4KingsScraper:
                     player_link = cells[1].select_one('a[href*="/profile/"]')
                     player_id = None
                     if player_link:
-                        id_match = re.search(
-                            r"/profile/(\d+)", player_link.get("href", "")
-                        )
+                        href = player_link.get("href", "")
+                        id_match = re.search(r"/profile/(\d+)", str(href))
                         if id_match:
                             player_id = id_match.group(1)
 
