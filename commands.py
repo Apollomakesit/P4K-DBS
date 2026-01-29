@@ -9,15 +9,9 @@ import os
 import re
 from typing import Optional, List, Dict
 from collections import defaultdict
+from config import Config
 
 logger = logging.getLogger(__name__)
-
-# Admin user IDs from environment
-ADMIN_USER_IDS = (
-    set(map(int, os.getenv("ADMIN_USER_IDS", "").split(",")))
-    if os.getenv("ADMIN_USER_IDS")
-    else set()
-)
 
 # SCAN STATE - Shared across commands
 SCAN_STATE = {
@@ -829,7 +823,7 @@ async def auto_refresh_status():
 
 def is_admin(user_id: int) -> bool:
     """Check if user is admin"""
-    return user_id in ADMIN_USER_IDS
+    return user_id in Config.ADMIN_USER_IDS
 
 
 def setup_commands(bot, db, scraper_getter):

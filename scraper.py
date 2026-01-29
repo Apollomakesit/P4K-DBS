@@ -785,7 +785,7 @@ class Pro4KingsScraper:
                 return PlayerAction(
                     player_id=chestdepositmatch.group(2),
                     player_name=chestdepositmatch.group(1).strip(),
-                    action_type="chestdeposit",
+                    action_type="chest_deposit",
                     action_detail=f"pus in chest #{chestid}, {quantity}x {itemname}.",
                     item_name=itemname,
                     item_quantity=int(quantity),
@@ -794,8 +794,9 @@ class Pro4KingsScraper:
                 )
 
             # FIXED: Chest withdraw pattern - matches a retras din chest
+            # Consolidated pattern with lookahead to handle both with and without trailing period
             chestwithdrawmatch = re.search(
-                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\(id\s+([^)]+)\),\s+(\d+)x\s+(.+?)\.",
+                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\(id\s+([^)]+)\),\s+(\d+)x\s+(.+?)(?:\.(?=\s|$)|(?=\d{4}-\d{2}-\d{2}|Jucatorul|$))",
                 text,
                 re.IGNORECASE,
             )
@@ -806,28 +807,7 @@ class Pro4KingsScraper:
                 return PlayerAction(
                     player_id=chestwithdrawmatch.group(2),
                     player_name=chestwithdrawmatch.group(1).strip(),
-                    action_type="chestwithdraw",
-                    action_detail=f"a retras din chest(id {chestid}), {quantity}x {itemname}.",
-                    item_name=itemname,
-                    item_quantity=int(quantity),
-                    timestamp=timestamp,
-                    raw_text=text,
-                )
-
-            # FIXED: Chest withdraw pattern - matches a retras din chest
-            chestwithdrawmatch = re.search(
-                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\(id\s+([^)]+)\),\s+(\d+)x\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul)",
-                text,
-                re.IGNORECASE,
-            )
-            if chestwithdrawmatch:
-                chestid = chestwithdrawmatch.group(3)
-                quantity = chestwithdrawmatch.group(4)
-                itemname = chestwithdrawmatch.group(5).strip().rstrip(".")
-                return PlayerAction(
-                    player_id=chestwithdrawmatch.group(2),
-                    player_name=chestwithdrawmatch.group(1).strip(),
-                    action_type="chestwithdraw",
+                    action_type="chest_withdraw",
                     action_detail=f"a retras din chest(id {chestid}), {quantity}x {itemname}.",
                     item_name=itemname,
                     item_quantity=int(quantity),
@@ -845,7 +825,7 @@ class Pro4KingsScraper:
                 return PlayerAction(
                     player_id=receivedmatch.group(2),
                     player_name=receivedmatch.group(1).strip(),
-                    action_type="itemreceived",
+                    action_type="item_received",
                     action_detail=f"Primit {receivedmatch.group(6).strip()} de la {receivedmatch.group(3).strip()}",
                     item_name=receivedmatch.group(6).strip(),
                     item_quantity=int(receivedmatch.group(5)),
@@ -867,7 +847,7 @@ class Pro4KingsScraper:
                 return PlayerAction(
                     player_id=gavematch.group(2),
                     player_name=gavematch.group(1).strip(),
-                    action_type="itemgiven",
+                    action_type="item_given",
                     action_detail=f"i-a dat lui {gavematch.group(3).strip()}({gavematch.group(4)}) {itemstext}",
                     item_name=itemstext,
                     item_quantity=None,
@@ -885,9 +865,9 @@ class Pro4KingsScraper:
             )
             if propertymatch:
                 actiontype = (
-                    "propertybought"
+                    "property_bought"
                     if "cumparat" in propertymatch.group(3).lower()
-                    else "propertysold"
+                    else "property_sold"
                 )
                 return PlayerAction(
                     player_id=propertymatch.group(2),
@@ -906,9 +886,9 @@ class Pro4KingsScraper:
             )
             if vehiclematch:
                 actiontype = (
-                    "vehiclebought"
+                    "vehicle_bought"
                     if "cumparat" in vehiclematch.group(3).lower()
-                    else "vehiclesold"
+                    else "vehicle_sold"
                 )
                 return PlayerAction(
                     player_id=vehiclematch.group(2),
@@ -957,43 +937,7 @@ class Pro4KingsScraper:
                 return PlayerAction(
                     player_id=warningmatch.group(2),
                     player_name=warningmatch.group(1).strip(),
-                    action_type="warningreceived",
-                    action_detail=f"Avertisment de la {warningmatch.group(3).strip()}",
-                    admin_id=warningmatch.group(4),
-                    admin_name=warningmatch.group(3).strip(),
-                    warning_count=None,
-                    reason=warningmatch.group(5).strip(),
-                    timestamp=timestamp,
-                    raw_text=text,
-                )
-
-            # Generic pattern for any other Jucatorul action
-            genericmatch = re.search(
-                r"Jucatorul\s+([^(]+)\((\d+)\)\s+(.+?)(?=\d{4}-\d{2}-\d{2}|Jucatorul|$)",
-                text,
-                re.IGNORECASE,
-            )
-            if genericmatch:
-                return PlayerAction(
-                    player_id=genericmatch.group(2),
-                    player_name=genericmatch.group(1).strip(),
-                    action_type="other",
-                    action_detail=genericmatch.group(3).strip(),
-                    timestamp=timestamp,
-                    raw_text=text,
-                )
-
-            # Warning pattern
-            warningmatch = re.search(
-                r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+un\s+avertisment\s+de\s+la\s+administratorul\s+([^(]+)\((\d+)\)\s*,\s*motiv:\s*(.+?)\.",
-                text,
-                re.IGNORECASE,
-            )
-            if warningmatch:
-                return PlayerAction(
-                    player_id=warningmatch.group(2),
-                    player_name=warningmatch.group(1).strip(),
-                    action_type="warningreceived",
+                    action_type="warning_received",
                     action_detail=f"Avertisment de la {warningmatch.group(3).strip()}",
                     admin_id=warningmatch.group(4),
                     admin_name=warningmatch.group(3).strip(),
@@ -1018,7 +962,7 @@ class Pro4KingsScraper:
                         return PlayerAction(
                             player_id=playermatch.group(2),
                             player_name=playermatch.group(1).strip(),
-                            action_type="adminjail",
+                            action_type="admin_jail",
                             action_detail=f"Admin jail {adminjailmatch.group(1)} checkpoints, reason: {adminjailmatch.group(4)}",
                             admin_id=adminjailmatch.group(3),
                             admin_name=adminjailmatch.group(2).strip(),
