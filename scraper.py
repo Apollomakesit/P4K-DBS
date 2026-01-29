@@ -905,9 +905,6 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-                timestamp=timestamp,
-                raw_text=text,
-            )
         
         # ============================================================================
         # ADMIN ACTION PATTERNS
