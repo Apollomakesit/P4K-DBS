@@ -2708,10 +2708,13 @@ def setup_commands(bot, db, scraper_getter):
         name="unknownactions",
         description="🆕 List unrecognized action patterns in database (Admin only)",
     )
-    @app_commands.describe(limit="Max number of patterns to show (default: 20)")
+    @app_commands.describe(
+        limit="Max number of patterns to show (default: 20, max: 100)",
+        export="Export all patterns to a text file (default: false)"
+    )
     @app_commands.checks.cooldown(1, 30)
     async def unknown_actions_command(
-        interaction: discord.Interaction, limit: int = 20
+        interaction: discord.Interaction, limit: int = 20, export: bool = False
     ):
         """🆕 List action patterns that weren't recognized by the parser"""
         if not is_admin(interaction.user.id):
@@ -2724,6 +2727,9 @@ def setup_commands(bot, db, scraper_getter):
         await interaction.response.defer()
 
         try:
+            # Clamp limit to reasonable range
+            limit = max(1, min(limit, 500))
+            
             # Query unknown/other actions from database
             def _get_unknown_patterns():
                 with db.get_connection() as conn:
@@ -2760,9 +2766,40 @@ def setup_commands(bot, db, scraper_getter):
 
             total_unknown = await asyncio.to_thread(_get_total_unknown)
 
+            # If export requested, create a text file
+            if export:
+                import io
+                
+                content = f"UNRECOGNIZED ACTION PATTERNS REPORT\n"
+                content += f"Generated: {datetime.now()}\n"
+                content += f"Total unrecognized: {total_unknown:,}\n"
+                content += f"Unique patterns shown: {len(patterns)}\n"
+                content += "=" * 80 + "\n\n"
+                
+                for i, pattern in enumerate(patterns, 1):
+                    raw_text = pattern.get("raw_text", "")
+                    count = pattern.get("count", 0)
+                    action_type = pattern.get("action_type", "unknown")
+                    
+                    content += f"[{i}] Type: {action_type} | Count: {count}\n"
+                    content += f"    Raw: {raw_text}\n"
+                    content += "-" * 80 + "\n"
+                
+                # Create file attachment
+                file = discord.File(
+                    io.BytesIO(content.encode('utf-8')), 
+                    filename=f"unknown_patterns_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                )
+                
+                await interaction.followup.send(
+                    f"📄 **Exported {len(patterns)} patterns** ({total_unknown:,} total unrecognized actions)",
+                    file=file
+                )
+                return
+
             embed = discord.Embed(
                 title="⚠️ Unrecognized Action Patterns",
-                description=f"Found **{total_unknown:,}** unrecognized actions\nShowing top {len(patterns)} unique patterns:",
+                description=f"Found **{total_unknown:,}** unrecognized actions\nShowing top {len(patterns)} unique patterns:\n\n💡 Use `/unknownactions export:true limit:100` for full export",
                 color=discord.Color.orange(),
                 timestamp=datetime.now(),
             )
