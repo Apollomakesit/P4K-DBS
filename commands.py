@@ -457,7 +457,9 @@ class FactionPaginationView(discord.ui.View):
         page_members = self.members[start_idx:end_idx]
 
         # Count online members for description
-        online_count = sum(1 for m in self.members if m.get("is_online", 0) == 1)
+        online_count = sum(
+            1 for m in self.members if m.get("is_currently_online", 0) == 1
+        )
 
         embed = discord.Embed(
             title=f"👥 {self.faction_name}",
@@ -468,7 +470,7 @@ class FactionPaginationView(discord.ui.View):
 
         for member in page_members:
             # 🔥 FIX: Use is_online field from JOIN query (returns 1 for online, 0 for offline)
-            is_online = member.get("is_online", 0) == 1
+            is_online = member.get("is_currently_online", 0) == 1
             status = "🟢" if is_online else "🔴"
             rank = member.get("faction_rank")
 
