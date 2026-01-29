@@ -1082,8 +1082,9 @@ class Pro4KingsScraper:
             )
         
         # 🔥 PATTERN 16: Bank heist delivery - "a livrat bani de la banca(...) jefuita si a primit..."
+        # Handles both "primit X" and "primit X bani murdari si 1x Moneda sindicat"
         heist_match = re.search(
-            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\(([^)]+)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)",
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\(([^)]+)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)\s*(?:bani\s+murdari)?",
             text, re.IGNORECASE
         )
         if heist_match:
@@ -1097,9 +1098,9 @@ class Pro4KingsScraper:
             )
         
         # 🔥 PATTERN 17: License plate sale - "Vanzarea de placute dintre jucatorii Player1(ID) si Player2(ID) a fost finalizata..."
-        # Example: "Vanzarea de placute dintre jucatorii k1m(174052) si idn(160848) a fost finalizata. ([174052] k1m a oferit numarul..."
+        # More flexible pattern to handle various name formats
         plate_sale_match = re.search(
-            r"Vanzarea\s+de\s+placute\s+dintre\s+jucatorii\s+([^(]+)\((\d+)\)\s+si\s+([^(]+)\((\d+)\)\s+a\s+fost\s+finalizata\.\s*\(\[(\d+)\]\s+([^\s]+)\s+a\s+oferit\s+numarul\s+sau\s+de\s+inmatriculare\s+\(([^)]+)\)\s+jucatorului\s+\[(\d+)\]\s+([^\s]+)\s+pe\s+vehiculul\s+([^,]+),\s*pentru\s+suma\s+de\s+(\d+)",
+            r"Vanzarea\s+de\s+placute\s+dintre\s+jucatorii\s+(.+?)\((\d+)\)\s+si\s+(.+?)\((\d+)\)\s+a\s+fost\s+finalizata",
             text, re.IGNORECASE
         )
         if plate_sale_match:
@@ -1107,25 +1108,28 @@ class Pro4KingsScraper:
             player1_id = plate_sale_match.group(2)
             player2_name = plate_sale_match.group(3).strip()
             player2_id = plate_sale_match.group(4)
-            giver_id = plate_sale_match.group(5)
-            plate_number = plate_sale_match.group(7)
-            receiver_id = plate_sale_match.group(8)
-            vehicle = plate_sale_match.group(10).strip()
-            price = plate_sale_match.group(11)
             
-            # Determine who gave the plate
-            if giver_id == player1_id:
-                giver_name = player1_name
-                receiver_name = player2_name
+            # Try to extract plate number and vehicle from the rest of text
+            plate_match = re.search(r"inmatriculare\s+\(([^)]+)\)", text)
+            plate_number = plate_match.group(1) if plate_match else "?"
+            
+            vehicle_match = re.search(r"pe\s+vehiculul\s+([^,]+)", text)
+            vehicle = vehicle_match.group(1).strip() if vehicle_match else "vehicul"
+            
+            # Find who gave the plate (the one mentioned in "[ID] Name a oferit")
+            giver_match = re.search(r"\[(\d+)\]\s+([^\s]+)\s+a\s+oferit", text)
+            if giver_match and giver_match.group(1) == player1_id:
+                giver_id, giver_name = player1_id, player1_name
+                receiver_id, receiver_name = player2_id, player2_name
             else:
-                giver_name = player2_name
-                receiver_name = player1_name
+                giver_id, giver_name = player2_id, player2_name
+                receiver_id, receiver_name = player1_id, player1_name
             
             return PlayerAction(
                 player_id=giver_id,
                 player_name=giver_name,
                 action_type="license_plate_sale",
-                action_detail=f"Vândut plăcuță ({plate_number}) lui {receiver_name} pe {vehicle} pentru {price}$",
+                action_detail=f"Vândut plăcuță ({plate_number}) lui {receiver_name} pe {vehicle}",
                 item_name=f"Plăcuță: {plate_number}",
                 target_player_id=receiver_id,
                 target_player_name=receiver_name,
@@ -1133,7 +1137,128 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 18: Any "Jucatorul" action not matched above - mark as "other" but still extract player info
+        # 🔥 PATTERN 18: Admin jail - "a primit admin jail X (de) checkpointuri de la administratorul..."
+        jail_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+primit\s+admin\s+jail\s+(\d+)\s*(?:\(de\))?\s*checkpointuri\s+de\s+la\s+administratorul\s+(.+?)\((\d+)\)\s*,\s*motiv\s+['\"]?(.+?)['\"]?(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if jail_match:
+            return PlayerAction(
+                player_id=jail_match.group(2),
+                player_name=jail_match.group(1).strip(),
+                action_type="admin_jail",
+                action_detail=f"Jail {jail_match.group(3)} CP de la {jail_match.group(4).strip()}: {jail_match.group(6).strip()}",
+                admin_id=jail_match.group(5),
+                admin_name=jail_match.group(4).strip(),
+                reason=jail_match.group(6).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 19: Gambling win - "a castigat impotriva lui Player meciul de barbut/slots/etc"
+        gambling_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+castigat\s+(?:impotriva\s+lui\s+)?(.+?)\((\d+)\)\s+(?:meciul\s+de\s+)?(\w+)[\s,]+(\d[\d.,]*)\$?",
+            text, re.IGNORECASE
+        )
+        if gambling_match:
+            game_type = gambling_match.group(5)
+            amount = gambling_match.group(6)
+            return PlayerAction(
+                player_id=gambling_match.group(2),
+                player_name=gambling_match.group(1).strip(),
+                action_type="gambling_win",
+                action_detail=f"Câștigat {game_type} vs {gambling_match.group(3).strip()}: {amount}$",
+                target_player_id=gambling_match.group(4),
+                target_player_name=gambling_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 20: House safe withdrawal - "a retras suma de X$ din seiful casei nr. Y"
+        house_safe_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\$\s*din\s+seiful\s+casei\s+nr\.\s*(\d+)",
+            text, re.IGNORECASE
+        )
+        if house_safe_match:
+            return PlayerAction(
+                player_id=house_safe_match.group(2),
+                player_name=house_safe_match.group(1).strip(),
+                action_type="house_safe_withdraw",
+                action_detail=f"Retras {house_safe_match.group(3)}$ din seif casa #{house_safe_match.group(4)}",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 21: House safe deposit - "a depozitat suma de X$ in seiful casei nr. Y"
+        house_safe_deposit_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\$\s*in\s+seiful\s+casei\s+nr\.\s*(\d+)",
+            text, re.IGNORECASE
+        )
+        if house_safe_deposit_match:
+            return PlayerAction(
+                player_id=house_safe_deposit_match.group(2),
+                player_name=house_safe_deposit_match.group(1).strip(),
+                action_type="house_safe_deposit",
+                action_detail=f"Depozitat {house_safe_deposit_match.group(3)}$ in seif casa #{house_safe_deposit_match.group(4)}",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 22: Item sold (marketplace) - "[ID] Name a vandut xN Item pentru suma de $X"
+        item_sold_match = re.search(
+            r"\[(\d+)\]\s+([^\[]+?)\s+a\s+vandut\s+x?(\d+)\s+(.+?)\s+pentru\s+suma\s+de\s+\$?([\d.,]+)",
+            text, re.IGNORECASE
+        )
+        if item_sold_match:
+            return PlayerAction(
+                player_id=item_sold_match.group(1),
+                player_name=item_sold_match.group(2).strip(),
+                action_type="item_sold",
+                action_detail=f"Vândut {item_sold_match.group(3)}x {item_sold_match.group(4).strip()} pentru {item_sold_match.group(5)}$",
+                item_name=item_sold_match.group(4).strip(),
+                item_quantity=int(item_sold_match.group(3)),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 23: Money transfer to "jucatorului" (different format) - "ia transferat suma de X$ jucatorului Name (ID)"
+        transfer_alt_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*\$?\s*jucatorului\s+(.+?)\s+\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if transfer_alt_match:
+            return PlayerAction(
+                player_id=transfer_alt_match.group(2),
+                player_name=transfer_alt_match.group(1).strip(),
+                action_type="money_transfer",
+                action_detail=f"Transferat {transfer_alt_match.group(3)}$ lui {transfer_alt_match.group(4).strip()}",
+                target_player_id=transfer_alt_match.group(5),
+                target_player_name=transfer_alt_match.group(4).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 24: Item given with nested parentheses in name - handles "! Name (tag)(ID)"
+        # Example: "ia dat lui ! Montana (585)(160273) 2x Armura"
+        gave_nested_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+i?a\s+dat\s+lui\s+(.+?)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if gave_nested_match:
+            return PlayerAction(
+                player_id=gave_nested_match.group(2),
+                player_name=gave_nested_match.group(1).strip(),
+                action_type="item_given",
+                action_detail=f"Dat lui {gave_nested_match.group(3).strip()}: {gave_nested_match.group(5)}x {gave_nested_match.group(6).strip()}",
+                item_name=gave_nested_match.group(6).strip().rstrip("."),
+                item_quantity=int(gave_nested_match.group(5)),
+                target_player_id=gave_nested_match.group(4),
+                target_player_name=gave_nested_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 25: Any "Jucatorul" action not matched above - mark as "other" but still extract player info
         generic_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
@@ -1149,7 +1274,7 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 19: Non-Jucatorul actions with player IDs (like contracts without "Jucatorul" prefix)
+        # 🔥 PATTERN 26: Non-Jucatorul actions with player IDs (like contracts without "Jucatorul" prefix)
         if re.search(r"\(\d+\)", text):
             id_match = re.search(r"([^(]+)\((\d+)\)", text)
             if id_match:
@@ -1162,7 +1287,7 @@ class Pro4KingsScraper:
                     raw_text=text,
                 )
         
-        # 🔥 PATTERN 20: CATCH-ALL - Save ANY action text even if no patterns match
+        # 🔥 PATTERN 27: CATCH-ALL - Save ANY action text even if no patterns match
         if len(text) >= 10:
             logger.debug(f"⚠️ Unrecognized action pattern saved as 'unknown': {text[:80]}...")
             return PlayerAction(
