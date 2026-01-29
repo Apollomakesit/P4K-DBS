@@ -10,12 +10,6 @@ echo "================================================"
 mkdir -p /data
 mkdir -p /app/backup_extracted
 
-# 🔍 CHECK BACKUP CONTENTS FIRST
-if [ -f "/app/backup_extracted/pro4kings.db" ]; then
-    echo "🔍 Checking backup database contents..."
-    python /app/check_backup.py 2>/dev/null || echo "   (check_backup.py not available)"
-fi
-
 echo "================================================"
 echo "📂 Checking for existing database..."
 
@@ -89,69 +83,22 @@ if [ -f "/data/pro4kings.db" ]; then
         fi
     fi
     
-    # Run merge if needed (non-critical - continue even if it fails)
+    # Run migration if needed via bot.py's built-in migrate_db module
     if [ "$NEEDS_MERGE" -eq "1" ]; then
         echo "================================================"
-        echo "🔄 Running comprehensive database merge..."
-        echo "   This will combine:"
-        echo "   - Backup database (if available)"
-        echo "   - Legacy 'players' table (if exists)"
-        echo "   - Current 'player_profiles' table (if exists)"
+        echo "🔄 Migration will be handled by bot.py on startup..."
+        echo "   The migrate_db.py module will automatically:"
+        echo "   - Download backup from GitHub (if needed)"
+        echo "   - Migrate legacy 'players' table to 'player_profiles'"
+        echo "   - Create migration flag file"
         
-        if [ -f "/app/merge_database.py" ]; then
-            echo "   Attempting merge with merge_database.py..."
-            python /app/merge_database.py || {
-                echo "⚠️  Database merge script failed or not available"
-                echo "   Trying fallback migration..."
-                
-                if [ -f "/app/migrate_database.py" ]; then
-                    python /app/migrate_database.py /data/pro4kings.db || {
-                        echo "⚠️  Migration also failed or not available"
-                        echo "   Continuing with existing database..."
-                    }
-                else
-                    echo "⚠️  migrate_database.py not found - skipping migration"
-                    echo "   Continuing with existing database..."
-                fi
-            }
-        else
-            echo "⚠️  merge_database.py not found"
-            
-            if [ -f "/app/migrate_database.py" ]; then
-                echo "   Attempting migration with migrate_database.py..."
-                python /app/migrate_database.py /data/pro4kings.db || {
-                    echo "⚠️  Migration failed - continuing with existing database..."
-                }
-            else
-                echo "⚠️  migrate_database.py not found - skipping migration"
-                echo "   Continuing with existing database..."
-            fi
-        fi
-        
-        # Verify merge/migration worked (informational only)
-        echo "================================================"
-        echo "🔍 Post-migration verification..."
-        FINAL_PROFILES=$(sqlite3 /data/pro4kings.db "SELECT COUNT(*) FROM player_profiles;" 2>/dev/null || echo "0")
-        REMAINING_PLAYERS=$(sqlite3 /data/pro4kings.db "SELECT COUNT(*) FROM players;" 2>/dev/null || echo "0")
-        
-        echo "   'player_profiles' table: $FINAL_PROFILES records"
-        echo "   'players' table: $REMAINING_PLAYERS records"
-        
-        if [ "$FINAL_PROFILES" -eq "0" ] && [ "$PLAYERS_COUNT" -gt "0" ]; then
-            echo "   ⚠️  WARNING: No records in player_profiles after migration"
-            echo "   Bot will attempt CSV import or create fresh database"
-        elif [ "$REMAINING_PLAYERS" -gt "0" ]; then
-            echo "   ℹ️  Legacy 'players' table still exists (migration incomplete)"
-        else
-            echo "   ✅ Migration completed! Database has $FINAL_PROFILES player profiles"
-        fi
     else
         echo "   ✅ Database schema is current - no migration needed"
     fi
 fi
 
 # ℹ️ CSV IMPORT NOTE:
-# CSV import is handled by bot.py via import_on_startup.py with proper flag file logic.
+# CSV import is handled by bot.py via db.auto_import_csv_if_needed().
 # This prevents re-importing the same data on every deployment.
 # The flag file (.csv_imported) is created in /data/ to persist across restarts.
 echo "================================================"
@@ -185,11 +132,6 @@ else
     echo "   ⚠️  WARNING: Database file not found at /data/pro4kings.db!"
     echo "   Bot will create a new database on startup"
 fi
-
-echo "================================================"
-echo "🔍 Running profile diagnostics..."
-python /app/diagnose_profile.py 155733 2>/dev/null || echo "   (diagnostics skipped)"
-echo "================================================"
 
 echo "================================================"
 echo "🤖 Starting Discord bot..."
