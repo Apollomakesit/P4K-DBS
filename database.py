@@ -546,8 +546,6 @@ class Database:
             logger.error(f"Error checking action existence: {e}")
             return False
 
-
-
     async def action_exists(self, timestamp: datetime, text: str) -> bool:
         """🔥 ASYNC: Check if action exists"""
         return await asyncio.to_thread(self._action_exists_sync, timestamp, text)
