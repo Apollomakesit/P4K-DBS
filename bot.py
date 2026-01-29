@@ -18,9 +18,6 @@ import re
 import tracemalloc
 import psutil
 
-import os
-from datetime import datetime
-
 
 async def run_migration_once():
     """Auto-run migration on first startup"""
@@ -271,9 +268,9 @@ except ImportError as e:
 
 @bot.event
 async def on_ready():
+    """Bot ready event - runs migration, imports data, starts background tasks"""
     # Run migration automatically (only once)
     await run_migration_once()
-    """Bot ready event"""
     global COMMANDS_SYNCED
 
     logger.info(f"✅ {bot.user} is now running!")
@@ -643,6 +640,12 @@ async def before_task_watchdog():
     await asyncio.sleep(120)  # Wait 2 minutes before first check
 
 
+@task_watchdog.error
+async def task_watchdog_error(_loop, error):
+    logger.error(f"❌ task_watchdog task error: {error}", exc_info=error)
+    TASK_HEALTH["task_watchdog"]["error_count"] += 1
+
+
 @tasks.loop(seconds=Config.SCRAPE_ACTIONS_INTERVAL)
 async def scrape_actions():
     """Scrape latest player actions from the panel"""
@@ -725,8 +728,8 @@ async def scrape_actions():
             try:
                 if scraper:
                     await scraper.__aexit__(None, None, None)
-            except:
-                pass
+            except Exception as close_error:
+                logger.debug(f"Error closing scraper: {close_error}")
             scraper = None
             TASK_HEALTH["scrape_actions"]["error_count"] = 0
 
