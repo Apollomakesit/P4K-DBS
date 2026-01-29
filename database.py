@@ -1106,24 +1106,49 @@ class Database:
 
                 cursor.execute(
                     """
-                    SELECT 
-                        l1.timestamp as login_time,
-                        l2.timestamp as logout_time,
-                        l2.session_duration_seconds
-                    FROM login_events l1
-                    LEFT JOIN login_events l2 ON l2.player_id = l1.player_id 
-                        AND l2.event_type = 'logout' 
-                        AND l2.timestamp > l1.timestamp
-                        AND l2.timestamp = (
-                            SELECT MIN(timestamp) FROM login_events 
-                            WHERE player_id = l1.player_id 
-                            AND event_type = 'logout' 
-                            AND timestamp > l1.timestamp
-                        )
-                    WHERE l1.player_id = ? AND l1.event_type = 'login' AND l1.timestamp >= ?
-                    ORDER BY l1.timestamp DESC
+                    WITH logins AS (
+                        SELECT
+                            player_id,
+                            timestamp AS login_time,
+                            LEAD(timestamp) OVER (
+                                PARTITION BY player_id
+                                ORDER BY timestamp
+                            ) AS next_login
+                        FROM login_events
+                        WHERE player_id = ?
+                        AND event_type = 'login'
+                        AND timestamp >= ?
+                    ),
+                    logouts AS (
+                        SELECT player_id, timestamp AS logout_time, session_duration_seconds
+                        FROM login_events
+                        WHERE player_id = ?
+                        AND event_type = 'logout'
+                    )
+                    SELECT
+                        l.login_time,
+                        (
+                            SELECT lo.logout_time
+                            FROM logouts lo
+                            WHERE lo.player_id = l.player_id
+                            AND lo.logout_time > l.login_time
+                            AND (l.next_login IS NULL OR lo.logout_time < l.next_login)
+                            ORDER BY lo.logout_time ASC
+                            LIMIT 1
+                        ) AS logout_time,
+                        (
+                            SELECT lo.session_duration_seconds
+                            FROM logouts lo
+                            WHERE lo.player_id = l.player_id
+                            AND lo.logout_time > l.login_time
+                            AND (l.next_login IS NULL OR lo.logout_time < l.next_login)
+                            ORDER BY lo.logout_time ASC
+                            LIMIT 1
+                        ) AS session_duration_seconds
+                    FROM logins l
+                    ORDER BY l.login_time DESC
                 """,
-                    (player_id, cutoff),
+                    (player_id, cutoff, player_id),
                 )
 
                 return [dict(row) for row in cursor.fetchall()]

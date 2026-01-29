@@ -1,56 +1,27 @@
 # Copilot Instructions for P4K-DBS
 
-## Project Overview
-- **Purpose:** Advanced Discord bot for monitoring and tracking Pro4Kings Roleplay server data.
-- **Core Components:**
-  - `bot.py`: Discord bot entrypoint, defines slash commands and orchestrates workflows.
-  - `database.py`: SQLite wrapper, manages all persistent data (players, actions, sessions, bans, etc).
-  - `scraper.py`: Async web scraper for homepage, online, and banlist data.
-  - `initial_scan.py`: Bulk scanner to populate the database with all player profiles (must be run before bot usage for full data).
+## Big picture
+- This is a Discord bot that scrapes Pro4Kings web pages, stores everything in SQLite, and serves slash commands from the database only. Scraping and command handling are intentionally separated.
+- Core files: [bot.py](../bot.py) (startup + background tasks), [commands.py](../commands.py) (slash commands & UI views), [scraper.py](../scraper.py) (async web scraping), [database.py](../database.py) (SQLite access), [initial_scan.py](../initial_scan.py) (bulk bootstrap).
 
-## Data Flow & Architecture
-- **Scraping:**
-  - `scraper.py` fetches and parses data from web endpoints at regular intervals (see README for task schedule).
-  - Extracted data is written to the database via `database.py`.
-- **Bot Commands:**
-  - All Discord commands in `bot.py` read from the database, never scrape directly.
-  - Player and faction data is always served from the local database for speed.
-- **Initial Scan:**
-  - `initial_scan.py` must be run to populate the database with all player profiles (IDs 1-230,000).
-  - Scan is resumable and uses 20 concurrent workers for speed.
+## Data flow & background tasks
+- `bot.py` schedules recurring tasks for actions, online players, profile updates, bans, VIP/online-priority actions, and a watchdog. Tasks call `Pro4KingsScraper` and persist via `Database`.
+- `commands.py` only reads from the database; **never scrape on-demand**.
+- `scraper.py` uses `aiohttp` with a TokenBucket rate limiter, semaphores, and adaptive delays on 503/429.
+- `initial_scan.py` is a resumable bulk scan (state in `scan_state.json`) using `batch_get_profiles()` for throughput.
 
-## Developer Workflows
-- **Setup:**
-  - Install dependencies: `pip install -r requirements.txt`
-  - Set environment variables: `DISCORD_TOKEN`, `DATABASE_PATH` (optional)
-  - Run `python initial_scan.py` before starting the bot for a complete database.
-- **Run Bot:**
-  - `python bot.py` (after initial scan)
-- **Debugging:**
-  - Logs are printed to stdout; check for rate limiting or scraping errors.
-  - If initial scan is interrupted, rerun `python initial_scan.py` to resume.
+## Developer workflows
+- Setup: `pip install -r requirements.txt`; set `DISCORD_TOKEN` and (optional) `DATABASE_PATH`.
+- Run once for a full DB: `python initial_scan.py` (resumable; do not kill if possible).
+- Start bot: `python bot.py`.
+- First startup migration: `bot.py` runs `migrate_db.migrate()` once and writes `/data/.migration_done`.
 
-## Project Conventions
-- **Database is source of truth** for all bot commands—never scrape on-demand.
-- **Concurrency:** Async scraping uses semaphores to avoid rate limits; exponential backoff on 503 errors.
-- **Player data is only complete after initial scan**; otherwise, only online/active players are tracked.
-- **Profile updates** are scheduled and batched (see README for intervals).
-- **All commands are implemented as Discord slash commands** in `bot.py`.
+## Project conventions
+- Database is the source of truth; all reads in `commands.py` go through `Database` in [database.py](../database.py).
+- SQLite is configured for WAL and short busy timeouts; use `Database` methods rather than raw sqlite calls.
+- Config comes from [config.py](../config.py); prefer `Config.*` values (intervals, rate limits, batch sizes, retention).
 
-## Integration Points
-- **Discord API:** via `discord.py` (see `requirements.txt`)
-- **Web scraping:** via `httpx` and `beautifulsoup4`
-- **Database:** SQLite, schema managed in `database.py`
-
-## Examples & Patterns
-- To add a new command: define a new slash command in `bot.py` and ensure it reads from the database.
-- To add a new data field: update `database.py` schema and scraping logic in `scraper.py`.
-- For bulk data updates: use `initial_scan.py` pattern (concurrent, resumable, idempotent).
-
-## References
-- See [README.md](../README.md) for full setup, command list, and troubleshooting.
-- Key files: `bot.py`, `database.py`, `scraper.py`, `initial_scan.py`, `requirements.txt`
-
----
-
-If you are unsure about a workflow or data flow, check the README or the relevant script for examples. When in doubt, prefer reading from the database and following the established async scraping and command patterns.
+## Integrations
+- Discord: `discord.py` slash commands and views live in [commands.py](../commands.py); `bot.py` wires them.
+- Web scraping: `aiohttp` + `beautifulsoup4` against `https://panel.pro4kings.ro`.
+- Storage: SQLite at `data/pro4kings.db` or `/data/pro4kings.db` when a Railway volume exists.
