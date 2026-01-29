@@ -770,6 +770,68 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
+        # ============================================================================
+        # ID-ONLY PATTERNS: Handle "Jucatorul (ID)" with no name
+        # These must be checked BEFORE regular patterns
+        # ============================================================================
+        
+        # 🔥 ID-ONLY PATTERN A: Chest deposit - "Jucatorul (ID) a pus in chest..."
+        chest_deposit_idonly = re.search(
+            r"Jucatorul\s+\((\d+)\)\s+a\s+pus\s+in\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if chest_deposit_idonly:
+            return PlayerAction(
+                player_id=chest_deposit_idonly.group(1),
+                player_name=None,
+                action_type="chest_deposit",
+                action_detail=f"Pus in chest({chest_deposit_idonly.group(2)}): {chest_deposit_idonly.group(3)}x {chest_deposit_idonly.group(4).strip()}",
+                item_name=chest_deposit_idonly.group(4).strip().rstrip("."),
+                item_quantity=int(chest_deposit_idonly.group(3)),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 ID-ONLY PATTERN B: Chest withdraw - "Jucatorul (ID) a retras din chest..."
+        chest_withdraw_idonly = re.search(
+            r"Jucatorul\s+\((\d+)\)\s+a\s+retras\s+din\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if chest_withdraw_idonly:
+            return PlayerAction(
+                player_id=chest_withdraw_idonly.group(1),
+                player_name=None,
+                action_type="chest_withdraw",
+                action_detail=f"Retras din chest({chest_withdraw_idonly.group(2)}): {chest_withdraw_idonly.group(3)}x {chest_withdraw_idonly.group(4).strip()}",
+                item_name=chest_withdraw_idonly.group(4).strip().rstrip("."),
+                item_quantity=int(chest_withdraw_idonly.group(3)),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 ID-ONLY PATTERN C: Item given - "Jucatorul (ID) ia dat lui Name(ID) Nx Item"
+        gave_idonly = re.search(
+            r"Jucatorul\s+\((\d+)\)\s+i?a\s+dat\s+lui\s+(.+?)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if gave_idonly:
+            return PlayerAction(
+                player_id=gave_idonly.group(1),
+                player_name=None,
+                action_type="item_given",
+                action_detail=f"Dat lui {gave_idonly.group(2).strip()}: {gave_idonly.group(4)}x {gave_idonly.group(5).strip()}",
+                item_name=gave_idonly.group(5).strip().rstrip("."),
+                item_quantity=int(gave_idonly.group(4)),
+                target_player_id=gave_idonly.group(3),
+                target_player_name=gave_idonly.group(2).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # ============================================================================
+        # REGULAR PATTERNS: "Jucatorul Name(ID)" format
+        # ============================================================================
+        
         # 🔥 PATTERN 1: Money deposit - "a depozitat suma de X$ (taxa Y$)"
         deposit_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\$\s*\(taxa\s+([\d.,]+)\$\)",
