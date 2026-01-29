@@ -14,7 +14,6 @@ from scraper import Pro4KingsScraper
 from config import Config
 import asyncio
 import logging
-import re
 import tracemalloc
 import psutil
 
@@ -280,11 +279,7 @@ async def on_ready():
 
     # 🔥 AUTO-IMPORT CSV DATA ON FIRST RUN (for Railway persistence)
     try:
-        from import_on_startup import auto_import_on_startup
-
-        await auto_import_on_startup()
-    except ImportError:
-        logger.debug("No import_on_startup module found, skipping CSV import")
+        await db.auto_import_csv_if_needed()
     except Exception as e:
         logger.error(f"Error during CSV auto-import: {e}", exc_info=True)
         logger.warning("⚠️ Continuing without CSV import - database may be empty")

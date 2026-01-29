@@ -1348,3 +1348,114 @@ class Database:
                 return results
 
         return await asyncio.to_thread(_cleanup_sync)
+
+    # ========================================================================
+    # CSV IMPORT (Consolidated from import_on_startup.py)
+    # ========================================================================
+
+    def _import_csv_profiles_sync(self, csv_path: str) -> int:
+        """SYNC: Import player profiles from CSV file"""
+        import csv
+
+        count = 0
+        try:
+            with open(csv_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                with self.get_connection() as conn:
+                    cursor = conn.cursor()
+                    for row in reader:
+                        try:
+                            cursor.execute(
+                                """
+                                INSERT INTO player_profiles (
+                                    player_id, username, is_online, last_seen,
+                                    faction, faction_rank, job, warnings,
+                                    played_hours, age_ic, last_profile_update
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                                ON CONFLICT(player_id) DO UPDATE SET
+                                    username = COALESCE(excluded.username, player_profiles.username),
+                                    faction = COALESCE(excluded.faction, player_profiles.faction),
+                                    faction_rank = COALESCE(excluded.faction_rank, player_profiles.faction_rank),
+                                    job = COALESCE(excluded.job, player_profiles.job),
+                                    warnings = COALESCE(excluded.warnings, player_profiles.warnings),
+                                    played_hours = COALESCE(excluded.played_hours, player_profiles.played_hours),
+                                    age_ic = COALESCE(excluded.age_ic, player_profiles.age_ic)
+                            """,
+                                (
+                                    row.get("player_id"),
+                                    row.get("username") or row.get("player_name"),
+                                    row.get("is_online", "0") == "1",
+                                    row.get("last_seen") or row.get("last_connection"),
+                                    row.get("faction") or None,
+                                    row.get("faction_rank") or None,
+                                    row.get("job") or None,
+                                    int(row.get("warnings") or row.get("warns") or 0),
+                                    float(row.get("played_hours") or 0),
+                                    int(row.get("age_ic") or 0) if row.get("age_ic") else None,
+                                ),
+                            )
+                            count += 1
+                            if count % 10000 == 0:
+                                conn.commit()
+                                logger.info(f"📊 Imported {count:,} profiles...")
+                        except Exception as e:
+                            logger.warning(f"Error importing row: {e}")
+                            continue
+                    conn.commit()
+            logger.info(f"✅ Imported {count:,} profiles from CSV")
+        except Exception as e:
+            logger.error(f"Error importing CSV: {e}", exc_info=True)
+        return count
+
+    async def import_csv_profiles(self, csv_path: str) -> int:
+        """ASYNC: Import player profiles from CSV file"""
+        return await asyncio.to_thread(self._import_csv_profiles_sync, csv_path)
+
+    async def auto_import_csv_if_needed(self, csv_paths: list = None) -> bool:
+        """Auto-import CSV if database is empty (consolidates import_on_startup.py)"""
+        import_flag = "/data/.csv_imported" if os.path.exists("/data") else ".csv_imported"
+
+        # Check if already imported
+        if os.path.exists(import_flag):
+            logger.info("📊 CSV already imported (flag exists) - skipping")
+            return False
+
+        # Check if database has enough data
+        stats = await self.get_database_stats()
+        total_players = stats.get("total_players", 0)
+
+        if total_players >= 1000:
+            logger.info(f"📊 Database has {total_players:,} players - skipping CSV import")
+            with open(import_flag, "w") as f:
+                f.write(f"Import skipped - already has {total_players} players\n")
+            return False
+
+        # Find CSV file
+        if csv_paths is None:
+            csv_paths = [
+                "player_profiles.csv",
+                "/app/player_profiles.csv",
+                os.path.join(os.path.dirname(__file__), "player_profiles.csv"),
+                "/data/player_profiles.csv",
+            ]
+
+        csv_file = None
+        for path in csv_paths:
+            if os.path.exists(path):
+                csv_file = path
+                break
+
+        if not csv_file:
+            logger.warning("⚠️ player_profiles.csv not found - skipping import")
+            return False
+
+        logger.info(f"🔄 Importing profiles from {csv_file}...")
+        count = await self.import_csv_profiles(csv_file)
+
+        # Create flag file
+        with open(import_flag, "w") as f:
+            f.write(f"Imported {count} profiles at {datetime.now()}\n")
+
+        logger.info(f"✅ CSV import complete: {count:,} profiles")
+        return True
