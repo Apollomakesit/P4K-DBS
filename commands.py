@@ -268,7 +268,9 @@ class ActionsPaginationView(discord.ui.View):
                     "type_label": "CONTRACT GIVEN",
                     "detail_lines": [
                         f"**Vehicle:** {item_name}",
-                        f"**To:** {target_player_name} ({target_player_id})" if target_player_name else f"**To:** ID {target_player_id}",
+                        f"**To:** {target_player_name} ({target_player_id})"
+                        if target_player_name
+                        else f"**To:** ID {target_player_id}",
                     ],
                 }
             elif is_receiver:
@@ -287,7 +289,9 @@ class ActionsPaginationView(discord.ui.View):
                     "detail_lines": [
                         f"**Vehicle:** {item_name}",
                         f"**From:** {player_name} ({player_id})",
-                        f"**To:** {target_player_name} ({target_player_id})" if target_player_name else "",
+                        f"**To:** {target_player_name} ({target_player_id})"
+                        if target_player_name
+                        else "",
                     ],
                 }
 
@@ -574,7 +578,7 @@ class OnlinePaginationView(discord.ui.View):
         for player in page_players:
             player_name = player.get("player_name", "Unknown")
             player_id = player.get("player_id", "?")
-            
+
             # Try to get faction from player_profiles
             faction = "Unknown"
             try:
@@ -582,7 +586,7 @@ class OnlinePaginationView(discord.ui.View):
                     cursor = conn.cursor()
                     cursor.execute(
                         "SELECT faction FROM player_profiles WHERE player_id = ?",
-                        (player_id,)
+                        (player_id,),
                     )
                     row = cursor.fetchone()
                     if row and row["faction"]:
@@ -2301,7 +2305,9 @@ def setup_commands(bot, db, scraper_getter):
     # ONLINE COMMAND
     # ========================================================================
 
-    @bot.tree.command(name="online", description="🆕 Current online players with pagination")
+    @bot.tree.command(
+        name="online", description="🆕 Current online players with pagination"
+    )
     @app_commands.checks.cooldown(1, 10)
     async def online_command(interaction: discord.Interaction):
         """Current online players with pagination support"""
@@ -2455,10 +2461,10 @@ def setup_commands(bot, db, scraper_getter):
                     cutoff = datetime.now() - timedelta(minutes=2)
                     cursor.execute(
                         "SELECT 1 FROM online_players WHERE player_id = ? AND detected_online_at > ?",
-                        (player['player_id'], cutoff)
+                        (player["player_id"], cutoff),
                     )
                     return cursor.fetchone() is not None
-            
+
             is_currently_online = await asyncio.to_thread(check_is_online)
 
             # Build profile embed with ACCURATE online status
