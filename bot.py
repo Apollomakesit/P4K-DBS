@@ -456,7 +456,7 @@ async def cleanup_stale_data():
     TASK_HEALTH["cleanup_stale_data"]["is_running"] = True
 
     try:
-        removed = await db.cleanupstaleonlineplayers(minutes=5)
+        removed = await db.cleanup_stale_online_players(minutes=5)
         if removed > 0:
             logger.info(
                 f"🧹 Cleaned up {removed} stale online entries (older than 5 min)"
@@ -1094,7 +1094,7 @@ async def check_banned_players():
         current_ban_ids = {ban["player_id"] for ban in banned if ban.get("player_id")}
 
         for ban_data in banned:
-            await db.savebannedplayer(ban_data)
+            await db.save_banned_player(ban_data)
 
         await db.markexpiredbans(current_ban_ids)
         logger.info(f"✓ Updated {len(banned)} banned players")
