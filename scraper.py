@@ -2041,7 +2041,7 @@ class Pro4KingsScraper:
         return all_players
 
     async def get_banned_players(self) -> List[Dict]:
-        """Get banned players from banlist"""
+        """Get banned players from banlist (first page only - legacy)"""
         url = f"{self.base_url}/banlist"
         html = await self.fetch_page(url)
 
@@ -2083,6 +2083,129 @@ class Pro4KingsScraper:
                 continue
 
         return banned
+
+    async def get_banned_players_all_pages(self) -> List[Dict]:
+        """🆕 Get ALL banned players from ALL pages with played_hours and faction
+        
+        Iterates through https://panel.pro4kings.ro/banlist?pageBanList=1,2,3...
+        until an empty page is found.
+        """
+        all_bans = []
+        page = 1
+        max_pages = 100  # Safety limit
+        
+        logger.info("🔍 Starting full banlist scrape...")
+        
+        while page <= max_pages:
+            url = f"{self.base_url}/banlist?pageBanList={page}&search="
+            logger.info(f"📄 Fetching banlist page {page}...")
+            
+            html = await self.fetch_page(url)
+            if not html:
+                logger.warning(f"Failed to fetch page {page}, stopping")
+                break
+            
+            soup = BeautifulSoup(html, "lxml")
+            
+            # Find the ban table
+            ban_table = soup.select_one("table")
+            if not ban_table:
+                logger.info(f"No table found on page {page}, stopping")
+                break
+            
+            ban_rows = ban_table.select("tr")
+            if len(ban_rows) <= 1:  # Only header row
+                logger.info(f"No data rows on page {page}, stopping")
+                break
+            
+            page_bans = []
+            for row in ban_rows[1:]:  # Skip header
+                try:
+                    cells = row.select("td")
+                    if len(cells) < 6:
+                        continue
+                    
+                    # Extract player ID and name from link
+                    player_link = cells[1].select_one('a[href*="/profile/"]')
+                    player_id = None
+                    player_name = cells[1].get_text(strip=True)
+                    
+                    if player_link:
+                        href = player_link.get("href", "")
+                        id_match = re.search(r"/profile/(\d+)", str(href))
+                        if id_match:
+                            player_id = id_match.group(1)
+                    
+                    # Try to get player_id from first cell if not in link
+                    if not player_id:
+                        first_cell_text = cells[0].get_text(strip=True)
+                        if first_cell_text.isdigit():
+                            player_id = first_cell_text
+                    
+                    ban_data = {
+                        "player_id": player_id,
+                        "player_name": player_name,
+                        "admin": cells[2].get_text(strip=True) if len(cells) > 2 else None,
+                        "reason": cells[3].get_text(strip=True) if len(cells) > 3 else None,
+                        "duration": cells[4].get_text(strip=True) if len(cells) > 4 else None,
+                        "ban_date": cells[5].get_text(strip=True) if len(cells) > 5 else None,
+                        "expiry_date": cells[6].get_text(strip=True) if len(cells) > 6 else None,
+                    }
+                    
+                    page_bans.append(ban_data)
+                    
+                except Exception as e:
+                    logger.error(f"Error parsing ban row on page {page}: {e}")
+                    continue
+            
+            if not page_bans:
+                logger.info(f"No bans parsed on page {page}, stopping")
+                break
+            
+            all_bans.extend(page_bans)
+            logger.info(f"✅ Page {page}: Found {len(page_bans)} bans (total: {len(all_bans)})")
+            
+            # Check for next page link
+            next_link = soup.select_one(f'a[href*="pageBanList={page + 1}"]')
+            if not next_link:
+                logger.info(f"No next page link found after page {page}, stopping")
+                break
+            
+            page += 1
+            await asyncio.sleep(0.3)  # Rate limiting
+        
+        logger.info(f"🏁 Banlist scrape complete: {len(all_bans)} total bans from {page} pages")
+        
+        # Now fetch played_hours and faction for each banned player
+        if all_bans:
+            player_ids = [b["player_id"] for b in all_bans if b.get("player_id")]
+            logger.info(f"🔄 Fetching profiles for {len(player_ids)} banned players...")
+            
+            # Batch fetch profiles to get played_hours and faction
+            profiles = await self.batch_get_profiles(player_ids[:500])  # Limit to 500 to avoid timeout
+            
+            # Create lookup dict
+            profile_lookup = {}
+            for profile in profiles:
+                if profile:
+                    profile_lookup[profile.player_id] = {
+                        "played_hours": profile.played_hours,
+                        "faction": profile.faction,
+                    }
+            
+            # Enrich ban data with profile info
+            for ban in all_bans:
+                player_id = ban.get("player_id")
+                if player_id and player_id in profile_lookup:
+                    ban["played_hours"] = profile_lookup[player_id].get("played_hours", 0)
+                    ban["faction"] = profile_lookup[player_id].get("faction")
+                else:
+                    ban["played_hours"] = None
+                    ban["faction"] = None
+            
+            logger.info(f"✅ Enriched {len(profile_lookup)} bans with profile data")
+        
+        return all_bans
 
 
 async def main():
