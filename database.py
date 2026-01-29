@@ -544,12 +544,14 @@ class Database:
         """ASYNC: Save action to database"""
         await asyncio.to_thread(self._save_action_sync, action)
 
-    def _action_exists_sync(self, timestamp: Optional[datetime], text: Optional[str]) -> bool:
+    def _action_exists_sync(
+        self, timestamp: Optional[datetime], text: Optional[str]
+    ) -> bool:
         """SYNC: Check if action exists - improved duplicate detection with 2-second window"""
         # If timestamp or text is None, can't check for duplicates
         if timestamp is None or text is None:
             return False
-        
+
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -570,7 +572,9 @@ class Database:
             logger.error(f"Error checking action existence: {e}")
             return False
 
-    async def action_exists(self, timestamp: Optional[datetime], text: Optional[str]) -> bool:
+    async def action_exists(
+        self, timestamp: Optional[datetime], text: Optional[str]
+    ) -> bool:
         """🔥 ASYNC: Check if action exists"""
         return await asyncio.to_thread(self._action_exists_sync, timestamp, text)
 
