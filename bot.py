@@ -21,36 +21,32 @@ import psutil
 import os
 from datetime import datetime
 
-
 async def run_migration_once():
     """Auto-run migration on first startup"""
-    flag_file = "/data/.migration_done"
-
+    flag_file = '/data/.migration_done'
+    
     if os.path.exists(flag_file):
         print("✅ Migration already completed")
         return
-
-    print("\n" + "=" * 80)
+    
+    print("\n" + "="*80)
     print("🔄 FIRST-TIME DATABASE MIGRATION")
-    print("=" * 80)
-
+    print("="*80)
+    
     try:
         import migrate_db
-
         success = migrate_db.migrate()
-
+        
         if success:
-            with open(flag_file, "w") as f:
-                f.write(f"Completed: {datetime.now()}\n")
+            with open(flag_file, 'w') as f:
+                f.write(f'Completed: {datetime.now()}\n')
             print("✅ Migration done!")
         else:
             print("⚠️ Migration incomplete, will retry on next restart")
     except Exception as e:
         print(f"⚠️ Migration error: {e}")
         import traceback
-
         traceback.print_exc()
-
 
 # 🔥 SET UP LOGGING FIRST (before using logger)
 tracemalloc.start()
@@ -392,7 +388,7 @@ async def log_database_startup_info():
             return
 
         # Get stats
-        stats = await db.get_database_stats()
+        stats = await db.getdatabasestats()
         total_players = stats.get("total_players", 0)
         total_actions = stats.get("total_actions", 0)
         online_count = stats.get("online_count", 0)
