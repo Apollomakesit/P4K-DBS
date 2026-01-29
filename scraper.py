@@ -635,7 +635,7 @@ class Pro4KingsScraper:
         seen_raw_texts = set()  # Dedupe within same scrape
 
         # 🔥 METHOD 1: Find the "Ultimele acțiuni" card directly
-        actions_header = soup.find("h4", string=re.compile(r"Ultimele\s*acț", re.IGNORECASE))
+        actions_header = soup.find("h4", text=re.compile(r"Ultimele\s*acț", re.IGNORECASE))
         if actions_header:
             # Find the parent card
             card = actions_header.find_parent("div", class_="card")
