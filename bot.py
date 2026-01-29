@@ -973,7 +973,7 @@ async def update_pending_profiles():
 
     try:
         scraper_instance = await get_or_recreate_scraper()
-        pending_ids = await db.getplayerspendingupdate(
+        pending_ids = await db.get_players_pending_update(
             limit=Config.PROFILES_UPDATE_BATCH
         )
 
