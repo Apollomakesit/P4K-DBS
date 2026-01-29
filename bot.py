@@ -1096,7 +1096,7 @@ async def check_banned_players():
         for ban_data in banned:
             await db.savebannedplayer(ban_data)
 
-         await db.markexpiredbans(current_ban_ids)
+        await db.markexpiredbans(current_ban_ids)
         logger.info(f"✓ Updated {len(banned)} banned players")
         TASK_HEALTH["check_banned_players"]["error_count"] = 0
 
