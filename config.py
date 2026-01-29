@@ -41,9 +41,7 @@ class Config:
 
     # Scraper Settings
     SCRAPER_MAX_CONCURRENT: int = _safe_int("SCRAPER_MAX_CONCURRENT", 5)
-    SCRAPER_RATE_LIMIT: float = _safe_float(
-        "SCRAPER_RATE_LIMIT", 25.0
-    )  # requests/sec
+    SCRAPER_RATE_LIMIT: float = _safe_float("SCRAPER_RATE_LIMIT", 25.0)  # requests/sec
     SCRAPER_BURST_CAPACITY: int = _safe_int("SCRAPER_BURST_CAPACITY", 50)
 
     # VIP Player Tracking - Monitor specific high-priority players
@@ -70,15 +68,9 @@ class Config:
     # Task Intervals (in seconds)
     SCRAPE_ACTIONS_INTERVAL: int = _safe_int("SCRAPE_ACTIONS_INTERVAL", 5)
     SCRAPE_ONLINE_INTERVAL: int = _safe_int("SCRAPE_ONLINE_INTERVAL", 60)
-    UPDATE_PROFILES_INTERVAL: int = _safe_int(
-        "UPDATE_PROFILES_INTERVAL", 120
-    )  # 2 min
-    CHECK_BANNED_INTERVAL: int = _safe_int(
-        "CHECK_BANNED_INTERVAL", 3600
-    )  # 1 hour
-    TASK_WATCHDOG_INTERVAL: int = _safe_int(
-        "TASK_WATCHDOG_INTERVAL", 300
-    )  # 5 min
+    UPDATE_PROFILES_INTERVAL: int = _safe_int("UPDATE_PROFILES_INTERVAL", 120)  # 2 min
+    CHECK_BANNED_INTERVAL: int = _safe_int("CHECK_BANNED_INTERVAL", 3600)  # 1 hour
+    TASK_WATCHDOG_INTERVAL: int = _safe_int("TASK_WATCHDOG_INTERVAL", 300)  # 5 min
 
     # Data Retention (in days)
     ACTIONS_RETENTION_DAYS: int = _safe_int(

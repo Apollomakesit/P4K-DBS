@@ -919,7 +919,10 @@ def setup_commands(bot, db, scraper_getter):
 
         # Permission check - restrict to server admins
         member = interaction.user
-        if not isinstance(member, discord.Member) or not member.guild_permissions.administrator:
+        if (
+            not isinstance(member, discord.Member)
+            or not member.guild_permissions.administrator
+        ):
             await interaction.response.send_message(
                 "❌ You need Administrator permissions to use this command!",
                 ephemeral=True,
@@ -961,7 +964,10 @@ def setup_commands(bot, db, scraper_getter):
         """Actually perform the cleanup"""
 
         member = interaction.user
-        if not isinstance(member, discord.Member) or not member.guild_permissions.administrator:
+        if (
+            not isinstance(member, discord.Member)
+            or not member.guild_permissions.administrator
+        ):
             await interaction.response.send_message(
                 "❌ You need Administrator permissions!", ephemeral=True
             )
@@ -2189,9 +2195,7 @@ def setup_commands(bot, db, scraper_getter):
     @bot.tree.command(name="promotions", description="Recent faction promotions")
     @app_commands.describe(days="Days to look back (default: 7, max: 30)")
     @app_commands.checks.cooldown(1, 30)
-    async def promotions_command(
-        interaction: discord.Interaction, days: int = 7
-    ):
+    async def promotions_command(interaction: discord.Interaction, days: int = 7):
         """Recent faction promotions"""
         await interaction.response.defer()
 
@@ -2314,7 +2318,9 @@ def setup_commands(bot, db, scraper_getter):
                 faction_map = {}
                 with db.get_connection() as conn:
                     cursor = conn.cursor()
-                    player_ids = [p.get("player_id") for p in online_players if p.get("player_id")]
+                    player_ids = [
+                        p.get("player_id") for p in online_players if p.get("player_id")
+                    ]
                     if player_ids:
                         placeholders = ",".join("?" * len(player_ids))
                         cursor.execute(
@@ -2322,7 +2328,9 @@ def setup_commands(bot, db, scraper_getter):
                             player_ids,
                         )
                         for row in cursor.fetchall():
-                            faction_map[str(row["player_id"])] = row["faction"] or "Unknown"
+                            faction_map[str(row["player_id"])] = (
+                                row["faction"] or "Unknown"
+                            )
                 return faction_map
 
             faction_map = await asyncio.to_thread(_get_factions_sync)
