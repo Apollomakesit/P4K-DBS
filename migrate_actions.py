@@ -35,14 +35,31 @@ logger = logging.getLogger(__name__)
 
 def get_db_path():
     """Get database path (Railway or local)"""
+    # Check environment variable first
+    env_path = os.getenv("DATABASE_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+    
+    # Railway volume path
     if os.path.exists("/data/pro4kings.db"):
         return "/data/pro4kings.db"
-    elif os.path.exists("data/pro4kings.db"):
+    
+    # Local development paths
+    if os.path.exists("data/pro4kings.db"):
         return "data/pro4kings.db"
-    elif os.path.exists("pro4kings.db"):
+    if os.path.exists("pro4kings.db"):
         return "pro4kings.db"
-    else:
-        raise FileNotFoundError("Database not found!")
+    
+    # For Railway shell, try common paths
+    for path in ["/app/data/pro4kings.db", "/data/pro4kings.db"]:
+        if os.path.exists(path):
+            return path
+    
+    raise FileNotFoundError(
+        "Database not found!\n"
+        "This script must be run on Railway where the database exists.\n"
+        "Use: railway run python migrate_actions.py"
+    )
 
 
 def migrate_actions(dry_run: bool = False, batch_size: int = 1000):
