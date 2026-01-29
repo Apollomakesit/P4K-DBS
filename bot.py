@@ -138,7 +138,7 @@ bot = commands.Bot(command_prefix="!p4k ", intents=intents)
 
 # Initialize database
 db = Database(Config.DATABASE_PATH)
-scraper = None
+scraper: Pro4KingsScraper | None = None
 
 
 def signal_handler(sig, frame):
@@ -392,7 +392,7 @@ async def log_database_startup_info():
             return
 
         # Get stats
-        stats = await db.getdatabasestats()
+        stats = await db.get_database_stats()
         total_players = stats.get("total_players", 0)
         total_actions = stats.get("total_actions", 0)
         online_count = stats.get("online_count", 0)
@@ -512,7 +512,7 @@ async def before_cleanup_stale_data():
 
 
 @cleanup_stale_data.error
-async def cleanup_stale_data_error(error):
+async def cleanup_stale_data_error(_loop, error):
     logger.error(f"❌ cleanup_stale_data task error: {error}", exc_info=error)
     TASK_HEALTH["cleanup_stale_data"]["error_count"] += 1
 
@@ -690,17 +690,18 @@ async def scrape_actions():
                 new_count += 1
 
                 if action.player_id:
-                    new_player_ids.add((action.player_id, action.player_name))
-                    await db.mark_player_for_update(
-                        action.player_id, action.player_name
-                    )
+                    player_name = action.player_name or f"Player_{action.player_id}"
+                    new_player_ids.add((action.player_id, player_name))
+                    await db.mark_player_for_update(action.player_id, player_name)
 
                 if action.target_player_id:
-                    new_player_ids.add(
-                        (action.target_player_id, action.target_player_name)
+                    target_name = (
+                        action.target_player_name
+                        or f"Player_{action.target_player_id}"
                     )
+                    new_player_ids.add((action.target_player_id, target_name))
                     await db.mark_player_for_update(
-                        action.target_player_id, action.target_player_name
+                        action.target_player_id, target_name
                     )
 
         if new_count > 0:
@@ -740,7 +741,7 @@ async def before_scrape_actions():
 
 
 @scrape_actions.error
-async def scrape_actions_error(error):
+async def scrape_actions_error(_loop, error):
     logger.error(f"❌ scrape_actions task error: {error}", exc_info=error)
     TASK_HEALTH["scrape_actions"]["error_count"] += 1
 
@@ -791,17 +792,18 @@ async def scrape_vip_actions():
                     new_count += 1
 
                     if action.player_id:
-                        new_player_ids.add((action.player_id, action.player_name))
-                        await db.mark_player_for_update(
-                            action.player_id, action.player_name
-                        )
+                        player_name = action.player_name or f"Player_{action.player_id}"
+                        new_player_ids.add((action.player_id, player_name))
+                        await db.mark_player_for_update(action.player_id, player_name)
 
                     if action.target_player_id:
-                        new_player_ids.add(
-                            (action.target_player_id, action.target_player_name)
+                        target_name = (
+                            action.target_player_name
+                            or f"Player_{action.target_player_id}"
                         )
+                        new_player_ids.add((action.target_player_id, target_name))
                         await db.mark_player_for_update(
-                            action.target_player_id, action.target_player_name
+                            action.target_player_id, target_name
                         )
 
             if new_count > 0:
@@ -828,7 +830,7 @@ async def before_scrape_vip_actions():
 
 
 @scrape_vip_actions.error
-async def scrape_vip_actions_error(error):
+async def scrape_vip_actions_error(_loop, error):
     logger.error(f"❌ scrape_vip_actions task error: {error}", exc_info=error)
     TASK_HEALTH["scrape_vip_actions"]["error_count"] += 1
 
@@ -883,17 +885,18 @@ async def scrape_online_priority_actions():
                     new_count += 1
 
                     if action.player_id:
-                        new_player_ids.add((action.player_id, action.player_name))
-                        await db.mark_player_for_update(
-                            action.player_id, action.player_name
-                        )
+                        player_name = action.player_name or f"Player_{action.player_id}"
+                        new_player_ids.add((action.player_id, player_name))
+                        await db.mark_player_for_update(action.player_id, player_name)
 
                     if action.target_player_id:
-                        new_player_ids.add(
-                            (action.target_player_id, action.target_player_name)
+                        target_name = (
+                            action.target_player_name
+                            or f"Player_{action.target_player_id}"
                         )
+                        new_player_ids.add((action.target_player_id, target_name))
                         await db.mark_player_for_update(
-                            action.target_player_id, action.target_player_name
+                            action.target_player_id, target_name
                         )
 
             if new_count > 0:
@@ -920,7 +923,7 @@ async def before_scrape_online_priority_actions():
 
 
 @scrape_online_priority_actions.error
-async def scrape_online_priority_actions_error(error):
+async def scrape_online_priority_actions_error(_loop, error):
     logger.error(
         f"❌ scrape_online_priority_actions task error: {error}", exc_info=error
     )
@@ -993,7 +996,7 @@ async def before_scrape_online_players():
 
 
 @scrape_online_players.error
-async def scrape_online_players_error(error):
+async def scrape_online_players_error(_loop, error):
     logger.error(f"❌ scrape_online_players task error: {error}", exc_info=error)
     TASK_HEALTH["scrape_online_players"]["error_count"] += 1
 
@@ -1053,7 +1056,7 @@ async def before_update_pending_profiles():
 
 
 @update_pending_profiles.error
-async def update_pending_profiles_error(error):
+async def update_pending_profiles_error(_loop, error):
     logger.error(f"❌ update_pending_profiles task error: {error}", exc_info=error)
     TASK_HEALTH["update_pending_profiles"]["error_count"] += 1
 
@@ -1110,7 +1113,7 @@ async def before_update_missing_faction_ranks():
 
 
 @update_missing_faction_ranks.error
-async def update_missing_faction_ranks_error(error):
+async def update_missing_faction_ranks_error(_loop, error):
     logger.error(f"❌ update_missing_faction_ranks task error: {error}", exc_info=error)
     TASK_HEALTH["update_missing_faction_ranks"]["error_count"] += 1
 
@@ -1151,7 +1154,7 @@ async def before_check_banned_players():
 
 
 @check_banned_players.error
-async def check_banned_players_error(error):
+async def check_banned_players_error(_loop, error):
     logger.error(f"❌ check_banned_players task error: {error}", exc_info=error)
     TASK_HEALTH["check_banned_players"]["error_count"] += 1
 
