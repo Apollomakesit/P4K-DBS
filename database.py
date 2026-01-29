@@ -969,6 +969,55 @@ class Database:
         """ASYNC: Get banned players"""
         return await asyncio.to_thread(self._get_banned_players_sync, include_expired)
 
+    def _get_banned_players_with_details_sync(self, include_expired: bool = False) -> List[Dict]:
+        """🆕 SYNC: Get banned players with played hours and faction from player_profiles"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            if include_expired:
+                cursor.execute("""
+                    SELECT 
+                        b.player_id,
+                        b.player_name,
+                        b.admin,
+                        b.reason,
+                        b.duration,
+                        b.ban_date,
+                        b.expiry_date,
+                        b.is_active,
+                        b.detected_at,
+                        p.played_hours,
+                        p.faction
+                    FROM banned_players b
+                    LEFT JOIN player_profiles p ON b.player_id = p.player_id
+                    ORDER BY b.detected_at DESC
+                """)
+            else:
+                cursor.execute("""
+                    SELECT 
+                        b.player_id,
+                        b.player_name,
+                        b.admin,
+                        b.reason,
+                        b.duration,
+                        b.ban_date,
+                        b.expiry_date,
+                        b.is_active,
+                        b.detected_at,
+                        p.played_hours,
+                        p.faction
+                    FROM banned_players b
+                    LEFT JOIN player_profiles p ON b.player_id = p.player_id
+                    WHERE b.is_active = TRUE
+                    ORDER BY b.detected_at DESC
+                """)
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_banned_players_with_details(self, include_expired: bool = False) -> List[Dict]:
+        """🆕 ASYNC: Get banned players with played hours and faction"""
+        return await asyncio.to_thread(self._get_banned_players_with_details_sync, include_expired)
+
     def _get_player_by_exact_id_sync(self, player_id: str) -> Optional[Dict]:
         """SYNC: Get player by exact ID"""
         with self.get_connection() as conn:
@@ -1199,7 +1248,7 @@ class Database:
                     FROM player_profiles p
                     LEFT JOIN online_players o ON p.player_id = o.player_id
                     WHERE p.faction = ?
-                    ORDER BY is_online DESC, p.last_seen DESC
+                    ORDER BY is_currently_online DESC, p.last_seen DESC
                 """,
                     (cutoff, faction_name),
                 )
@@ -1243,6 +1292,7 @@ class Database:
                 cursor.execute(
                     """
                     SELECT 
+                        p.player_id,
                         p.username as player_name,
                         ph1.old_value as old_rank,
                         ph1.new_value as new_rank,
