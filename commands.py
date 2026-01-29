@@ -635,6 +635,147 @@ class OnlinePaginationView(discord.ui.View):
             pass
 
 
+class AdminHistoryPaginationView(discord.ui.View):
+    """🆕 Pagination view for admin actions (warnings, bans, jails) across ALL players"""
+
+    # Action type emojis and labels
+    TYPE_EMOJIS = {
+        "warning_received": "⚠️",
+        "ban_received": "🔨",
+        "admin_jail": "🔒",
+        "admin_unjail": "🔓",
+        "admin_unban": "✅",
+        "mute_received": "🔇",
+        "faction_kicked": "👢",
+        "kill_character": "💀",
+    }
+
+    def __init__(
+        self,
+        actions: List[dict],
+        author_id: int,
+        days: int,
+        action_type_filter: Optional[str] = None,
+        items_per_page: int = 10,
+    ):
+        super().__init__(timeout=180)  # 3 minutes timeout
+        self.actions = actions
+        self.author_id = author_id
+        self.days = days
+        self.action_type_filter = action_type_filter
+        self.items_per_page = items_per_page
+        self.current_page = 0
+        self.total_pages = (
+            (len(self.actions) + items_per_page - 1) // items_per_page
+            if self.actions
+            else 1
+        )
+        self.message: Optional[discord.Message] = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        """Update button enabled/disabled states based on current page"""
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page >= self.total_pages - 1
+
+    def build_embed(self) -> discord.Embed:
+        """Build embed for current page"""
+        start_idx = self.current_page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, len(self.actions))
+        page_actions = self.actions[start_idx:end_idx]
+
+        filter_text = f" ({self.action_type_filter.replace('_', ' ').title()})" if self.action_type_filter else ""
+        
+        embed = discord.Embed(
+            title=f"👮 Admin Actions Log{filter_text}",
+            description=f"**Total:** {len(self.actions):,} admin actions in last {self.days} days",
+            color=discord.Color.orange(),
+            timestamp=datetime.now(),
+        )
+
+        for action in page_actions:
+            action_type = action.get("action_type", "unknown")
+            emoji = self.TYPE_EMOJIS.get(action_type, "📋")
+            type_label = action_type.replace("_", " ").title()
+            
+            # Get player info (the one who RECEIVED the action)
+            player_name = action.get("player_name") or f"ID:{action.get('player_id', '?')}"
+            player_id = action.get("player_id", "?")
+            
+            # Get admin info
+            admin_name = action.get("admin_name") or "Unknown Admin"
+            
+            # Get timestamp
+            timestamp = action.get("timestamp")
+            if isinstance(timestamp, str):
+                try:
+                    timestamp = datetime.fromisoformat(timestamp)
+                except:
+                    timestamp = None
+            time_str = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else "?"
+            
+            # Get reason
+            reason = action.get("reason") or action.get("action_detail", "No reason specified")
+            if len(reason) > 80:
+                reason = reason[:77] + "..."
+
+            embed.add_field(
+                name=f"{emoji} {type_label} - {time_str}",
+                value=(
+                    f"**Player:** {player_name} ({player_id})\n"
+                    f"**Admin:** {admin_name}\n"
+                    f"**Reason:** {reason}"
+                ),
+                inline=False,
+            )
+
+        embed.set_footer(
+            text=f"Page {self.current_page + 1}/{self.total_pages} • Use buttons to navigate"
+        )
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Ensure only the command author can use the buttons"""
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the person who ran this command can use these buttons!",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.primary)
+    async def previous_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        """Go to previous page"""
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.primary)
+    async def next_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        """Go to next page"""
+        self.current_page = min(self.total_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_timeout(self):
+        """Disable buttons when view times out"""
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
 # Helper Functions
 def format_time_duration(seconds: float) -> str:
     """Format seconds into human-readable time"""
