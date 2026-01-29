@@ -730,31 +730,83 @@ class Pro4KingsScraper:
         return actions[:limit]
     
     def _parse_action_text(self, text: str, timestamp: datetime) -> Optional[PlayerAction]:
-        """🔥 NEW: Parse action text into PlayerAction with all patterns."""
+        """🔥 COMPREHENSIVE: Parse action text into PlayerAction with ALL patterns.
+        
+        Patterns supported:
+        1. Money deposit - "a depozitat suma de X$ (taxa Y$)"
+        2. Money withdrawal - "a retras suma de X$ (taxa Y$)"
+        3. Money transfer - "ia transferat suma de X$ lui Player(ID)"
+        4. Chest deposit - "a pus in chest(id X), Nx Item"
+        5. Chest withdraw - "a retras din chest(id X), Nx Item"
+        6. Item given - "ia dat lui Player(ID) items"
+        7. Item received - "a primit de la Player(ID) Nx Item"
+        8. Contract with arrow - "Contract Player1(ID) -> Player2(ID)"
+        9. Contract with exchange - "Contract Player1(ID) Player2(ID). ('ID1' [Item], 'ID2' [Money$"
+        10. Warning received
+        11. Trade completed
+        12. Property bought/sold
+        13. Vehicle bought/sold
+        14. Legacy multi-action (from old scraper)
+        15. Generic Jucatorul action
+        16. Catch-all unknown
+        """
         if not text or len(text) < 10:
             return None
         
         # Clean up text
         text = " ".join(text.split())
         
-        # 🔥 PATTERN 1: Money withdrawal - "a retras suma de X$ (taxa Y$)"
-        withdraw_match = re.search(
-            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\$",
-            text, re.IGNORECASE
-        )
-        if withdraw_match:
+        # 🔥 DETECT LEGACY MULTI-ACTION: Old scraper captured multiple actions concatenated
+        # Pattern: "Ultimele acțiuniJucatorul..." or multiple "Jucatorul...ProfilJucatorul..."
+        if "Ultimele acțiuni" in text or text.count("Jucatorul") > 1 or "ProfilJucatorul" in text:
+            # This is legacy garbage - mark as such but still save it
+            first_id_match = re.search(r"\((\d+)\)", text)
             return PlayerAction(
-                player_id=withdraw_match.group(2),
-                player_name=withdraw_match.group(1).strip(),
-                action_type="money_withdraw",
-                action_detail=f"Retras {withdraw_match.group(3)}$",
+                player_id=first_id_match.group(1) if first_id_match else None,
+                player_name=None,
+                action_type="legacy_multi_action",
+                action_detail="[Legacy] Multiple concatenated actions from old scraper",
                 timestamp=timestamp,
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 2: Money transfer - "ia transferat suma de X $ lui Player(ID)"
+        # 🔥 PATTERN 1: Money deposit - "a depozitat suma de X$ (taxa Y$)"
+        deposit_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\$\s*\(taxa\s+([\d.,]+)\$\)",
+            text, re.IGNORECASE
+        )
+        if deposit_match:
+            amount = deposit_match.group(3)
+            tax = deposit_match.group(4)
+            return PlayerAction(
+                player_id=deposit_match.group(2),
+                player_name=deposit_match.group(1).strip(),
+                action_type="money_deposit",
+                action_detail=f"Depozitat {amount}$ (taxa {tax}$)",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 2: Money withdrawal - "a retras suma de X$ (taxa Y$)"
+        withdraw_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\$\s*\(taxa\s+([\d.,]+)\$\)",
+            text, re.IGNORECASE
+        )
+        if withdraw_match:
+            amount = withdraw_match.group(3)
+            tax = withdraw_match.group(4)
+            return PlayerAction(
+                player_id=withdraw_match.group(2),
+                player_name=withdraw_match.group(1).strip(),
+                action_type="money_withdraw",
+                action_detail=f"Retras {amount}$ (taxa {tax}$)",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 3: Money transfer - "ia transferat suma de X$ lui Player(ID)"
         transfer_match = re.search(
-            r"([^(]+)\s*\((\d+)\)\s*i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\)\s*)?\$?\s*lui\s+([^(]+)\((\d+)\)",
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*\$?\s*lui\s+([^(]+)\((\d+)\)",
             text, re.IGNORECASE
         )
         if transfer_match:
@@ -769,9 +821,9 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 3: Chest deposit - "a pus in chest(id X), Nx Item"
+        # 🔥 PATTERN 4: Chest deposit - "a pus in chest(id X), Nx Item"
         chest_deposit_match = re.search(
-            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+pus\s+in\s+chest\(id\s+([^)]+)\),\s*(\d+)x\s+(.+?)(?:\.|$)",
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+pus\s+in\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
         )
         if chest_deposit_match:
@@ -786,9 +838,9 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 4: Chest withdraw - "a retras din chest(id X), Nx Item"
+        # 🔥 PATTERN 5: Chest withdraw - "a retras din chest(id X), Nx Item"
         chest_withdraw_match = re.search(
-            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\(id\s+([^)]+)\),\s*(\d+)x\s+(.+?)(?:\.|$)",
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
         )
         if chest_withdraw_match:
@@ -803,25 +855,32 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 5: Item given - "i-a dat lui" OR "ia dat lui" Player(ID) items
+        # 🔥 PATTERN 6: Item given - "ia dat lui" Player(ID) items (flexible: handles Nx items or just items)
         gave_match = re.search(
-            r"Jucatorul\s+([^(]+)\((\d+)\)\s+i?-?a\s+dat\s+lui\s+([^(]+)\((\d+)\)\s+(.+?)(?:\.|$)",
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+i?a\s+dat\s+lui\s+([^(]+)\((\d+)\)\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
         )
         if gave_match:
+            items_text = gave_match.group(5).strip().rstrip(".")
+            # Try to extract quantity if present
+            qty_match = re.match(r"(\d+)x\s+(.+)", items_text)
+            item_qty = int(qty_match.group(1)) if qty_match else None
+            item_name = qty_match.group(2) if qty_match else items_text
+            
             return PlayerAction(
                 player_id=gave_match.group(2),
                 player_name=gave_match.group(1).strip(),
                 action_type="item_given",
-                action_detail=f"Dat lui {gave_match.group(3).strip()}: {gave_match.group(5).strip()}",
-                item_name=gave_match.group(5).strip().rstrip("."),
+                action_detail=f"Dat lui {gave_match.group(3).strip()}: {items_text}",
+                item_name=item_name,
+                item_quantity=item_qty,
                 target_player_id=gave_match.group(4),
                 target_player_name=gave_match.group(3).strip(),
                 timestamp=timestamp,
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 6: Item received - "a primit de la Player(ID) Nx Item"
+        # 🔥 PATTERN 7: Item received - "a primit de la Player(ID) Nx Item"
         received_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+de\s+la\s+([^(]+)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
@@ -840,27 +899,84 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 7: Contract/Vehicle transfer - "Contract Player1(ID) -> Player2(ID)"
-        contract_match = re.search(
+        # 🔥 PATTERN 8: Contract with arrow - "Contract Player1(ID) -> Player2(ID)"
+        contract_arrow_match = re.search(
             r"Contract\s+([^(]+)\((\d+)\)\s*(?:->|→)\s*([^(]+)\((\d+)\)",
             text, re.IGNORECASE
         )
-        if contract_match:
-            # Try to extract vehicle info
-            vehicle_info = text.split(")")[-1].strip() if ")" in text else "Vehicle"
+        if contract_arrow_match:
+            # Try to extract vehicle info after the last parenthesis
+            remainder = text.split(")")[-1].strip() if ")" in text else ""
+            vehicle_info = remainder.strip(".' ") if remainder else "Vehicle transfer"
             return PlayerAction(
-                player_id=contract_match.group(2),
-                player_name=contract_match.group(1).strip(),
-                action_type="contract",
-                action_detail=f"Contract către {contract_match.group(3).strip()}: {vehicle_info}",
-                item_name=vehicle_info.strip(".' "),
-                target_player_id=contract_match.group(4),
-                target_player_name=contract_match.group(3).strip(),
+                player_id=contract_arrow_match.group(2),
+                player_name=contract_arrow_match.group(1).strip(),
+                action_type="vehicle_contract",
+                action_detail=f"Contract către {contract_arrow_match.group(3).strip()}: {vehicle_info}",
+                item_name=vehicle_info if vehicle_info != "Vehicle transfer" else None,
+                target_player_id=contract_arrow_match.group(4),
+                target_player_name=contract_arrow_match.group(3).strip(),
                 timestamp=timestamp,
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 8: Warning received
+        # 🔥 PATTERN 9: Contract with exchange details - "Contract Player1(ID) Player2(ID). ('ID1' [Item], 'ID2' [Money$"
+        # Example: "Contract Cozeix(153455) anq790(222483). ('153455' [Brioso, ], '222483' [10.000.000$"
+        contract_exchange_match = re.search(
+            r"Contract\s+([^(]+)\((\d+)\)\s+([^(]+)\((\d+)\)\s*\.\s*\('(\d+)'\s*\[([^\]]*)\],?\s*'(\d+)'\s*\[([^\]]*)",
+            text, re.IGNORECASE
+        )
+        if contract_exchange_match:
+            player1_name = contract_exchange_match.group(1).strip()
+            player1_id = contract_exchange_match.group(2)
+            player2_name = contract_exchange_match.group(3).strip()
+            player2_id = contract_exchange_match.group(4)
+            offer1_id = contract_exchange_match.group(5)
+            offer1_items = contract_exchange_match.group(6).strip().rstrip(", ")
+            offer2_id = contract_exchange_match.group(7)
+            offer2_items = contract_exchange_match.group(8).strip().rstrip(", $")
+            
+            # Determine who gave what
+            if offer1_id == player1_id:
+                player1_gave = offer1_items or "items"
+                player1_received = offer2_items or "items"
+            else:
+                player1_gave = offer2_items or "items"
+                player1_received = offer1_items or "items"
+            
+            return PlayerAction(
+                player_id=player1_id,
+                player_name=player1_name,
+                action_type="vehicle_contract",
+                action_detail=f"Contract cu {player2_name}: Dat [{player1_gave}] → Primit [{player1_received}]",
+                item_name=player1_gave,
+                target_player_id=player2_id,
+                target_player_name=player2_name,
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 9b: Simpler contract format - "Contract Player1(ID) Player2(ID)."
+        contract_simple_match = re.search(
+            r"Contract\s+([^(]+)\((\d+)\)\s+([^(]+)\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if contract_simple_match:
+            # Try to extract any details after
+            remainder = text[contract_simple_match.end():].strip()
+            detail = remainder[:100] if remainder else "Vehicle transfer"
+            return PlayerAction(
+                player_id=contract_simple_match.group(2),
+                player_name=contract_simple_match.group(1).strip(),
+                action_type="vehicle_contract",
+                action_detail=f"Contract cu {contract_simple_match.group(3).strip()}: {detail}",
+                target_player_id=contract_simple_match.group(4),
+                target_player_name=contract_simple_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 10: Warning received
         warning_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+(?:un\s+)?avertisment.*?(?:administratorul|admin)\s+([^(]+)\((\d+)\).*?motiv:\s*(.+?)(?:\.|$)",
             text, re.IGNORECASE
@@ -878,13 +994,12 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 9: Trade completed - "Tradeul dintre jucatorii Player1(ID) si Player2(ID) a fost finalizat"
+        # 🔥 PATTERN 11: Trade completed - "Tradeul dintre jucatorii Player1(ID) si Player2(ID) a fost finalizat"
         trade_match = re.search(
             r"Tradeul\s+dintre\s+jucatorii\s+([^(]+)\((\d+)\)\s+si\s+([^(]+)\((\d+)\)\s+a\s+fost\s+finalizat\.?\s*\(([^)]+)\)",
             text, re.IGNORECASE
         )
         if trade_match:
-            # Extract trade details from the parentheses
             trade_details = trade_match.group(5)
             return PlayerAction(
                 player_id=trade_match.group(2),
@@ -897,7 +1012,7 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 10: Property bought/sold
+        # 🔥 PATTERN 12: Property bought/sold
         property_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(casa|afacere|proprietate)\s*(.+?)(?:\.|$)",
             text, re.IGNORECASE
@@ -913,7 +1028,7 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 10: Vehicle bought/sold (generic)
+        # 🔥 PATTERN 13: Vehicle bought/sold (generic)
         vehicle_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
@@ -930,25 +1045,24 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 11: Any "Jucatorul" action not matched above
+        # 🔥 PATTERN 14: Any "Jucatorul" action not matched above - mark as "other" but still extract player info
         generic_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
         )
         if generic_match:
+            action_text = generic_match.group(3).strip()
             return PlayerAction(
                 player_id=generic_match.group(2),
                 player_name=generic_match.group(1).strip(),
                 action_type="other",
-                action_detail=generic_match.group(3).strip(),
+                action_detail=action_text[:200],
                 timestamp=timestamp,
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 12: Non-Jucatorul actions (like contracts without "Jucatorul" prefix)
-        # Only if text contains player IDs in parentheses
+        # 🔥 PATTERN 15: Non-Jucatorul actions with player IDs (like contracts without "Jucatorul" prefix)
         if re.search(r"\(\d+\)", text):
-            # Try to extract any player ID from the text
             id_match = re.search(r"([^(]+)\((\d+)\)", text)
             if id_match:
                 return PlayerAction(
@@ -959,19 +1073,10 @@ class Pro4KingsScraper:
                     timestamp=timestamp,
                     raw_text=text,
                 )
-            return PlayerAction(
-                player_id=None,
-                player_name=None,
-                action_type="other",
-                action_detail=text[:200],
-                timestamp=timestamp,
-                raw_text=text,
-            )
         
-        # 🔥 PATTERN 13: CATCH-ALL - Save ANY action text even if no patterns match
-        # This ensures we never lose data - unknown actions can be labeled later
+        # 🔥 PATTERN 16: CATCH-ALL - Save ANY action text even if no patterns match
         if len(text) >= 10:
-            logger.info(f"⚠️ Unrecognized action pattern saved as 'unknown': {text[:80]}...")
+            logger.debug(f"⚠️ Unrecognized action pattern saved as 'unknown': {text[:80]}...")
             return PlayerAction(
                 player_id=None,
                 player_name=None,
