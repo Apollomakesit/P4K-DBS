@@ -2700,8 +2700,178 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in refresh_player command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
-    # Rest of commands remain the same (ADMIN COMMANDS, SCAN MANAGEMENT, etc.)
-    # ... [keeping all remaining commands unchanged for brevity]
+    # ========================================================================
+    # 🆕 UNKNOWN ACTIONS COMMAND - Find unrecognized action patterns
+    # ========================================================================
+
+    @bot.tree.command(
+        name="unknownactions",
+        description="🆕 List unrecognized action patterns in database (Admin only)",
+    )
+    @app_commands.describe(limit="Max number of patterns to show (default: 20)")
+    @app_commands.checks.cooldown(1, 30)
+    async def unknown_actions_command(
+        interaction: discord.Interaction, limit: int = 20
+    ):
+        """🆕 List action patterns that weren't recognized by the parser"""
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ **Access Denied**\n\nThis command is restricted to bot administrators.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        try:
+            # Query unknown/other actions from database
+            def _get_unknown_patterns():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        SELECT action_type, action_detail, raw_text, COUNT(*) as count
+                        FROM actions 
+                        WHERE action_type IN ('unknown', 'other')
+                        GROUP BY raw_text
+                        ORDER BY count DESC
+                        LIMIT ?
+                    """,
+                        (limit,),
+                    )
+                    return [dict(row) for row in cursor.fetchall()]
+
+            patterns = await asyncio.to_thread(_get_unknown_patterns)
+
+            if not patterns:
+                await interaction.followup.send(
+                    "✅ **No unknown patterns!**\n\nAll actions in the database are recognized."
+                )
+                return
+
+            # Calculate total unknown actions
+            def _get_total_unknown():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM actions WHERE action_type IN ('unknown', 'other')"
+                    )
+                    return cursor.fetchone()[0]
+
+            total_unknown = await asyncio.to_thread(_get_total_unknown)
+
+            embed = discord.Embed(
+                title="⚠️ Unrecognized Action Patterns",
+                description=f"Found **{total_unknown:,}** unrecognized actions\nShowing top {len(patterns)} unique patterns:",
+                color=discord.Color.orange(),
+                timestamp=datetime.now(),
+            )
+
+            for i, pattern in enumerate(patterns[:10], 1):  # Show max 10 in embed
+                raw_text = pattern.get("raw_text", "")[:100]
+                count = pattern.get("count", 0)
+                action_type = pattern.get("action_type", "unknown")
+
+                embed.add_field(
+                    name=f"{i}. [{action_type}] ×{count}",
+                    value=f"```{raw_text}...```" if len(pattern.get("raw_text", "")) > 100 else f"```{raw_text}```",
+                    inline=False,
+                )
+
+            embed.set_footer(
+                text="💡 Use these patterns to add new action type parsers in scraper.py"
+            )
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in unknown_actions command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    @bot.tree.command(
+        name="actionstats",
+        description="🆕 Show action type statistics from database",
+    )
+    @app_commands.checks.cooldown(1, 30)
+    async def action_stats_command(interaction: discord.Interaction):
+        """🆕 Show breakdown of action types in database"""
+        await interaction.response.defer()
+
+        try:
+            def _get_action_stats():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        SELECT action_type, COUNT(*) as count
+                        FROM actions
+                        GROUP BY action_type
+                        ORDER BY count DESC
+                    """
+                    )
+                    return [dict(row) for row in cursor.fetchall()]
+
+            stats = await asyncio.to_thread(_get_action_stats)
+
+            if not stats:
+                await interaction.followup.send("📊 **No actions in database yet.**")
+                return
+
+            total = sum(s["count"] for s in stats)
+
+            embed = discord.Embed(
+                title="📊 Action Type Statistics",
+                description=f"**Total Actions:** {total:,}",
+                color=discord.Color.blue(),
+                timestamp=datetime.now(),
+            )
+
+            # Group into recognized vs unrecognized
+            recognized = []
+            unrecognized = []
+            for s in stats:
+                if s["action_type"] in ("unknown", "other"):
+                    unrecognized.append(s)
+                else:
+                    recognized.append(s)
+
+            # Recognized actions
+            if recognized:
+                rec_text = "\n".join(
+                    [f"• **{s['action_type']}**: {s['count']:,}" for s in recognized[:12]]
+                )
+                embed.add_field(
+                    name=f"✅ Recognized ({sum(s['count'] for s in recognized):,})",
+                    value=rec_text,
+                    inline=False,
+                )
+
+            # Unrecognized actions
+            if unrecognized:
+                unrec_total = sum(s["count"] for s in unrecognized)
+                unrec_pct = (unrec_total / total * 100) if total > 0 else 0
+                unrec_text = "\n".join(
+                    [f"• **{s['action_type']}**: {s['count']:,}" for s in unrecognized]
+                )
+                embed.add_field(
+                    name=f"⚠️ Unrecognized ({unrec_total:,} = {unrec_pct:.1f}%)",
+                    value=unrec_text,
+                    inline=False,
+                )
+            else:
+                embed.add_field(
+                    name="✅ All Recognized!",
+                    value="No unknown or other action types found.",
+                    inline=False,
+                )
+
+            embed.set_footer(text="Use /unknownactions to see specific patterns")
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in action_stats command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
     logger.info(
         "✅ All slash commands registered successfully with auto-refresh for placeholder usernames"
