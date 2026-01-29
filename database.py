@@ -1162,7 +1162,7 @@ class Database:
                         CASE 
                             WHEN o.detected_online_at >= ? THEN 1 
                             ELSE 0 
-                        END as is_online
+                        END as is_currently_online
                     FROM player_profiles p
                     LEFT JOIN online_players o ON p.player_id = o.player_id
                     WHERE p.faction = ?
