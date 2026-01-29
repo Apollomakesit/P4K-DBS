@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Database Migration Script - Downloads backup from GitHub and migrates
+Auto-detects database location from DATABASE_URL environment variable
 """
 import sqlite3
 import shutil
@@ -9,11 +10,29 @@ import gzip
 import urllib.request
 from datetime import datetime
 
-# GitHub raw file URL for your backup
+# Auto-detect database path from Railway environment
+DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:////data/pro4kings.db')
+
+# Parse SQLite URL to get file path
+if DATABASE_URL.startswith('sqlite:///'):
+    # Remove 'sqlite:///' prefix
+    db_path = DATABASE_URL[len('sqlite:///'):]
+    
+    # Ensure it starts with single slash for absolute path
+    if not db_path.startswith('/'):
+        # Relative path - put in /data
+        CURRENT_DB = f'/data/{db_path}'
+    else:
+        # Already absolute path
+        CURRENT_DB = db_path
+else:
+    CURRENT_DB = '/data/pro4kings.db'  # fallback
+
+print(f"📍 Detected database location: {CURRENT_DB}")
+
 GITHUB_BACKUP_URL = "https://github.com/Apollomakesit/P4K-DBS/raw/main/backup.db.gz"
-TEMP_BACKUP_GZ = '/data/temp_backup_download.db.gz'      # Changed from /tmp
-TEMP_BACKUP_DB = '/data/temp_backup_extracted.db'        # Changed from /tmp
-CURRENT_DB = '/data/pro4kings.db'
+TEMP_BACKUP_GZ = '/data/temp_backup_download.db.gz'
+TEMP_BACKUP_DB = '/data/temp_backup_extracted.db'
 
 def download_backup():
     """Download backup from GitHub"""
@@ -23,8 +42,10 @@ def download_backup():
     
     try:
         # Ensure /data directory exists and is writable
-        if not os.path.exists('/data'):
-            os.makedirs('/data')
+        data_dir = os.path.dirname(TEMP_BACKUP_GZ)
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir)
+            print(f"   Created directory: {data_dir}")
         
         urllib.request.urlretrieve(GITHUB_BACKUP_URL, TEMP_BACKUP_GZ)
         
@@ -103,16 +124,63 @@ def check_schema(db_path):
     except Exception as e:
         return None, f"Error: {e}"
 
+def create_empty_database():
+    """Create an empty database with NEW schema if it doesn't exist"""
+    print(f"\n📝 Creating new database at {CURRENT_DB}...")
+    
+    try:
+        # Ensure directory exists
+        db_dir = os.path.dirname(CURRENT_DB)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir)
+        
+        conn = sqlite3.connect(CURRENT_DB)
+        cursor = conn.cursor()
+        
+        # Create player_profiles table with NEW schema
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS player_profiles (
+                player_id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                is_online BOOLEAN DEFAULT FALSE,
+                last_seen TIMESTAMP,
+                first_detected TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                faction TEXT,
+                faction_rank TEXT,
+                job TEXT,
+                warnings INTEGER DEFAULT 0,
+                played_hours REAL DEFAULT 0.0,
+                age_ic INTEGER,
+                total_actions INTEGER DEFAULT 0,
+                last_profile_update TIMESTAMP,
+                priority_update BOOLEAN DEFAULT FALSE
+            )
+        """)
+        
+        conn.commit()
+        conn.close()
+        
+        print(f"✅ Created empty database with NEW schema")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to create database: {e}")
+        return False
+
 def migrate():
     """Main migration function"""
     print("=" * 80)
     print("🔄 DATABASE MIGRATION - GITHUB BACKUP")
     print("=" * 80)
+    print(f"📍 Database URL: {DATABASE_URL}")
+    print(f"📍 Target path: {CURRENT_DB}")
+    print("=" * 80)
     
-    # Check if current database exists
+    # Check if current database exists, create if not
     if not os.path.exists(CURRENT_DB):
-        print(f"❌ Current database not found: {CURRENT_DB}")
-        return False
+        print(f"⚠️ Database not found at {CURRENT_DB}")
+        print("📝 Creating new database with NEW schema...")
+        if not create_empty_database():
+            return False
     
     # Step 1: Download backup from GitHub
     if not download_backup():
@@ -121,11 +189,7 @@ def migrate():
     # Step 2: Extract backup
     if not extract_backup():
         print("\n🧹 Cleaning up downloaded file...")
-        try:
-            if os.path.exists(TEMP_BACKUP_GZ):
-                os.remove(TEMP_BACKUP_GZ)
-        except:
-            pass
+        cleanup_temp_files()
         return False
     
     # Step 3: Check schemas
@@ -152,7 +216,7 @@ def migrate():
     
     # Step 4: Create safety backup
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    safety_backup = f'/data/pre_migration_backup_{timestamp}.db'
+    safety_backup = f'{os.path.dirname(CURRENT_DB)}/pre_migration_backup_{timestamp}.db'
     
     print(f"\n📦 Creating safety backup of current database...")
     shutil.copy2(CURRENT_DB, safety_backup)
