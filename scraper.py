@@ -1082,9 +1082,9 @@ class Pro4KingsScraper:
             )
         
         # 🔥 PATTERN 16: Bank heist delivery - "a livrat bani de la banca(...) jefuita si a primit..."
-        # Handles both "primit X" and "primit X bani murdari si 1x Moneda sindicat"
+        # Handles names with spaces and special chars, and "bani murdari si 1x Moneda sindicat" suffix
         heist_match = re.search(
-            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\(([^)]+)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)\s*(?:bani\s+murdari)?",
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\(([^)]+)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)",
             text, re.IGNORECASE
         )
         if heist_match:
@@ -1238,7 +1238,112 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 24: Item given with nested parentheses in name - handles "! Name (tag)(ID)"
+        # 🔥 PATTERN 24: Money transfer alt format 2 - "jucatorului Name(ID)" (no space before paren)
+        transfer_alt2_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*\$?\s*jucatorului\s+(.+?)\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if transfer_alt2_match:
+            return PlayerAction(
+                player_id=transfer_alt2_match.group(2),
+                player_name=transfer_alt2_match.group(1).strip(),
+                action_type="money_transfer",
+                action_detail=f"Transferat {transfer_alt2_match.group(3)}$ lui {transfer_alt2_match.group(4).strip()}",
+                target_player_id=transfer_alt2_match.group(5),
+                target_player_name=transfer_alt2_match.group(4).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 25: Vehicle scrapped/remated - "a dat la remat masina Vehicle(ID) pentru suma de X$"
+        remat_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+dat\s+la\s+remat\s+masina\s+(.+?)\((\d+)\)\s+pentru\s+suma\s+de\s+([\d.,]+)\$",
+            text, re.IGNORECASE
+        )
+        if remat_match:
+            return PlayerAction(
+                player_id=remat_match.group(2),
+                player_name=remat_match.group(1).strip(),
+                action_type="vehicle_scrapped",
+                action_detail=f"Remat {remat_match.group(3).strip()} pentru {remat_match.group(5)}$",
+                item_name=remat_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 26: Kicked from faction - "a fost dat afara de catre Admin(ID), motiv..."
+        kicked_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+fost\s+dat\s+afara\s+de\s+catre\s+(.+?)\((\d+)\)\s*,\s*motiv\s+['\"]?(.+?)['\"]?(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if kicked_match:
+            return PlayerAction(
+                player_id=kicked_match.group(2),
+                player_name=kicked_match.group(1).strip(),
+                action_type="faction_kicked",
+                action_detail=f"Dat afară de {kicked_match.group(3).strip()}: {kicked_match.group(5).strip()}",
+                admin_id=kicked_match.group(4),
+                admin_name=kicked_match.group(3).strip(),
+                reason=kicked_match.group(5).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 27: Unjail - "a primit unjail de la administratorul Admin(ID)"
+        unjail_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+primit\s+unjail\s+de\s+la\s+administratorul\s+(.+?)\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if unjail_match:
+            return PlayerAction(
+                player_id=unjail_match.group(2),
+                player_name=unjail_match.group(1).strip(),
+                action_type="admin_unjail",
+                action_detail=f"Unjail de la {unjail_match.group(3).strip()}",
+                admin_id=unjail_match.group(4),
+                admin_name=unjail_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 28: Warning alt format - "a primit un avertisment (X/3), de la administratorul"
+        warning_alt_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+primit\s+un\s+avertisment\s+\((\d+)/3\)\s*,\s*de\s+la\s+administratorul\s+(.+?)\((\d+)\)\s*,\s*motiv\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if warning_alt_match:
+            return PlayerAction(
+                player_id=warning_alt_match.group(2),
+                player_name=warning_alt_match.group(1).strip(),
+                action_type="warning_received",
+                action_detail=f"Avertisment ({warning_alt_match.group(3)}/3) de la {warning_alt_match.group(4).strip()}: {warning_alt_match.group(6).strip()}",
+                warning_count=warning_alt_match.group(3),
+                admin_id=warning_alt_match.group(5),
+                admin_name=warning_alt_match.group(4).strip(),
+                reason=warning_alt_match.group(6).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 29: Item given to ID only (no name) - "ia dat lui (ID) Nx Item"
+        gave_id_only_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+i?a\s+dat\s+lui\s+\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if gave_id_only_match:
+            return PlayerAction(
+                player_id=gave_id_only_match.group(2),
+                player_name=gave_id_only_match.group(1).strip(),
+                action_type="item_given",
+                action_detail=f"Dat lui ID:{gave_id_only_match.group(3)}: {gave_id_only_match.group(4)}x {gave_id_only_match.group(5).strip()}",
+                item_name=gave_id_only_match.group(5).strip().rstrip("."),
+                item_quantity=int(gave_id_only_match.group(4)),
+                target_player_id=gave_id_only_match.group(3),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 30: Item given with nested parentheses in name - handles "! Name (tag)(ID)"
         # Example: "ia dat lui ! Montana (585)(160273) 2x Armura"
         gave_nested_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+i?a\s+dat\s+lui\s+(.+?)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
@@ -1258,7 +1363,7 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 25: Any "Jucatorul" action not matched above - mark as "other" but still extract player info
+        # 🔥 PATTERN 31: Any "Jucatorul" action not matched above - mark as "other" but still extract player info
         generic_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
@@ -1274,7 +1379,7 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 26: Non-Jucatorul actions with player IDs (like contracts without "Jucatorul" prefix)
+        # 🔥 PATTERN 32: Non-Jucatorul actions with player IDs (like contracts without "Jucatorul" prefix)
         if re.search(r"\(\d+\)", text):
             id_match = re.search(r"([^(]+)\((\d+)\)", text)
             if id_match:
@@ -1287,7 +1392,7 @@ class Pro4KingsScraper:
                     raw_text=text,
                 )
         
-        # 🔥 PATTERN 27: CATCH-ALL - Save ANY action text even if no patterns match
+        # 🔥 PATTERN 33: CATCH-ALL - Save ANY action text even if no patterns match
         if len(text) >= 10:
             logger.debug(f"⚠️ Unrecognized action pattern saved as 'unknown': {text[:80]}...")
             return PlayerAction(
