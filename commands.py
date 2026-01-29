@@ -2636,7 +2636,7 @@ def setup_commands(bot, db, scraper_getter):
             view = BansPaginationView(
                 bans=bans,
                 author_id=interaction.user.id,
-                show_expired=show_expired,
+                show_expired=bool(show_expired),
             )
 
             # Send initial page with pagination buttons
