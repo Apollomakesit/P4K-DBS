@@ -694,8 +694,7 @@ async def scrape_actions():
 
                 if action.target_player_id:
                     target_name = (
-                        action.target_player_name
-                        or f"Player_{action.target_player_id}"
+                        action.target_player_name or f"Player_{action.target_player_id}"
                     )
                     new_player_ids.add((action.target_player_id, target_name))
                     await db.mark_player_for_update(
