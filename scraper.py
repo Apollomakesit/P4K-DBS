@@ -878,7 +878,26 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 9: Property bought/sold
+        # 🔥 PATTERN 9: Trade completed - "Tradeul dintre jucatorii Player1(ID) si Player2(ID) a fost finalizat"
+        trade_match = re.search(
+            r"Tradeul\s+dintre\s+jucatorii\s+([^(]+)\((\d+)\)\s+si\s+([^(]+)\((\d+)\)\s+a\s+fost\s+finalizat\.?\s*\(([^)]+)\)",
+            text, re.IGNORECASE
+        )
+        if trade_match:
+            # Extract trade details from the parentheses
+            trade_details = trade_match.group(5)
+            return PlayerAction(
+                player_id=trade_match.group(2),
+                player_name=trade_match.group(1).strip(),
+                action_type="trade",
+                action_detail=f"Trade cu {trade_match.group(3).strip()}: {trade_details}",
+                target_player_id=trade_match.group(4),
+                target_player_name=trade_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 10: Property bought/sold
         property_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(casa|afacere|proprietate)\s*(.+?)(?:\.|$)",
             text, re.IGNORECASE
@@ -929,10 +948,34 @@ class Pro4KingsScraper:
         # 🔥 PATTERN 12: Non-Jucatorul actions (like contracts without "Jucatorul" prefix)
         # Only if text contains player IDs in parentheses
         if re.search(r"\(\d+\)", text):
+            # Try to extract any player ID from the text
+            id_match = re.search(r"([^(]+)\((\d+)\)", text)
+            if id_match:
+                return PlayerAction(
+                    player_id=id_match.group(2),
+                    player_name=id_match.group(1).strip(),
+                    action_type="other",
+                    action_detail=text[:200],
+                    timestamp=timestamp,
+                    raw_text=text,
+                )
             return PlayerAction(
                 player_id=None,
                 player_name=None,
                 action_type="other",
+                action_detail=text[:200],
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 13: CATCH-ALL - Save ANY action text even if no patterns match
+        # This ensures we never lose data - unknown actions can be labeled later
+        if len(text) >= 10:
+            logger.info(f"⚠️ Unrecognized action pattern saved as 'unknown': {text[:80]}...")
+            return PlayerAction(
+                player_id=None,
+                player_name=None,
+                action_type="unknown",
                 action_detail=text[:200],
                 timestamp=timestamp,
                 raw_text=text,
