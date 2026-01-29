@@ -844,60 +844,67 @@ class Pro4KingsScraper:
             )
         
         # ============================================================================
-        # EMAIL/SPECIAL NAME PATTERNS: Handle "Jucatorulname@email.com(ID)" format
+        # FLEXIBLE PATTERNS: Handle names with no space, emails, brackets, etc.
+        # These use .+? to match ANY name format
         # ============================================================================
         
-        # 🔥 EMAIL PATTERN A: Chest actions - "Jucatorulname@email(ID) a pus/retras..."
-        chest_email = re.search(
-            r"Jucatorul([^\s(]+)\((\d+)\)\s+a\s+(pus\s+in|retras\s+din)\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
+        # 🔥 FLEXIBLE PATTERN A: Chest deposit/withdraw - handles ALL name formats including no-space emails
+        # Matches: "Jucatorul[email protected](ID)", "Jucatorul Name(ID)", "Jucatorul Dark (tag)(ID)"
+        chest_flexible = re.search(
+            r"Jucatorul\s*(.+?)\((\d+)\)\s+a\s+(pus\s+in|retras\s+din)\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
         )
-        if chest_email:
-            action_type = "chest_deposit" if "pus" in chest_email.group(3) else "chest_withdraw"
-            action_verb = "Pus in" if "pus" in chest_email.group(3) else "Retras din"
+        if chest_flexible:
+            action_type = "chest_deposit" if "pus" in chest_flexible.group(3) else "chest_withdraw"
+            action_verb = "Pus in" if "pus" in chest_flexible.group(3) else "Retras din"
+            player_name = chest_flexible.group(1).strip() if chest_flexible.group(1).strip() else None
             return PlayerAction(
-                player_id=chest_email.group(2),
-                player_name=chest_email.group(1).strip(),
+                player_id=chest_flexible.group(2),
+                player_name=player_name,
                 action_type=action_type,
-                action_detail=f"{action_verb} chest({chest_email.group(4)}): {chest_email.group(5)}x {chest_email.group(6).strip()}",
-                item_name=chest_email.group(6).strip().rstrip("."),
-                item_quantity=int(chest_email.group(5)),
+                action_detail=f"{action_verb} chest({chest_flexible.group(4)}): {chest_flexible.group(5)}x {chest_flexible.group(6).strip()}",
+                item_name=chest_flexible.group(6).strip().rstrip("."),
+                item_quantity=int(chest_flexible.group(5)),
                 timestamp=timestamp,
                 raw_text=text,
             )
         
-        # 🔥 EMAIL PATTERN B: Item given - "Jucatorulname@email(ID) ia dat lui..."
-        gave_email = re.search(
-            r"Jucatorul([^\s(]+)\((\d+)\)\s+i?a\s+dat\s+lui\s+(.+?)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
+        # 🔥 FLEXIBLE PATTERN B: Item given - handles ALL name formats
+        gave_flexible = re.search(
+            r"Jucatorul\s*(.+?)\((\d+)\)\s+i?a\s+dat\s+lui\s+(.+?)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
         )
-        if gave_email:
+        if gave_flexible:
+            sender_name = gave_flexible.group(1).strip() if gave_flexible.group(1).strip() else None
             return PlayerAction(
-                player_id=gave_email.group(2),
-                player_name=gave_email.group(1).strip(),
+                player_id=gave_flexible.group(2),
+                player_name=sender_name,
                 action_type="item_given",
-                action_detail=f"Dat lui {gave_email.group(3).strip()}: {gave_email.group(5)}x {gave_email.group(6).strip()}",
-                item_name=gave_email.group(6).strip().rstrip("."),
-                item_quantity=int(gave_email.group(5)),
-                target_player_id=gave_email.group(4),
-                target_player_name=gave_email.group(3).strip(),
+                action_detail=f"Dat lui {gave_flexible.group(3).strip()}: {gave_flexible.group(5)}x {gave_flexible.group(6).strip()}",
+                item_name=gave_flexible.group(6).strip().rstrip("."),
+                item_quantity=int(gave_flexible.group(5)),
+                target_player_id=gave_flexible.group(4),
+                target_player_name=gave_flexible.group(3).strip(),
                 timestamp=timestamp,
                 raw_text=text,
             )
         
-        # 🔥 EMAIL PATTERN C: Item sold - "Jucatorul [ID]name@email a vandut xN Item pentru suma de $X"
-        item_sold_email = re.search(
-            r"Jucatorul\s+\[(\d+)\]([^\s]+)\s*a\s+vandut\s+x?(\d+)\s+(.+?)\s+pentru\s+suma\s+de\s+\$?([\d.,]+)",
+        # 🔥 FLEXIBLE PATTERN C: Item sold - "[ID]name" format with no space before "a vandut"
+        item_sold_flexible = re.search(
+            r"Jucatorul\s+\[(\d+)\](.+?)a\s+vandut\s+x?(\d+)\s+(.+?)\s+pentru\s+suma\s+de\s+\$?([\d.,]+)",
             text, re.IGNORECASE
         )
-        if item_sold_email:
+        if item_sold_flexible:
             return PlayerAction(
-                player_id=item_sold_email.group(1),
-                player_name=item_sold_email.group(2).strip(),
+                player_id=item_sold_flexible.group(1),
+                player_name=item_sold_flexible.group(2).strip(),
                 action_type="item_sold",
-                action_detail=f"Vândut {item_sold_email.group(3)}x {item_sold_email.group(4).strip()} pentru {item_sold_email.group(5)}$",
-                item_name=item_sold_email.group(4).strip(),
-                item_quantity=int(item_sold_email.group(3)),
+                action_detail=f"Vândut {item_sold_flexible.group(3)}x {item_sold_flexible.group(4).strip()} pentru {item_sold_flexible.group(5)}$",
+                item_name=item_sold_flexible.group(4).strip(),
+                item_quantity=int(item_sold_flexible.group(3)),
+                timestamp=timestamp,
+                raw_text=text,
+            )
                 timestamp=timestamp,
                 raw_text=text,
             )
