@@ -1,1206 +1,1461 @@
-#!/usr/bin/env python3
-"""
-Pro4Kings Discord Bot - Database Monitor & Command Interface
-"""
-
-import discord
-from discord.ext import commands, tasks
-import os
-import signal
-import sys
+import sqlite3
 from datetime import datetime, timedelta
-from database import Database
-from scraper import Pro4KingsScraper
-from config import Config
-import asyncio
+from typing import List, Dict, Optional
 import logging
-import re
-import tracemalloc
-import psutil
-
-
-async def run_migration_once():
-    """Auto-run migration on first startup"""
-    flag_file = "/data/.migration_done"
-
-    if os.path.exists(flag_file):
-        print("✅ Migration already completed")
-        return
-
-    print("\n" + "=" * 80)
-    print("🔄 FIRST-TIME DATABASE MIGRATION")
-    print("=" * 80)
-
-    try:
-        import migrate_db
-
-        success = migrate_db.migrate()
-
-        if success:
-            with open(flag_file, "w") as f:
-                f.write(f"Completed: {datetime.now()}\n")
-            print("✅ Migration done!")
-        else:
-            print("⚠️ Migration incomplete, will retry on next restart")
-    except Exception as e:
-        print(f"⚠️ Migration error: {e}")
-        import traceback
-
-        traceback.print_exc()
-
-
-# 🔥 SET UP LOGGING FIRST (before using logger)
-tracemalloc.start()
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("bot.log"), logging.StreamHandler()],
-)
+from contextlib import contextmanager
+import time
+import asyncio
+import os
 
 logger = logging.getLogger(__name__)
 
-# 🔥 Validate configuration on startup
-config_issues = Config.validate()
-if config_issues:
-    logger.error("❌ Configuration validation failed:")
-    for issue in config_issues:
-        logger.error(f"   • {issue}")
-    if "DISCORD_TOKEN is not set" in config_issues:
-        logger.error("❌ CRITICAL: Cannot start without DISCORD_TOKEN!")
-        sys.exit(1)
-    else:
-        logger.warning("⚠️ Bot will start but some features may not work correctly")
-else:
-    logger.info("✅ Configuration validated successfully")
 
-# Display configuration
-logger.info(f"\n{'='*60}")
-logger.info("📋 LOADED CONFIGURATION")
-logger.info(f"{'='*60}")
-logger.info(f"• VIP Players: {len(Config.VIP_PLAYER_IDS)}")
-logger.info(f"• VIP Scan Interval: {Config.VIP_SCAN_INTERVAL}s")
-logger.info(
-    f"• Online Priority Tracking: {'Enabled' if Config.TRACK_ONLINE_PLAYERS_PRIORITY else 'Disabled'}"
-)
-logger.info(f"• Online Scan Interval: {Config.ONLINE_PLAYERS_SCAN_INTERVAL}s")
-logger.info(f"• Scraper Workers: {Config.SCRAPER_MAX_CONCURRENT}")
-logger.info(f"• Database: {Config.DATABASE_PATH}")
-logger.info(f"{'='*60}\n")
+class Database:
+    """Enhanced async-safe database manager with non-blocking operations"""
 
-# Global variables
-COMMANDS_SYNCED = False
-SYNC_LOCK = asyncio.Lock()
-SCAN_IN_PROGRESS = False
+    def __init__(self, db_path: Optional[str] = None):
+        # 🔥 Railway Volume Support: Use /data if available, otherwise default path
+        if db_path is None:
+            if os.path.exists("/data"):
+                db_path = "/data/pro4kings.db"
+                logger.info("📦 Using Railway volume: /data/pro4kings.db")
+            else:
+                db_path = "pro4kings.db"
+                logger.info("💾 Using local database: pro4kings.db")
 
-SCAN_STATS = {
-    "start_time": None,
-    "scanned": 0,
-    "found": 0,
-    "errors": 0,
-    "current_id": 0,
-    "last_saved_id": 0,
-}
+        self.db_path = db_path
+        logger.info(f"📁 Database path: {self.db_path}")
 
-TASK_HEALTH = {
-    "scrape_actions": {"last_run": None, "is_running": False, "error_count": 0},
-    "scrape_online_players": {"last_run": None, "is_running": False, "error_count": 0},
-    "update_pending_profiles": {
-        "last_run": None,
-        "is_running": False,
-        "error_count": 0,
-    },
-    "check_banned_players": {"last_run": None, "is_running": False, "error_count": 0},
-    "update_missing_faction_ranks": {
-        "last_run": None,
-        "is_running": False,
-        "error_count": 0,
-    },
-    "scrape_vip_actions": {"last_run": None, "is_running": False, "error_count": 0},
-    "scrape_online_priority_actions": {
-        "last_run": None,
-        "is_running": False,
-        "error_count": 0,
-    },
-    "cleanup_stale_data": {"last_run": None, "is_running": False, "error_count": 0},
-    "task_watchdog": {"last_run": None, "is_running": False, "error_count": 0},
-}
+        # Initialize database synchronously on startup (before event loop)
+        self._init_database_sync()
 
-SHUTDOWN_REQUESTED = False
+    @contextmanager
+    def get_connection(self, retries: int = 3):
+        """
+        Context manager for database connections with retry logic
 
-# Initialize Discord bot
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!p4k ", intents=intents)
+        ⚠️ WARNING: This is SYNCHRONOUS and should only be called via asyncio.to_thread()
+        """
+        conn = None
+        last_error = None
 
-# Initialize database
-db = Database(Config.DATABASE_PATH)
-scraper: Pro4KingsScraper | None = None
-
-
-def signal_handler(sig, frame):
-    """Handle shutdown signals gracefully"""
-    global SHUTDOWN_REQUESTED
-    logger.info(f"\n🛑 Shutdown signal received ({sig}), cleaning up...")
-    SHUTDOWN_REQUESTED = True
-
-    # Cancel all background tasks
-    if scrape_actions.is_running():
-        scrape_actions.cancel()
-    if scrape_online_players.is_running():
-        scrape_online_players.cancel()
-    if update_pending_profiles.is_running():
-        update_pending_profiles.cancel()
-    if check_banned_players.is_running():
-        check_banned_players.cancel()
-    if scrape_vip_actions.is_running():
-        scrape_vip_actions.cancel()
-    if scrape_online_priority_actions.is_running():
-        scrape_online_priority_actions.cancel()
-    if cleanup_stale_data.is_running():
-        cleanup_stale_data.cancel()
-    if task_watchdog.is_running():
-        task_watchdog.cancel()
-
-    logger.info("✅ Background tasks stopped")
-
-    # Properly close the scraper before shutting down
-    async def cleanup_and_shutdown():
-        if scraper:
+        for attempt in range(retries):
             try:
-                logger.info("🧹 Closing scraper client session...")
-                await scraper.__aexit__(None, None, None)
-                logger.info("✅ Scraper closed successfully")
+                # 🔥 Reduced timeout from 60s to 10s to prevent long blocks
+                conn = sqlite3.connect(self.db_path, timeout=10.0)
+                conn.row_factory = sqlite3.Row
+
+                # 🔥 Enable WAL mode for better concurrency
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=10000")  # 10 second busy timeout
+                # 🔥 Optimize for speed
+                conn.execute(
+                    "PRAGMA synchronous=NORMAL"
+                )  # Faster than FULL, still safe with WAL
+                conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
+
+                yield conn
+                conn.commit()
+                return
+
+            except sqlite3.OperationalError as e:
+                last_error = e
+                if "database is locked" in str(e).lower() or "busy" in str(e).lower():
+                    if attempt < retries - 1:
+                        wait_time = (2**attempt) * 0.05  # 50ms, 100ms, 200ms
+                        logger.warning(
+                            f"Database busy, retrying in {wait_time}s... (attempt {attempt + 1}/{retries})"
+                        )
+                        time.sleep(wait_time)
+                        continue
+                raise
+
             except Exception as e:
-                logger.error(f"Error closing scraper: {e}")
-        await bot.close()
+                last_error = e
+                if conn:
+                    try:
+                        conn.rollback()
+                    except:
+                        pass
+                raise
 
-    asyncio.create_task(cleanup_and_shutdown())
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
 
-
-# Register signal handlers
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-
-def verify_environment():
-    """Verify environment and dependencies"""
-    issues = []
-
-    db_path = Config.DATABASE_PATH
-    db_dir = os.path.dirname(db_path) or "."
-
-    if not os.path.exists(db_dir):
-        try:
-            os.makedirs(db_dir, exist_ok=True)
-            logger.info(f"✅ Created database directory: {db_dir}")
-        except Exception as e:
-            issues.append(f"Cannot create database directory {db_dir}: {e}")
-
-    if not os.access(db_dir, os.W_OK):
-        issues.append(f"Database directory {db_dir} is not writable!")
-
-    if not Config.DISCORD_TOKEN:
-        issues.append("DISCORD_TOKEN environment variable not set!")
-
-    try:
-        memory = psutil.virtual_memory()
-        logger.info(
-            f"📊 System: {memory.total / 1024**3:.1f}GB RAM, {memory.available / 1024**3:.1f}GB available"
-        )
-    except:
-        pass
-
-    if issues:
-        logger.error("❌ ENVIRONMENT ISSUES:")
-        for issue in issues:
-            logger.error(f"   - {issue}")
-        return False
-
-    logger.info("✅ Environment verification passed")
-    return True
-
-
-async def get_or_recreate_scraper(max_concurrent=None):
-    """Get or recreate scraper instance"""
-    global scraper
-
-    if max_concurrent and scraper and scraper.max_concurrent != max_concurrent:
-        logger.info(
-            f"🔄 Recreating scraper with max_concurrent={max_concurrent} (was {scraper.max_concurrent})"
-        )
-        try:
-            await scraper.__aexit__(None, None, None)
-        except:
-            pass
-        scraper = None
-
-    if scraper is None:
-        concurrent = max_concurrent if max_concurrent else Config.SCRAPER_MAX_CONCURRENT
-        logger.info(f"🔄 Creating new scraper instance (max_concurrent={concurrent})...")
-        scraper = Pro4KingsScraper(max_concurrent=concurrent)
-        await scraper.__aenter__()
-        logger.info(f"✅ Scraper initialized with {concurrent} workers")
-
-    if scraper.client and scraper.client.closed:
-        logger.warning("⚠️ Scraper client was closed, recreating...")
-        try:
-            await scraper.__aexit__(None, None, None)
-        except:
-            pass
-        concurrent = max_concurrent if max_concurrent else Config.SCRAPER_MAX_CONCURRENT
-        scraper = Pro4KingsScraper(max_concurrent=concurrent)
-        await scraper.__aenter__()
-
-    return scraper
-
-
-# Import and setup slash commands
-try:
-    from commands import setup_commands
-
-    setup_commands(bot, db, get_or_recreate_scraper)
-    logger.info("✅ Slash commands module loaded")
-except ImportError as e:
-    logger.warning(f"⚠️ Could not import commands module: {e}")
-    logger.warning("⚠️ Bot will run without slash commands")
-
-
-@bot.event
-async def on_ready():
-    """Bot ready event - runs migration, imports data, starts background tasks"""
-    # Run migration automatically (only once)
-    await run_migration_once()
-    global COMMANDS_SYNCED
-
-    logger.info(f"✅ {bot.user} is now running!")
-
-    if not verify_environment():
-        logger.error("❌ Environment verification failed! Bot may not work correctly.")
-
-    # 🔥 AUTO-IMPORT CSV DATA ON FIRST RUN (for Railway persistence)
-    try:
-        from import_on_startup import auto_import_on_startup
-
-        await auto_import_on_startup()
-    except ImportError:
-        logger.debug("No import_on_startup module found, skipping CSV import")
-    except Exception as e:
-        logger.error(f"Error during CSV auto-import: {e}", exc_info=True)
-        logger.warning("⚠️ Continuing without CSV import - database may be empty")
-
-    await log_database_startup_info()
-    await inspect_database_tables()
-
-    # Sync slash commands
-    async with SYNC_LOCK:
-        if not COMMANDS_SYNCED:
-            try:
-                logger.info("🔄 Syncing slash commands...")
-                synced = await bot.tree.sync()
-                logger.info(f"✅ Synced {len(synced)} slash commands:")
-                for cmd in synced:
-                    logger.info(f"   - /{cmd.name}: {cmd.description}")
-                COMMANDS_SYNCED = True
-            except Exception as e:
-                logger.error(f"❌ Failed to sync commands: {e}", exc_info=True)
-
-    # Start background tasks
-    if not scrape_actions.is_running():
-        scrape_actions.start()
-        logger.info(
-            f"✓ Started: scrape_actions ({Config.SCRAPE_ACTIONS_INTERVAL}s interval)"
-        )
-
-    if not scrape_online_players.is_running():
-        scrape_online_players.start()
-        logger.info(
-            f"✓ Started: scrape_online_players ({Config.SCRAPE_ONLINE_INTERVAL}s interval)"
-        )
-
-    if not update_pending_profiles.is_running():
-        update_pending_profiles.start()
-        logger.info(
-            f"✓ Started: update_pending_profiles ({Config.UPDATE_PROFILES_INTERVAL}s interval)"
-        )
-
-    if not check_banned_players.is_running():
-        check_banned_players.start()
-        logger.info(
-            f"✓ Started: check_banned_players ({Config.CHECK_BANNED_INTERVAL}s interval)"
-        )
-
-    if not update_missing_faction_ranks.is_running():
-        update_missing_faction_ranks.start()
-        logger.info("✓ Started: update_missing_faction_ranks (60min interval)")
-
-    if Config.VIP_PLAYER_IDS and not scrape_vip_actions.is_running():
-        scrape_vip_actions.start()
-        logger.info(
-            f"💎 Started: scrape_vip_actions ({Config.VIP_SCAN_INTERVAL}s interval, {len(Config.VIP_PLAYER_IDS)} VIP players)"
-        )
-
-    if (
-        Config.TRACK_ONLINE_PLAYERS_PRIORITY
-        and not scrape_online_priority_actions.is_running()
-    ):
-        scrape_online_priority_actions.start()
-        logger.info(
-            f"🟢 Started: scrape_online_priority_actions ({Config.ONLINE_PLAYERS_SCAN_INTERVAL}s interval)"
-        )
-
-    if not cleanup_stale_data.is_running():
-        cleanup_stale_data.start()
-        logger.info("✓ Started: cleanup_stale_data (10min interval)")
-
-    if not task_watchdog.is_running():
-        task_watchdog.start()
-        logger.info(
-            f"✓ Started: task_watchdog ({Config.TASK_WATCHDOG_INTERVAL}s interval)"
-        )
-
-    logger.info("🚀 All systems operational!")
-    print(f'\n{"="*60}')
-    print(f"✅ {bot.user} is ONLINE and monitoring Pro4Kings!")
-    if Config.VIP_PLAYER_IDS:
-        print(f"💎 VIP Tracking: {len(Config.VIP_PLAYER_IDS)} priority players")
-    if Config.TRACK_ONLINE_PLAYERS_PRIORITY:
-        print(
-            f"🟢 Online Priority: Enabled ({Config.ONLINE_PLAYERS_SCAN_INTERVAL}s scan interval)"
-        )
-    print(f'{"="*60}\n')
-
-
-async def log_database_startup_info():
-    """Log database information on startup"""
-    try:
-        db_path = db.db_path
-        logger.info("=" * 60)
-        logger.info("📊 DATABASE STARTUP INFORMATION")
-        logger.info("=" * 60)
-
-        # File info
-        if os.path.exists(db_path):
-            file_size = os.path.getsize(db_path) / (1024 * 1024)  # MB
-            logger.info(f"📁 Database file: {db_path}")
-            logger.info(f"💾 File size: {file_size:.2f} MB")
-        else:
-            logger.warning(f"⚠️ Database file not found: {db_path}")
-            return
-
-        # Get stats
-        stats = await db.get_database_stats()
-        total_players = stats.get("total_players", 0)
-        total_actions = stats.get("total_actions", 0)
-        online_count = stats.get("online_count", 0)
-
-        logger.info(f"👥 Total Players: {total_players:,}")
-        logger.info(f"📝 Total Actions: {total_actions:,}")
-        logger.info(f"🟢 Online Now: {online_count:,}")
-
-        # Recent activity
-        actions_24h = await db.get_actions_count_last_24h()
-        logins_today = await db.get_logins_count_today()
-        banned_count = await db.get_active_bans_count()
-
-        logger.info(f"📈 Actions (24h): {actions_24h:,}")
-        logger.info(f"🔑 Logins Today: {logins_today:,}")
-        logger.info(f"🚫 Active Bans: {banned_count:,}")
-
-        # Check if data was imported
-        if total_players == 0:
-            logger.warning("⚠️ WARNING: No players in database!")
-        elif total_players < 1000:
-            logger.warning(f"⚠️ WARNING: Only {total_players:,} players found!")
-        else:
-            logger.info(
-                f"✅ Database successfully loaded with {total_players:,} players!"
+        # If we get here, all retries failed
+        if last_error:
+            logger.error(
+                f"Database operation failed after {retries} attempts: {last_error}"
             )
+            raise last_error
 
-        logger.info("=" * 60)
+    def _init_database_sync(self):
+        """Initialize database (called synchronously on startup)"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
 
-    except Exception as e:
-        logger.error(f"❌ Error logging database info: {e}", exc_info=True)
-
-
-async def inspect_database_tables():
-    """Inspect database tables to debug import issues"""
-    try:
-        import sqlite3
-
-        logger.info("=" * 60)
-        logger.info("🔍 DATABASE TABLE INSPECTION")
-        logger.info("=" * 60)
-
-        def _inspect_sync():
-            conn = sqlite3.connect(db.db_path)
-            cursor = conn.cursor()
-
-            # Get all tables
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-            )
-            tables = [row[0] for row in cursor.fetchall()]
-            logger.info(f"📋 Found {len(tables)} tables:")
-            for table in tables:
-                logger.info(f"   - {table}")
-
-            # Check for both 'players' and 'player_profiles'
-            for table_name in ["players", "player_profiles"]:
+                # 🔥 FIXED: Removed trailing comma and UNIQUE constraint on username
+                # Multiple players can have the same name with different IDs
                 cursor.execute(
-                    f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}'"
+                    """
+                    CREATE TABLE IF NOT EXISTS player_profiles (
+                        player_id TEXT PRIMARY KEY,
+                        username TEXT NOT NULL,
+                        is_online BOOLEAN DEFAULT FALSE,
+                        last_seen TIMESTAMP,
+                        first_detected TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        
+                        -- Profile fields (CLEANED UP - removed unused fields)
+                        faction TEXT,
+                        faction_rank TEXT,
+                        job TEXT,
+                        warnings INTEGER,
+                        played_hours REAL,
+                        age_ic INTEGER,
+                        
+                        -- Metadata
+                        total_actions INTEGER DEFAULT 0,
+                        last_profile_update TIMESTAMP,
+                        priority_update BOOLEAN DEFAULT FALSE
+                    )
+                """
                 )
-                if cursor.fetchone():
-                    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                    count = cursor.fetchone()[0]
-                    logger.info(f"✅ '{table_name}' table exists with {count:,} records")
-                else:
-                    logger.info(f"❌ '{table_name}' table does NOT exist")
 
-            # Get player_profiles schema
-            if "player_profiles" in tables:
-                cursor.execute("PRAGMA table_info(player_profiles)")
-                columns = cursor.fetchall()
-                logger.info(f"📊 player_profiles schema ({len(columns)} columns):")
-                for col in columns[:5]:  # Show first 5 columns
-                    logger.info(f"   - {col[1]} ({col[2]})")
-
-            conn.close()
-
-        await asyncio.to_thread(_inspect_sync)
-        logger.info("=" * 60)
-
-    except Exception as e:
-        logger.error(f"❌ Error inspecting database: {e}", exc_info=True)
-
-
-# ============================================================================
-# BACKGROUND TASKS
-# ============================================================================
-
-
-@tasks.loop(minutes=10)
-async def cleanup_stale_data():
-    """Cleanup stale online player entries every 10 minutes"""
-    if SHUTDOWN_REQUESTED:
-        return
-
-    TASK_HEALTH["cleanup_stale_data"]["last_run"] = datetime.now()
-    TASK_HEALTH["cleanup_stale_data"]["is_running"] = True
-
-    try:
-        removed = await db.cleanup_stale_online_players(minutes=5)
-        if removed > 0:
-            logger.info(
-                f"🧹 Cleaned up {removed} stale online entries (older than 5 min)"
-            )
-        TASK_HEALTH["cleanup_stale_data"]["error_count"] = 0
-    except Exception as e:
-        TASK_HEALTH["cleanup_stale_data"]["error_count"] += 1
-        logger.error(f"❌ Error in cleanup task: {e}", exc_info=True)
-    finally:
-        TASK_HEALTH["cleanup_stale_data"]["is_running"] = False
-
-
-@cleanup_stale_data.before_loop
-async def before_cleanup_stale_data():
-    await bot.wait_until_ready()
-    logger.info("✓ cleanup_stale_data task ready")
-
-
-@cleanup_stale_data.error
-async def cleanup_stale_data_error(_loop, error):
-    logger.error(f"❌ cleanup_stale_data task error: {error}", exc_info=error)
-    TASK_HEALTH["cleanup_stale_data"]["error_count"] += 1
-
-
-@tasks.loop(seconds=Config.TASK_WATCHDOG_INTERVAL)
-async def task_watchdog():
-    """Monitor task health and restart crashed tasks"""
-    if SHUTDOWN_REQUESTED:
-        return
-
-    TASK_HEALTH["task_watchdog"]["last_run"] = datetime.now()
-    TASK_HEALTH["task_watchdog"]["is_running"] = True
-
-    try:
-        now = datetime.now()
-        issues = []
-
-        # Check scrape_actions
-        if TASK_HEALTH["scrape_actions"]["last_run"]:
-            elapsed = (now - TASK_HEALTH["scrape_actions"]["last_run"]).total_seconds()
-            max_delay = (
-                Config.SCRAPE_ACTIONS_INTERVAL
-                * Config.TASK_HEALTH_CHECK_MULTIPLIER.get("scrape_actions", 4)
-            )
-            if elapsed > max_delay:
-                if not TASK_HEALTH["scrape_actions"]["is_running"]:
-                    issues.append(f"scrape_actions hasn't run in {elapsed:.0f}s")
-                    if not scrape_actions.is_running():
-                        logger.warning("🔄 Restarting crashed task: scrape_actions")
-                        scrape_actions.restart()
-
-        # Check scrape_online_players
-        if TASK_HEALTH["scrape_online_players"]["last_run"]:
-            elapsed = (
-                now - TASK_HEALTH["scrape_online_players"]["last_run"]
-            ).total_seconds()
-            max_delay = (
-                Config.SCRAPE_ONLINE_INTERVAL
-                * Config.TASK_HEALTH_CHECK_MULTIPLIER.get("scrape_online_players", 3)
-            )
-            if elapsed > max_delay:
-                if not TASK_HEALTH["scrape_online_players"]["is_running"]:
-                    issues.append(f"scrape_online_players hasn't run in {elapsed:.0f}s")
-                    if not scrape_online_players.is_running():
-                        logger.warning(
-                            "🔄 Restarting crashed task: scrape_online_players"
-                        )
-                        scrape_online_players.restart()
-
-        # Check update_pending_profiles
-        if TASK_HEALTH["update_pending_profiles"]["last_run"]:
-            elapsed = (
-                now - TASK_HEALTH["update_pending_profiles"]["last_run"]
-            ).total_seconds()
-            max_delay = (
-                Config.UPDATE_PROFILES_INTERVAL
-                * Config.TASK_HEALTH_CHECK_MULTIPLIER.get("update_pending_profiles", 3)
-            )
-            if elapsed > max_delay:
-                if not TASK_HEALTH["update_pending_profiles"]["is_running"]:
-                    issues.append(
-                        f"update_pending_profiles hasn't run in {elapsed:.0f}s"
+                # Actions table - INDEFINITE STORAGE
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS actions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        player_id TEXT,
+                        player_name TEXT,
+                        action_type TEXT NOT NULL,
+                        action_detail TEXT,
+                        
+                        -- Item transfer fields
+                        item_name TEXT,
+                        item_quantity INTEGER,
+                        target_player_id TEXT,
+                        target_player_name TEXT,
+                        
+                        -- Warning fields
+                        admin_id TEXT,
+                        admin_name TEXT,
+                        warning_count TEXT,
+                        reason TEXT,
+                        
+                        -- Timestamp and raw data
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        raw_text TEXT,
+                        
+                        FOREIGN KEY (player_id) REFERENCES player_profiles(player_id)
                     )
-                    if not update_pending_profiles.is_running():
-                        logger.warning(
-                            "🔄 Restarting crashed task: update_pending_profiles"
-                        )
-                        update_pending_profiles.restart()
-
-        # Check VIP actions task
-        if Config.VIP_PLAYER_IDS and TASK_HEALTH["scrape_vip_actions"]["last_run"]:
-            elapsed = (
-                now - TASK_HEALTH["scrape_vip_actions"]["last_run"]
-            ).total_seconds()
-            max_delay = (
-                Config.VIP_SCAN_INTERVAL
-                * Config.TASK_HEALTH_CHECK_MULTIPLIER.get("scrape_vip_actions", 5)
-            )
-            if elapsed > max_delay:
-                if not TASK_HEALTH["scrape_vip_actions"]["is_running"]:
-                    issues.append(f"scrape_vip_actions hasn't run in {elapsed:.0f}s")
-                    if not scrape_vip_actions.is_running():
-                        logger.warning("🔄 Restarting crashed task: scrape_vip_actions")
-                        scrape_vip_actions.restart()
-
-        # Check online priority task
-        if (
-            Config.TRACK_ONLINE_PLAYERS_PRIORITY
-            and TASK_HEALTH["scrape_online_priority_actions"]["last_run"]
-        ):
-            elapsed = (
-                now - TASK_HEALTH["scrape_online_priority_actions"]["last_run"]
-            ).total_seconds()
-            max_delay = (
-                Config.ONLINE_PLAYERS_SCAN_INTERVAL
-                * Config.TASK_HEALTH_CHECK_MULTIPLIER.get(
-                    "scrape_online_priority_actions", 5
+                """
                 )
-            )
-            if elapsed > max_delay:
-                if not TASK_HEALTH["scrape_online_priority_actions"]["is_running"]:
-                    issues.append(
-                        f"scrape_online_priority_actions hasn't run in {elapsed:.0f}s"
+
+                # Login/Logout events
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS login_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        player_id TEXT NOT NULL,
+                        player_name TEXT,
+                        event_type TEXT NOT NULL CHECK(event_type IN ('login', 'logout')),
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        session_duration_seconds INTEGER,
+                        
+                        FOREIGN KEY (player_id) REFERENCES player_profiles(player_id)
                     )
-                    if not scrape_online_priority_actions.is_running():
-                        logger.warning(
-                            "🔄 Restarting crashed task: scrape_online_priority_actions"
-                        )
-                        scrape_online_priority_actions.restart()
+                """
+                )
 
-        if issues:
-            logger.warning(f"⚠️ Task health issues detected: {', '.join(issues)}")
-        else:
-            logger.debug("✅ All background tasks healthy")
-
-        TASK_HEALTH["task_watchdog"]["error_count"] = 0
-
-    except Exception as e:
-        TASK_HEALTH["task_watchdog"]["error_count"] += 1
-        logger.error(f"❌ Error in task_watchdog: {e}", exc_info=True)
-    finally:
-        TASK_HEALTH["task_watchdog"]["is_running"] = False
-
-
-@task_watchdog.before_loop
-async def before_task_watchdog():
-    await bot.wait_until_ready()
-    await asyncio.sleep(120)  # Wait 2 minutes before first check
-
-
-@task_watchdog.error
-async def task_watchdog_error(_loop, error):
-    logger.error(f"❌ task_watchdog task error: {error}", exc_info=error)
-    TASK_HEALTH["task_watchdog"]["error_count"] += 1
-
-
-@tasks.loop(seconds=Config.SCRAPE_ACTIONS_INTERVAL)
-async def scrape_actions():
-    """Scrape latest player actions from the panel"""
-    if SHUTDOWN_REQUESTED:
-        return
-
-    TASK_HEALTH["scrape_actions"]["last_run"] = datetime.now()
-    TASK_HEALTH["scrape_actions"]["is_running"] = True
-
-    try:
-        scraper_instance = await get_or_recreate_scraper()
-        logger.info("🔍 Fetching latest actions...")
-        actions = await scraper_instance.get_latest_actions(
-            limit=Config.ACTIONS_FETCH_LIMIT
-        )
-
-        if not actions:
-            logger.warning("⚠️ No actions retrieved this cycle")
-            TASK_HEALTH["scrape_actions"]["error_count"] += 1
-            return
-
-        new_count = 0
-        new_player_ids = set()
-
-        for action in actions:
-            action_dict = {
-                "player_id": action.player_id,
-                "player_name": action.player_name,
-                "action_type": action.action_type,
-                "action_detail": action.action_detail,
-                "item_name": action.item_name,
-                "item_quantity": action.item_quantity,
-                "target_player_id": action.target_player_id,
-                "target_player_name": action.target_player_name,
-                "admin_id": action.admin_id,
-                "admin_name": action.admin_name,
-                "warning_count": action.warning_count,
-                "reason": action.reason,
-                "timestamp": action.timestamp,
-                "raw_text": action.raw_text,
-            }
-
-            if not await db.action_exists(action.timestamp, action.raw_text):
-                await db.save_action(action_dict)
-                new_count += 1
-
-                if action.player_id:
-                    player_name = action.player_name or f"Player_{action.player_id}"
-                    new_player_ids.add((action.player_id, player_name))
-                    await db.mark_player_for_update(action.player_id, player_name)
-
-                if action.target_player_id:
-                    target_name = (
-                        action.target_player_name or f"Player_{action.target_player_id}"
+                # Faction rank history
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS rank_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        player_id TEXT NOT NULL,
+                        faction TEXT NOT NULL,
+                        rank_name TEXT NOT NULL,
+                        rank_obtained TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        rank_lost TIMESTAMP,
+                        is_current BOOLEAN DEFAULT TRUE,
+                        
+                        FOREIGN KEY (player_id) REFERENCES player_profiles(player_id)
                     )
-                    new_player_ids.add((action.target_player_id, target_name))
-                    await db.mark_player_for_update(
-                        action.target_player_id, target_name
+                """
+                )
+
+                # Profile change history
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS profile_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        player_id TEXT NOT NULL,
+                        field_name TEXT NOT NULL,
+                        old_value TEXT,
+                        new_value TEXT,
+                        changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        
+                        FOREIGN KEY (player_id) REFERENCES player_profiles(player_id)
+                    )
+                """
+                )
+
+                # Banned players
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS banned_players (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        player_id TEXT NOT NULL,
+                        player_name TEXT NOT NULL,
+                        admin TEXT,
+                        reason TEXT,
+                        duration TEXT,
+                        ban_date TEXT,
+                        expiry_date TEXT,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        
+                        UNIQUE(player_id, ban_date)
+                    )
+                """
+                )
+
+                # Online players snapshot
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS online_players (
+                        player_id TEXT PRIMARY KEY,
+                        player_name TEXT NOT NULL,
+                        detected_online_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        
+                        FOREIGN KEY (player_id) REFERENCES player_profiles(player_id)
+                    )
+                """
+                )
+
+                # Scan progress table
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS scan_progress (
+                        id INTEGER PRIMARY KEY CHECK(id = 1),
+                        last_scanned_id INTEGER DEFAULT 0,
+                        found_count INTEGER DEFAULT 0,
+                        error_count INTEGER DEFAULT 0,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """
+                )
+
+                # Initialize scan_progress if empty
+                cursor.execute("SELECT COUNT(*) FROM scan_progress")
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO scan_progress (id, last_scanned_id, found_count, error_count)
+                        VALUES (1, 0, 0, 0)
+                    """
                     )
 
-        if new_count > 0:
-            logger.info(
-                f"✅ Saved {new_count} new actions, marked {len(new_player_ids)} players for update"
+                # Create indexes for performance
+                indexes = [
+                    "CREATE INDEX IF NOT EXISTS idx_actions_player ON actions(player_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_actions_target ON actions(target_player_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_actions_timestamp ON actions(timestamp)",
+                    "CREATE INDEX IF NOT EXISTS idx_actions_type ON actions(action_type)",
+                    "CREATE INDEX IF NOT EXISTS idx_actions_detail ON actions(action_detail)",
+                    "CREATE INDEX IF NOT EXISTS idx_login_events_player ON login_events(player_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_login_events_timestamp ON login_events(timestamp)",
+                    "CREATE INDEX IF NOT EXISTS idx_players_online ON player_profiles(is_online)",
+                    "CREATE INDEX IF NOT EXISTS idx_players_faction ON player_profiles(faction)",
+                    "CREATE INDEX IF NOT EXISTS idx_players_priority ON player_profiles(priority_update)",
+                    "CREATE INDEX IF NOT EXISTS idx_rank_history_player ON rank_history(player_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_rank_history_current ON rank_history(is_current)",
+                    "CREATE INDEX IF NOT EXISTS idx_profile_history_player ON profile_history(player_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_banned_active ON banned_players(is_active)",
+                    "CREATE INDEX IF NOT EXISTS idx_online_players_detected ON online_players(detected_online_at)",
+                ]
+
+                for index_sql in indexes:
+                    cursor.execute(index_sql)
+
+                conn.commit()
+
+            logger.info("✅ Database initialized successfully")
+
+        except Exception as e:
+            logger.error(f"❌ Database initialization failed: {e}", exc_info=True)
+            raise
+
+    # 🔥 ASYNC WRAPPER: All public methods now use asyncio.to_thread()
+
+    def _save_player_profile_sync(self, profile) -> None:
+        """🔥 UPDATED SYNC: Save/update player profile with change tracking (removed 5 fields)"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Get current values to detect changes (removed level, respect_points from SELECT)
+                cursor.execute(
+                    """
+                    SELECT faction, faction_rank, job, warnings
+                    FROM player_profiles WHERE player_id = ?
+                """,
+                    (profile["player_id"],),
+                )
+                old_data = cursor.fetchone()
+
+                username = profile.get("player_name") or profile.get(
+                    "username", f"Player_{profile['player_id']}"
+                )
+                last_seen = profile.get("last_connection") or profile.get(
+                    "last_seen", datetime.now()
+                )
+
+                # 🔥 UPDATED: Insert or update player (removed 5 fields: level, respect_points, phone_number, vehicles_count, properties_count)
+                cursor.execute(
+                    """
+                    INSERT INTO player_profiles (
+                        player_id, username, is_online, last_seen,
+                        faction, faction_rank, job, warnings,
+                        played_hours, age_ic,
+                        last_profile_update
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(player_id) DO UPDATE SET
+                        username = excluded.username,
+                        is_online = excluded.is_online,
+                        last_seen = excluded.last_seen,
+                        faction = excluded.faction,
+                        faction_rank = excluded.faction_rank,
+                        job = excluded.job,
+                        warnings = excluded.warnings,
+                        played_hours = excluded.played_hours,
+                        age_ic = excluded.age_ic,
+                        last_profile_update = CURRENT_TIMESTAMP
+                """,
+                    (
+                        profile["player_id"],
+                        username,
+                        profile.get("is_online", False),
+                        last_seen,
+                        profile.get("faction"),
+                        profile.get("faction_rank"),
+                        profile.get("job"),
+                        profile.get("warns") or profile.get("warnings"),
+                        profile.get("played_hours"),
+                        profile.get("age_ic"),
+                    ),
+                )
+
+                # Track faction rank changes
+                if old_data:
+                    old_faction = old_data["faction"]
+                    old_rank = old_data["faction_rank"]
+                    new_faction = profile.get("faction")
+                    new_rank = profile.get("faction_rank")
+
+                    # 🔥 FIXED: Track rank changes even when old_rank is NULL
+                    # This enables /promotions to detect first rank assignments
+                    if new_faction and new_faction not in (
+                        None,
+                        "",
+                        "Civil",
+                        "Fără",
+                        "None",
+                        "Fara",
+                        "-",
+                        "N/A",
+                    ):
+                        # Check if rank actually changed (including NULL -> rank)
+                        if new_rank and new_rank not in (None, "", "-", "N/A"):
+                            if old_rank != new_rank:
+                                # End previous rank if it exists
+                                if old_rank:
+                                    cursor.execute(
+                                        """
+                                        UPDATE rank_history
+                                        SET rank_lost = CURRENT_TIMESTAMP, is_current = FALSE
+                                        WHERE player_id = ? AND is_current = TRUE
+                                    """,
+                                        (profile["player_id"],),
+                                    )
+
+                                # Insert new rank in rank_history
+                                cursor.execute(
+                                    """
+                                    INSERT INTO rank_history (player_id, faction, rank_name, is_current)
+                                    VALUES (?, ?, ?, TRUE)
+                                """,
+                                    (profile["player_id"], new_faction, new_rank),
+                                )
+
+                                # 🔥 ALSO track in profile_history for /promotions command
+                                cursor.execute(
+                                    """
+                                    INSERT INTO profile_history (player_id, field_name, old_value, new_value)
+                                    VALUES (?, 'faction_rank', ?, ?)
+                                """,
+                                    (
+                                        profile["player_id"],
+                                        old_rank or "None",
+                                        new_rank,
+                                    ),
+                                )
+
+                                username = profile.get("player_name") or profile.get(
+                                    "username", f"Player_{profile['player_id']}"
+                                )
+                                logger.info(
+                                    f"✅ Promotion detected: {username} | {old_rank or 'None'} → {new_rank} in {new_faction}"
+                                )
+
+                    # 🔥 UPDATED: Track other field changes (removed level, respect_points)
+                    fields = ["faction", "job", "warnings"]
+                    new_values = [
+                        new_faction,
+                        profile.get("job"),
+                        profile.get("warns") or profile.get("warnings"),
+                    ]
+
+                    for i, field in enumerate(fields):
+                        old_val = str(old_data[i]) if old_data[i] is not None else None
+                        new_val = (
+                            str(new_values[i]) if new_values[i] is not None else None
+                        )
+
+                        if old_val != new_val and new_val is not None:
+                            cursor.execute(
+                                """
+                                INSERT INTO profile_history (player_id, field_name, old_value, new_value)
+                                VALUES (?, ?, ?, ?)
+                            """,
+                                (profile["player_id"], field, old_val, new_val),
+                            )
+
+                conn.commit()
+        except Exception as e:
+            logger.error(
+                f"Error saving player profile {profile.get('player_id')}: {e}",
+                exc_info=True,
             )
-            TASK_HEALTH["scrape_actions"]["error_count"] = 0
-        else:
-            logger.info(f"ℹ️ No new actions (checked {len(actions)} entries)")
-
-    except Exception as e:
-        TASK_HEALTH["scrape_actions"]["error_count"] += 1
-        logger.error(
-            f"❌ Error in scrape_actions (count: {TASK_HEALTH['scrape_actions']['error_count']}): {e}",
-            exc_info=True,
-        )
-
-        if TASK_HEALTH["scrape_actions"]["error_count"] >= 5:
-            logger.warning("⚠️ Too many errors, recreating scraper client...")
-            global scraper
-            try:
-                if scraper:
-                    await scraper.__aexit__(None, None, None)
-            except Exception as close_error:
-                logger.debug(f"Error closing scraper: {close_error}")
-            scraper = None
-            TASK_HEALTH["scrape_actions"]["error_count"] = 0
-
-    finally:
-        TASK_HEALTH["scrape_actions"]["is_running"] = False
-
-
-@scrape_actions.before_loop
-async def before_scrape_actions():
-    await bot.wait_until_ready()
-    logger.info("✓ scrape_actions task ready")
-
-
-@scrape_actions.error
-async def scrape_actions_error(_loop, error):
-    logger.error(f"❌ scrape_actions task error: {error}", exc_info=error)
-    TASK_HEALTH["scrape_actions"]["error_count"] += 1
-
-
-@tasks.loop(seconds=Config.VIP_SCAN_INTERVAL)
-async def scrape_vip_actions():
-    """Scrape actions for VIP players"""
-    if SHUTDOWN_REQUESTED:
-        return
-
-    if not Config.VIP_PLAYER_IDS:
-        return
-
-    TASK_HEALTH["scrape_vip_actions"]["last_run"] = datetime.now()
-    TASK_HEALTH["scrape_vip_actions"]["is_running"] = True
-
-    try:
-        scraper_instance = await get_or_recreate_scraper()
-        vip_ids = set(Config.VIP_PLAYER_IDS)
-        vip_actions = await scraper_instance.get_vip_actions(
-            vip_ids, limit=Config.ACTIONS_FETCH_LIMIT
-        )
-
-        if vip_actions:
-            new_count = 0
-            new_player_ids = set()
-
-            for action in vip_actions:
-                action_dict = {
-                    "player_id": action.player_id,
-                    "player_name": action.player_name,
-                    "action_type": action.action_type,
-                    "action_detail": action.action_detail,
-                    "item_name": action.item_name,
-                    "item_quantity": action.item_quantity,
-                    "target_player_id": action.target_player_id,
-                    "target_player_name": action.target_player_name,
-                    "admin_id": action.admin_id,
-                    "admin_name": action.admin_name,
-                    "warning_count": action.warning_count,
-                    "reason": action.reason,
-                    "timestamp": action.timestamp,
-                    "raw_text": action.raw_text,
-                }
-
-                if not await db.action_exists(action.timestamp, action.raw_text):
-                    await db.save_action(action_dict)
-                    new_count += 1
-
-                    if action.player_id:
-                        player_name = action.player_name or f"Player_{action.player_id}"
-                        new_player_ids.add((action.player_id, player_name))
-                        await db.mark_player_for_update(action.player_id, player_name)
-
-                    if action.target_player_id:
-                        target_name = (
-                            action.target_player_name
-                            or f"Player_{action.target_player_id}"
-                        )
-                        new_player_ids.add((action.target_player_id, target_name))
-                        await db.mark_player_for_update(
-                            action.target_player_id, target_name
-                        )
-
-            if new_count > 0:
-                logger.info(
-                    f"💎 VIP Scan: {new_count} new VIP actions saved, {len(new_player_ids)} players marked for update"
-                )
-                TASK_HEALTH["scrape_vip_actions"]["error_count"] = 0
-
-    except Exception as e:
-        TASK_HEALTH["scrape_vip_actions"]["error_count"] += 1
-        logger.error(
-            f"❌ VIP scan failed (count: {TASK_HEALTH['scrape_vip_actions']['error_count']}): {e}",
-            exc_info=True,
-        )
-
-    finally:
-        TASK_HEALTH["scrape_vip_actions"]["is_running"] = False
-
-
-@scrape_vip_actions.before_loop
-async def before_scrape_vip_actions():
-    await bot.wait_until_ready()
-    logger.info("💎 scrape_vip_actions task ready")
-
-
-@scrape_vip_actions.error
-async def scrape_vip_actions_error(_loop, error):
-    logger.error(f"❌ scrape_vip_actions task error: {error}", exc_info=error)
-    TASK_HEALTH["scrape_vip_actions"]["error_count"] += 1
-
-
-@tasks.loop(seconds=Config.ONLINE_PLAYERS_SCAN_INTERVAL)
-async def scrape_online_priority_actions():
-    """Scrape actions for currently online players"""
-    if SHUTDOWN_REQUESTED:
-        return
-
-    if not Config.TRACK_ONLINE_PLAYERS_PRIORITY:
-        return
-
-    TASK_HEALTH["scrape_online_priority_actions"]["last_run"] = datetime.now()
-    TASK_HEALTH["scrape_online_priority_actions"]["is_running"] = True
-
-    try:
-        online_players = await db.get_current_online_players()
-        if not online_players:
-            return
-
-        online_ids = set(player["player_id"] for player in online_players)
-        scraper_instance = await get_or_recreate_scraper()
-        online_actions = await scraper_instance.get_online_player_actions(
-            online_ids, limit=Config.ACTIONS_FETCH_LIMIT
-        )
-
-        if online_actions:
-            new_count = 0
-            new_player_ids = set()
-
-            for action in online_actions:
-                action_dict = {
-                    "player_id": action.player_id,
-                    "player_name": action.player_name,
-                    "action_type": action.action_type,
-                    "action_detail": action.action_detail,
-                    "item_name": action.item_name,
-                    "item_quantity": action.item_quantity,
-                    "target_player_id": action.target_player_id,
-                    "target_player_name": action.target_player_name,
-                    "admin_id": action.admin_id,
-                    "admin_name": action.admin_name,
-                    "warning_count": action.warning_count,
-                    "reason": action.reason,
-                    "timestamp": action.timestamp,
-                    "raw_text": action.raw_text,
-                }
-
-                if not await db.action_exists(action.timestamp, action.raw_text):
-                    await db.save_action(action_dict)
-                    new_count += 1
-
-                    if action.player_id:
-                        player_name = action.player_name or f"Player_{action.player_id}"
-                        new_player_ids.add((action.player_id, player_name))
-                        await db.mark_player_for_update(action.player_id, player_name)
-
-                    if action.target_player_id:
-                        target_name = (
-                            action.target_player_name
-                            or f"Player_{action.target_player_id}"
-                        )
-                        new_player_ids.add((action.target_player_id, target_name))
-                        await db.mark_player_for_update(
-                            action.target_player_id, target_name
-                        )
-
-            if new_count > 0:
-                logger.info(
-                    f"🟢 Online Priority: {new_count} new actions saved for {len(online_ids)} online players"
-                )
-                TASK_HEALTH["scrape_online_priority_actions"]["error_count"] = 0
-
-    except Exception as e:
-        TASK_HEALTH["scrape_online_priority_actions"]["error_count"] += 1
-        logger.error(
-            f"❌ Online priority scan failed (count: {TASK_HEALTH['scrape_online_priority_actions']['error_count']}): {e}",
-            exc_info=True,
-        )
-
-    finally:
-        TASK_HEALTH["scrape_online_priority_actions"]["is_running"] = False
-
-
-@scrape_online_priority_actions.before_loop
-async def before_scrape_online_priority_actions():
-    await bot.wait_until_ready()
-    logger.info("🟢 scrape_online_priority_actions task ready")
-
-
-@scrape_online_priority_actions.error
-async def scrape_online_priority_actions_error(_loop, error):
-    logger.error(
-        f"❌ scrape_online_priority_actions task error: {error}", exc_info=error
-    )
-    TASK_HEALTH["scrape_online_priority_actions"]["error_count"] += 1
-
-
-@tasks.loop(seconds=Config.SCRAPE_ONLINE_INTERVAL)
-async def scrape_online_players():
-    """Scrape currently online players and detect logins/logouts"""
-    if SHUTDOWN_REQUESTED:
-        return
-
-    TASK_HEALTH["scrape_online_players"]["last_run"] = datetime.now()
-    TASK_HEALTH["scrape_online_players"]["is_running"] = True
-
-    try:
-        scraper_instance = await get_or_recreate_scraper()
-        online_players = await scraper_instance.get_online_players()
-        current_time = datetime.now()
-
-        previous_online = await db.get_current_online_players()
-        previous_ids = {p["player_id"] for p in previous_online}
-        current_ids = {p["player_id"] for p in online_players}
-
-        new_logins = current_ids - previous_ids
-
-        for player in online_players:
-            if player["player_id"] in new_logins:
-                await db.save_login(
-                    player["player_id"], player["player_name"], current_time
-                )
-                await db.mark_player_for_update(
-                    player["player_id"], player["player_name"]
-                )
-                logger.info(
-                    f"🟢 Login detected: {player['player_name']} ({player['player_id']})"
-                )
-
-        logouts = previous_ids - current_ids
-        for player_id in logouts:
-            await db.save_logout(player_id, current_time)
-            logger.info(f"🔴 Logout detected: Player {player_id}")
-
-        await db.update_online_players(online_players)
-
-        for player in online_players:
-            await db.mark_player_for_update(player["player_id"], player["player_name"])
-
-        if new_logins or logouts:
-            logger.info(
-                f"👥 Online: {len(online_players)} | New: {len(new_logins)} | Left: {len(logouts)}"
-            )
-        else:
-            logger.info(f"👥 Online players: {len(online_players)}")
-
-        TASK_HEALTH["scrape_online_players"]["error_count"] = 0
-
-    except Exception as e:
-        TASK_HEALTH["scrape_online_players"]["error_count"] += 1
-        logger.error(f"✗ Error scraping online players: {e}", exc_info=True)
-
-    finally:
-        TASK_HEALTH["scrape_online_players"]["is_running"] = False
-
-
-@scrape_online_players.before_loop
-async def before_scrape_online_players():
-    await bot.wait_until_ready()
-    logger.info("✓ scrape_online_players task ready")
-
-
-@scrape_online_players.error
-async def scrape_online_players_error(_loop, error):
-    logger.error(f"❌ scrape_online_players task error: {error}", exc_info=error)
-    TASK_HEALTH["scrape_online_players"]["error_count"] += 1
-
-
-@tasks.loop(seconds=Config.UPDATE_PROFILES_INTERVAL)
-async def update_pending_profiles():
-    """Update profiles of players marked for priority update"""
-    if SHUTDOWN_REQUESTED:
-        return
-
-    TASK_HEALTH["update_pending_profiles"]["last_run"] = datetime.now()
-    TASK_HEALTH["update_pending_profiles"]["is_running"] = True
-
-    try:
-        scraper_instance = await get_or_recreate_scraper()
-        pending_ids = await db.get_players_pending_update(
-            limit=Config.PROFILES_UPDATE_BATCH
-        )
-
-        if not pending_ids:
-            return
-
-        logger.info(f"🔄 Updating {len(pending_ids)} pending profiles...")
-        results = await scraper_instance.batch_get_profiles(pending_ids)
-
-        for profile in results:
-            profile_dict = {
-                "player_id": profile.player_id,
-                "player_name": profile.username,
-                "is_online": profile.is_online,
-                "last_connection": profile.last_seen,
-                "faction": profile.faction,
-                "faction_rank": profile.faction_rank,
-                "job": profile.job,
-                "warns": profile.warnings,
-                "played_hours": profile.played_hours,
-                "age_ic": profile.age_ic,
-            }
-            await db.save_player_profile(profile_dict)
-            await db.reset_player_priority(profile.player_id)
-
-        logger.info(f"✓ Updated {len(results)}/{len(pending_ids)} profiles")
-        TASK_HEALTH["update_pending_profiles"]["error_count"] = 0
-
-    except Exception as e:
-        TASK_HEALTH["update_pending_profiles"]["error_count"] += 1
-        logger.error(f"✗ Error updating profiles: {e}", exc_info=True)
-
-    finally:
-        TASK_HEALTH["update_pending_profiles"]["is_running"] = False
-
-
-@update_pending_profiles.before_loop
-async def before_update_pending_profiles():
-    await bot.wait_until_ready()
-    logger.info("✓ update_pending_profiles task ready")
-
-
-@update_pending_profiles.error
-async def update_pending_profiles_error(_loop, error):
-    logger.error(f"❌ update_pending_profiles task error: {error}", exc_info=error)
-    TASK_HEALTH["update_pending_profiles"]["error_count"] += 1
-
-
-@tasks.loop(minutes=60)
-async def update_missing_faction_ranks():
-    """Target players with factions but no faction_rank for updates"""
-    if SHUTDOWN_REQUESTED:
-        return
-
-    TASK_HEALTH["update_missing_faction_ranks"]["last_run"] = datetime.now()
-    TASK_HEALTH["update_missing_faction_ranks"]["is_running"] = True
-
-    try:
-
-        def _get_missing_ranks():
-            with db.get_connection() as conn:
+            raise
+
+    async def save_player_profile(self, profile) -> None:
+        """ASYNC: Save/update player profile"""
+        await asyncio.to_thread(self._save_player_profile_sync, profile)
+
+    def _update_scan_progress_sync(self, last_id: int, found: int, errors: int) -> None:
+        """SYNC: Update scan progress"""
+        try:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT player_id
-                    FROM player_profiles
-                    WHERE faction IS NOT NULL
-                    AND faction != ''
-                    AND (faction_rank IS NULL OR faction_rank = '')
-                    LIMIT 50
-                """
+                    UPDATE scan_progress 
+                    SET last_scanned_id = ?, 
+                        found_count = ?, 
+                        error_count = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = 1
+                """,
+                    (last_id, found, errors),
                 )
-                return [row[0] for row in cursor.fetchall()]
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Error updating scan progress: {e}", exc_info=True)
 
-        player_ids = await asyncio.to_thread(_get_missing_ranks)
+    async def update_scan_progress(self, last_id: int, found: int, errors: int) -> None:
+        """ASYNC: Update scan progress"""
+        await asyncio.to_thread(self._update_scan_progress_sync, last_id, found, errors)
 
-        if player_ids:
-            logger.info(
-                f"🎯 Targeting {len(player_ids)} players with missing faction ranks"
+    def _get_scan_progress_sync(self) -> Optional[Dict]:
+        """SYNC: Get scan progress"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM scan_progress WHERE id = 1")
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Error getting scan progress: {e}")
+            return None
+
+    async def get_scan_progress(self) -> Optional[Dict]:
+        """ASYNC: Get scan progress"""
+        return await asyncio.to_thread(self._get_scan_progress_sync)
+
+    def _save_action_sync(self, action) -> None:
+        """SYNC: Save action to database"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                cursor.execute(
+                    """
+                    INSERT INTO actions (
+                        player_id, player_name, action_type, action_detail,
+                        item_name, item_quantity, target_player_id, target_player_name,
+                        admin_id, admin_name, warning_count, reason,
+                        timestamp, raw_text
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        action.get("player_id"),
+                        action.get("player_name"),
+                        action["action_type"],
+                        action.get("action_detail"),
+                        action.get("item_name"),
+                        action.get("item_quantity"),
+                        action.get("target_player_id"),
+                        action.get("target_player_name"),
+                        action.get("admin_id"),
+                        action.get("admin_name"),
+                        action.get("warning_count"),
+                        action.get("reason"),
+                        action.get("timestamp", datetime.now()),
+                        action.get("raw_text"),
+                    ),
+                )
+
+                # Increment player action count
+                if action.get("player_id"):
+                    cursor.execute(
+                        """
+                        UPDATE player_profiles SET total_actions = total_actions + 1
+                        WHERE player_id = ?
+                    """,
+                        (action["player_id"],),
+                    )
+
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Error saving action: {e}", exc_info=True)
+            raise
+
+    async def save_action(self, action) -> None:
+        """ASYNC: Save action to database"""
+        await asyncio.to_thread(self._save_action_sync, action)
+
+    def _action_exists_sync(self, timestamp: Optional[datetime], text: Optional[str]) -> bool:
+        """SYNC: Check if action exists - improved duplicate detection with 2-second window"""
+        # If timestamp or text is None, can't check for duplicates
+        if timestamp is None or text is None:
+            return False
+        
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                time_window_start = timestamp - timedelta(seconds=2)
+                time_window_end = timestamp + timedelta(seconds=2)
+
+                cursor.execute(
+                    """
+                    SELECT 1 FROM actions 
+                    WHERE timestamp BETWEEN ? AND ? 
+                    AND raw_text = ? 
+                    LIMIT 1
+                    """,
+                    (time_window_start, time_window_end, text),
+                )
+                return cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Error checking action existence: {e}")
+            return False
+
+    async def action_exists(self, timestamp: Optional[datetime], text: Optional[str]) -> bool:
+        """🔥 ASYNC: Check if action exists"""
+        return await asyncio.to_thread(self._action_exists_sync, timestamp, text)
+
+    def _save_login_sync(
+        self, player_id: str, player_name: str, timestamp: datetime
+    ) -> None:
+        """SYNC: Save login event"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO login_events (player_id, player_name, event_type, timestamp)
+                VALUES (?, ?, 'login', ?)
+            """,
+                (player_id, player_name, timestamp),
             )
-            for player_id in player_ids:
-                await db.mark_player_for_update(player_id, f"Player_{player_id}")
+            conn.commit()
 
-        TASK_HEALTH["update_missing_faction_ranks"]["error_count"] = 0
+    async def save_login(
+        self, player_id: str, player_name: str, timestamp: datetime
+    ) -> None:
+        """ASYNC: Save login event"""
+        await asyncio.to_thread(
+            self._save_login_sync, player_id, player_name, timestamp
+        )
 
-    except Exception as e:
-        TASK_HEALTH["update_missing_faction_ranks"]["error_count"] += 1
-        logger.error(f"Error in update_missing_faction_ranks: {e}", exc_info=True)
+    def _save_logout_sync(self, player_id: str, timestamp: datetime) -> None:
+        """🔥 OPTIMIZED SYNC: Save logout event - FAST VERSION"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
 
-    finally:
-        TASK_HEALTH["update_missing_faction_ranks"]["is_running"] = False
+                # 🔥 Single optimized query with subquery instead of separate SELECT
+                cursor.execute(
+                    """
+                    INSERT INTO login_events (player_id, event_type, timestamp, session_duration_seconds)
+                    SELECT ?, 'logout', ?,
+                           CAST((julianday(?) - julianday(timestamp)) * 86400 AS INTEGER)
+                    FROM login_events
+                    WHERE player_id = ? AND event_type = 'login'
+                    ORDER BY timestamp DESC LIMIT 1
+                """,
+                    (player_id, timestamp, timestamp, player_id),
+                )
 
+                # If no matching login found, insert without duration
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO login_events (player_id, event_type, timestamp, session_duration_seconds)
+                        VALUES (?, 'logout', ?, NULL)
+                    """,
+                        (player_id, timestamp),
+                    )
 
-@update_missing_faction_ranks.before_loop
-async def before_update_missing_faction_ranks():
-    await bot.wait_until_ready()
-    logger.info("✓ update_missing_faction_ranks task ready")
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Error saving logout for {player_id}: {e}", exc_info=True)
+            # Don't raise - this shouldn't crash the bot
 
+    async def save_logout(self, player_id: str, timestamp: datetime) -> None:
+        """🔥 ASYNC: Save logout event - NON-BLOCKING"""
+        await asyncio.to_thread(self._save_logout_sync, player_id, timestamp)
 
-@update_missing_faction_ranks.error
-async def update_missing_faction_ranks_error(_loop, error):
-    logger.error(f"❌ update_missing_faction_ranks task error: {error}", exc_info=error)
-    TASK_HEALTH["update_missing_faction_ranks"]["error_count"] += 1
+    def _update_online_players_sync(self, online_players: List[Dict]) -> None:
+        """🔥 OPTIMIZED SYNC: Batch update online players"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
 
+                # 🔥 Batch insert with executemany for speed
+                cursor.executemany(
+                    """
+                    INSERT INTO online_players (player_id, player_name, detected_online_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(player_id) DO UPDATE SET
+                        detected_online_at = CURRENT_TIMESTAMP
+                """,
+                    [(p["player_id"], p["player_name"]) for p in online_players],
+                )
 
-@tasks.loop(seconds=Config.CHECK_BANNED_INTERVAL)
-async def check_banned_players():
-    """Check and update banned players list"""
-    if SHUTDOWN_REQUESTED:
-        return
+                # 🔥 Batch update player_profiles table
+                cursor.executemany(
+                    """
+                    UPDATE player_profiles
+                    SET is_online = TRUE, last_seen = CURRENT_TIMESTAMP
+                    WHERE player_id = ?
+                """,
+                    [(p["player_id"],) for p in online_players],
+                )
 
-    TASK_HEALTH["check_banned_players"]["last_run"] = datetime.now()
-    TASK_HEALTH["check_banned_players"]["is_running"] = True
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Error updating online players: {e}", exc_info=True)
 
-    try:
-        scraper_instance = await get_or_recreate_scraper()
-        banned = await scraper_instance.get_banned_players()
-        current_ban_ids = {ban["player_id"] for ban in banned if ban.get("player_id")}
+    async def update_online_players(self, online_players: List[Dict]) -> None:
+        """ASYNC: Update online players snapshot"""
+        await asyncio.to_thread(self._update_online_players_sync, online_players)
 
-        for ban_data in banned:
-            await db.save_banned_player(ban_data)
+    def _cleanup_stale_online_players_sync(self, minutes: int = 5) -> int:
+        """🆕 SYNC: Remove stale entries from online_players table
 
-        await db.mark_expired_bans(current_ban_ids)
-        logger.info(f"✓ Updated {len(banned)} banned players")
-        TASK_HEALTH["check_banned_players"]["error_count"] = 0
+        Args:
+            minutes: Remove entries older than this many minutes (default: 5)
 
-    except Exception as e:
-        TASK_HEALTH["check_banned_players"]["error_count"] += 1
-        logger.error(f"✗ Error checking banned players: {e}", exc_info=True)
+        Returns:
+            Number of entries removed
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(minutes=minutes)
 
-    finally:
-        TASK_HEALTH["check_banned_players"]["is_running"] = False
+                cursor.execute(
+                    """
+                    DELETE FROM online_players
+                    WHERE detected_online_at < ?
+                """,
+                    (cutoff,),
+                )
 
+                removed_count = cursor.rowcount
+                conn.commit()
 
-@check_banned_players.before_loop
-async def before_check_banned_players():
-    await bot.wait_until_ready()
-    logger.info("✓ check_banned_players task ready")
+                if removed_count > 0:
+                    logger.info(
+                        f"🧹 Cleaned up {removed_count} stale online_players entries (older than {minutes} min)"
+                    )
 
+                return removed_count
+        except Exception as e:
+            logger.error(f"Error cleaning up stale online players: {e}", exc_info=True)
+            return 0
 
-@check_banned_players.error
-async def check_banned_players_error(_loop, error):
-    logger.error(f"❌ check_banned_players task error: {error}", exc_info=error)
-    TASK_HEALTH["check_banned_players"]["error_count"] += 1
+    async def cleanup_stale_online_players(self, minutes: int = 5) -> int:
+        """🆕 ASYNC: Remove stale entries from online_players table"""
+        return await asyncio.to_thread(self._cleanup_stale_online_players_sync, minutes)
 
+    def _mark_player_for_update_sync(self, player_id: str, player_name: str) -> None:
+        """Mark player for priority update - allows duplicate usernames"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
 
-# ============================================================================
-# COMMANDS
-# ============================================================================
+                cursor.execute(
+                    """
+                    INSERT INTO player_profiles (player_id, username, priority_update)
+                    VALUES (?, ?, TRUE)
+                    ON CONFLICT(player_id) DO UPDATE SET
+                        username = excluded.username,
+                        priority_update = TRUE
+                """,
+                    (player_id, player_name),
+                )
 
+                conn.commit()
 
-@bot.command(name="sync")
-async def force_sync(ctx):
-    """Force sync slash commands"""
-    global COMMANDS_SYNCED
-    try:
-        await ctx.send("🔄 **Sincronizare forțată comenzi slash...**")
-        COMMANDS_SYNCED = False
-        synced = await bot.tree.sync()
-        COMMANDS_SYNCED = True
-        cmd_list = "\n".join([f"• `/{cmd.name}`: {cmd.description}" for cmd in synced])
-        await ctx.send(f"✅ **Succes! Sincronizate {len(synced)} comenzi:**\n{cmd_list}")
-        logger.info(f"✅ Force sync completed by {ctx.author}: {len(synced)} commands")
-    except Exception as e:
-        await ctx.send(f"❌ **Eroare la sincronizare**: {str(e)}")
-        logger.error(f"Force sync error: {e}", exc_info=True)
+        except sqlite3.IntegrityError as e:
+            logger.error(f"Unexpected IntegrityError for player_id={player_id}: {e}")
+        except Exception as e:
+            logger.error(
+                f"Error marking player {player_id} for update: {e}", exc_info=True
+            )
 
+    async def mark_player_for_update(self, player_id: str, player_name: str) -> None:
+        """ASYNC: Mark player for priority update"""
+        await asyncio.to_thread(
+            self._mark_player_for_update_sync, player_id, player_name
+        )
 
-# ============================================================================
-# MAIN ENTRY POINT
-# ============================================================================
+    def _get_players_pending_update_sync(self, limit: int = 100) -> List[str]:
+        """SYNC: Get player IDs pending update"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT player_id FROM player_profiles
+                WHERE priority_update = TRUE
+                ORDER BY last_profile_update ASC
+                LIMIT ?
+            """,
+                (limit,),
+            )
+            return [row[0] for row in cursor.fetchall()]
 
-if __name__ == "__main__":
-    TOKEN = Config.DISCORD_TOKEN
+    async def get_players_pending_update(self, limit: int = 100) -> List[str]:
+        """ASYNC: Get player IDs pending update"""
+        return await asyncio.to_thread(self._get_players_pending_update_sync, limit)
 
-    if not TOKEN:
-        logger.error("❌ ERROR: DISCORD_TOKEN not found in environment variables!")
-        exit(1)
+    def _reset_player_priority_sync(self, player_id: str) -> None:
+        """SYNC: Reset player priority"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE player_profiles
+                SET priority_update = FALSE
+                WHERE player_id = ?
+            """,
+                (player_id,),
+            )
+            conn.commit()
 
-    logger.info("🚀 Starting Pro4Kings Database Bot...")
+    async def reset_player_priority(self, player_id: str) -> None:
+        """ASYNC: Reset player priority"""
+        await asyncio.to_thread(self._reset_player_priority_sync, player_id)
 
-    try:
-        bot.run(TOKEN)
-    except KeyboardInterrupt:
-        logger.info("\n👋 Bot stopped by user")
-    except Exception as e:
-        logger.error(f"❌ Fatal error: {e}", exc_info=True)
-    finally:
-        logger.info("🛑 Bot shutdown complete")
+    def _get_current_online_players_sync(self) -> List[Dict]:
+        """SYNC: Get currently online players"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT player_id, player_name
+                FROM online_players
+                ORDER BY detected_online_at DESC
+            """
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_current_online_players(self) -> List[Dict]:
+        """ASYNC: Get currently online players"""
+        return await asyncio.to_thread(self._get_current_online_players_sync)
+
+    def _get_online_players_last_24h_count_sync(self) -> int:
+        """🆕 SYNC: Get count of players who were online in last 24 hours"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = datetime.now() - timedelta(hours=24)
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT player_id)
+                FROM online_players
+                WHERE detected_online_at >= ?
+            """,
+                (cutoff,),
+            )
+            return cursor.fetchone()[0]
+
+    async def get_online_players_last_24h_count(self) -> int:
+        """🆕 ASYNC: Get count of players who were online in last 24 hours"""
+        return await asyncio.to_thread(self._get_online_players_last_24h_count_sync)
+
+    def _get_player_actions_sync(self, identifier: str, days: int = 7) -> List[Dict]:
+        """🆕 SYNC: Get player actions - BIDIRECTIONAL (sender OR receiver)
+
+        Now includes actions where:
+        1. player_id = identifier (actions BY the player)
+        2. target_player_id = identifier (actions TO the player - migrated)
+        3. action_detail contains the player's ID/name (actions TO the player - non-migrated)
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = datetime.now() - timedelta(days=days)
+
+            if identifier.isdigit():
+                # Query for actions where player is SENDER or RECEIVER
+                # 🆕 ENHANCED: Include actions mentioning player in detail (for old non-migrated actions)
+                cursor.execute(
+                    """
+                    SELECT * FROM actions
+                    WHERE (
+                        player_id = ? 
+                        OR target_player_id = ?
+                        OR action_detail LIKE ?
+                    )
+                    AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                """,
+                    (identifier, identifier, f"%({identifier})%", cutoff),
+                )
+                results = cursor.fetchall()
+
+                if results:
+                    return [dict(row) for row in results]
+
+            # Search by name (sender or receiver)
+            cursor.execute(
+                """
+                SELECT * FROM actions
+                WHERE (player_name LIKE ? OR target_player_name LIKE ? OR action_detail LIKE ?) 
+                AND timestamp >= ?
+                ORDER BY timestamp DESC
+            """,
+                (f"%{identifier}%", f"%{identifier}%", f"%{identifier}%", cutoff),
+            )
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_player_actions(self, identifier: str, days: int = 7) -> List[Dict]:
+        """🆕 ASYNC: Get player actions - BIDIRECTIONAL"""
+        return await asyncio.to_thread(self._get_player_actions_sync, identifier, days)
+
+    def _get_recent_actions_sync(self, days: int = 7, limit: int = 50) -> List[Dict]:
+        """🆕 SYNC: Get recent actions from ALL players"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = datetime.now() - timedelta(days=days)
+
+            cursor.execute(
+                """
+                SELECT * FROM actions
+                WHERE timestamp >= ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """,
+                (cutoff, limit),
+            )
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_recent_actions(self, days: int = 7, limit: int = 50) -> List[Dict]:
+        """🆕 ASYNC: Get recent actions from ALL players"""
+        return await asyncio.to_thread(self._get_recent_actions_sync, days, limit)
+
+    def _save_banned_player_sync(self, ban_data: Dict) -> None:
+        """SYNC: Save banned player"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO banned_players (
+                    player_id, player_name, admin, reason, duration,
+                    ban_date, expiry_date, is_active
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)
+                ON CONFLICT(player_id, ban_date) DO UPDATE SET
+                    is_active = TRUE,
+                    last_checked = CURRENT_TIMESTAMP
+            """,
+                (
+                    ban_data["player_id"],
+                    ban_data["player_name"],
+                    ban_data.get("admin"),
+                    ban_data.get("reason"),
+                    ban_data.get("duration"),
+                    ban_data.get("ban_date"),
+                    ban_data.get("expiry_date"),
+                ),
+            )
+            conn.commit()
+
+    async def save_banned_player(self, ban_data: Dict) -> None:
+        """ASYNC: Save banned player"""
+        await asyncio.to_thread(self._save_banned_player_sync, ban_data)
+
+    def _mark_expired_bans_sync(self, current_ban_ids: set) -> None:
+        """SYNC: Mark expired bans"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT player_id FROM banned_players WHERE is_active = TRUE"
+            )
+            active_bans = {row[0] for row in cursor.fetchall()}
+
+            expired = active_bans - current_ban_ids
+
+            if expired:
+                placeholders = ",".join("?" * len(expired))
+                cursor.execute(
+                    f"""
+                    UPDATE banned_players
+                    SET is_active = FALSE
+                    WHERE player_id IN ({placeholders}) AND is_active = TRUE
+                """,
+                    list(expired),
+                )
+
+                conn.commit()
+                logger.info(f"Marked {len(expired)} bans as expired")
+
+    async def mark_expired_bans(self, current_ban_ids: set) -> None:
+        """ASYNC: Mark expired bans"""
+        await asyncio.to_thread(self._mark_expired_bans_sync, current_ban_ids)
+
+    def _get_banned_players_sync(self, include_expired: bool = False) -> List[Dict]:
+        """SYNC: Get banned players"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            if include_expired:
+                cursor.execute("SELECT * FROM banned_players ORDER BY detected_at DESC")
+            else:
+                cursor.execute(
+                    "SELECT * FROM banned_players WHERE is_active = TRUE ORDER BY detected_at DESC"
+                )
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_banned_players(self, include_expired: bool = False) -> List[Dict]:
+        """ASYNC: Get banned players"""
+        return await asyncio.to_thread(self._get_banned_players_sync, include_expired)
+
+    def _get_player_by_exact_id_sync(self, player_id: str) -> Optional[Dict]:
+        """SYNC: Get player by exact ID"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM player_profiles WHERE player_id = ?", (player_id,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    async def get_player_by_exact_id(self, player_id: str) -> Optional[Dict]:
+        """ASYNC: Get player by exact ID"""
+        return await asyncio.to_thread(self._get_player_by_exact_id_sync, player_id)
+
+    def _search_player_by_name_sync(self, name: str) -> List[Dict]:
+        """SYNC: Search players by name"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM player_profiles
+                WHERE username LIKE ?
+                ORDER BY is_online DESC, last_seen DESC
+                LIMIT 20
+            """,
+                (f"%{name}%",),
+            )
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def search_player_by_name(self, name: str) -> List[Dict]:
+        """ASYNC: Search players by name"""
+        return await asyncio.to_thread(self._search_player_by_name_sync, name)
+
+    def _save_scan_progress_sync(
+        self, last_player_id: str, total_scanned: int, completed: bool = False
+    ) -> None:
+        """SYNC: Save scan progress (legacy)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE scan_progress
+                SET last_scanned_id = ?,
+                    found_count = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+            """,
+                (last_player_id, total_scanned),
+            )
+            conn.commit()
+
+    async def save_scan_progress(
+        self, last_player_id: str, total_scanned: int, completed: bool = False
+    ) -> None:
+        """ASYNC: Save scan progress (legacy)"""
+        await asyncio.to_thread(
+            self._save_scan_progress_sync, last_player_id, total_scanned, completed
+        )
+
+    # 🔥 FIXED: Properly indented class methods below
+
+    async def get_database_stats(self) -> Dict:
+        """Get database statistics"""
+
+        def _get_stats_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                cursor.execute("SELECT COUNT(*) FROM player_profiles")
+                total_players = cursor.fetchone()[0]
+
+                cursor.execute("SELECT COUNT(*) FROM actions")
+                total_actions = cursor.fetchone()[0]
+
+                # 🔥 CHANGED: Get count from last 24h instead of current snapshot
+                cutoff = datetime.now() - timedelta(hours=24)
+                cursor.execute(
+                    "SELECT COUNT(DISTINCT player_id) FROM online_players WHERE detected_online_at >= ?",
+                    (cutoff,),
+                )
+                online_count = cursor.fetchone()[0]
+
+                return {
+                    "total_players": total_players,
+                    "total_actions": total_actions,
+                    "online_count": online_count,
+                }
+
+        return await asyncio.to_thread(_get_stats_sync)
+
+    async def get_actions_count_last_24h(self) -> int:
+        """Get actions count in last 24 hours"""
+
+        def _get_count_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(hours=24)
+                cursor.execute(
+                    "SELECT COUNT(*) FROM actions WHERE timestamp >= ?", (cutoff,)
+                )
+                return cursor.fetchone()[0]
+
+        return await asyncio.to_thread(_get_count_sync)
+
+    async def get_logins_count_today(self) -> int:
+        """Get login count today"""
+
+        def _get_count_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                today = datetime.now().replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                cursor.execute(
+                    "SELECT COUNT(*) FROM login_events WHERE event_type = ? AND timestamp >= ?",
+                    ("login", today),
+                )
+                return cursor.fetchone()[0]
+
+        return await asyncio.to_thread(_get_count_sync)
+
+    async def get_active_bans_count(self) -> int:
+        """Get active bans count"""
+
+        def _get_count_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT COUNT(*) FROM banned_players WHERE is_active = TRUE"
+                )
+                return cursor.fetchone()[0]
+
+        return await asyncio.to_thread(_get_count_sync)
+
+    async def get_player_sessions(self, player_id: str, days: int = 7) -> List[Dict]:
+        """Get player sessions"""
+
+        def _get_sessions_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(days=days)
+
+                cursor.execute(
+                    """
+                    WITH logins AS (
+                        SELECT
+                            player_id,
+                            timestamp AS login_time,
+                            LEAD(timestamp) OVER (
+                                PARTITION BY player_id
+                                ORDER BY timestamp
+                            ) AS next_login
+                        FROM login_events
+                        WHERE player_id = ?
+                        AND event_type = 'login'
+                        AND timestamp >= ?
+                    ),
+                    logouts AS (
+                        SELECT player_id, timestamp AS logout_time, session_duration_seconds
+                        FROM login_events
+                        WHERE player_id = ?
+                        AND event_type = 'logout'
+                    )
+                    SELECT
+                        l.login_time,
+                        (
+                            SELECT lo.logout_time
+                            FROM logouts lo
+                            WHERE lo.player_id = l.player_id
+                            AND lo.logout_time > l.login_time
+                            AND (l.next_login IS NULL OR lo.logout_time < l.next_login)
+                            ORDER BY lo.logout_time ASC
+                            LIMIT 1
+                        ) AS logout_time,
+                        (
+                            SELECT lo.session_duration_seconds
+                            FROM logouts lo
+                            WHERE lo.player_id = l.player_id
+                            AND lo.logout_time > l.login_time
+                            AND (l.next_login IS NULL OR lo.logout_time < l.next_login)
+                            ORDER BY lo.logout_time ASC
+                            LIMIT 1
+                        ) AS session_duration_seconds
+                    FROM logins l
+                    ORDER BY l.login_time DESC
+                """,
+                    (player_id, cutoff, player_id),
+                )
+
+                return [dict(row) for row in cursor.fetchall()]
+
+        return await asyncio.to_thread(_get_sessions_sync)
+
+    async def get_player_rank_history(self, player_id: str) -> List[Dict]:
+        """Get player rank history"""
+
+        def _get_history_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT * FROM rank_history 
+                    WHERE player_id = ? 
+                    ORDER BY rank_obtained DESC
+                """,
+                    (player_id,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+
+        return await asyncio.to_thread(_get_history_sync)
+
+    async def get_faction_members(self, faction_name: str) -> List[Dict]:
+        """Get faction members with accurate online status (last 2 minutes only)"""
+
+        def _get_members_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(minutes=2)
+                cursor.execute(
+                    """
+                    SELECT 
+                        p.*,
+                        CASE 
+                            WHEN o.detected_online_at >= ? THEN 1 
+                            ELSE 0 
+                        END as is_currently_online
+                    FROM player_profiles p
+                    LEFT JOIN online_players o ON p.player_id = o.player_id
+                    WHERE p.faction = ?
+                    ORDER BY is_online DESC, p.last_seen DESC
+                """,
+                    (cutoff, faction_name),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+
+        return await asyncio.to_thread(_get_members_sync)
+
+    async def get_all_factions_with_counts(self) -> List[Dict]:
+        """Get all factions with member and CURRENTLY ONLINE counts (last 2 minutes)"""
+
+        def _get_factions_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(minutes=2)
+                cursor.execute(
+                    """
+                    SELECT 
+                        p.faction as faction_name,
+                        COUNT(DISTINCT p.player_id) as member_count,
+                        COUNT(DISTINCT CASE WHEN o.detected_online_at >= ? THEN o.player_id ELSE NULL END) as online_count
+                    FROM player_profiles p
+                    LEFT JOIN online_players o ON p.player_id = o.player_id
+                    WHERE p.faction IS NOT NULL AND p.faction != ''
+                    GROUP BY p.faction
+                    ORDER BY member_count DESC
+                """,
+                    (cutoff,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+
+        return await asyncio.to_thread(_get_factions_sync)
+
+    async def get_recent_promotions(self, days: int = 7) -> List[Dict]:
+        """Get recent promotions"""
+
+        def _get_promotions_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(days=days)
+
+                cursor.execute(
+                    """
+                    SELECT 
+                        p.username as player_name,
+                        ph1.old_value as old_rank,
+                        ph1.new_value as new_rank,
+                        p.faction,
+                        ph1.changed_at as timestamp
+                    FROM profile_history ph1
+                    JOIN player_profiles p ON p.player_id = ph1.player_id
+                    WHERE ph1.field_name = 'faction_rank' 
+                    AND ph1.changed_at >= ?
+                    ORDER BY ph1.changed_at DESC
+                """,
+                    (cutoff,),
+                )
+
+                return [dict(row) for row in cursor.fetchall()]
+
+        return await asyncio.to_thread(_get_promotions_sync)
+
+    async def get_player_stats(self, identifier: str) -> Optional[Dict]:
+        """🆕 Get player stats by ID or name - unified method for commands"""
+
+        def _get_stats_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Try by ID first
+                if identifier.isdigit():
+                    cursor.execute(
+                        """
+                        SELECT * FROM player_profiles WHERE player_id = ?
+                    """,
+                        (identifier,),
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        return dict(row)
+
+                # Try by name (case-insensitive partial match)
+                cursor.execute(
+                    """
+                    SELECT * FROM player_profiles 
+                    WHERE username LIKE ? 
+                    ORDER BY is_online DESC, last_seen DESC 
+                    LIMIT 1
+                """,
+                    (f"%{identifier}%",),
+                )
+                row = cursor.fetchone()
+                return dict(row) if row else None
+
+        return await asyncio.to_thread(_get_stats_sync)
+
+    async def cleanup_old_data(self, dry_run: bool = True) -> Dict[str, int]:
+        """Cleanup old data"""
+
+        def _cleanup_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                results = {}
+
+                # Actions older than 90 days
+                cutoff_actions = datetime.now() - timedelta(days=90)
+                if dry_run:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM actions WHERE timestamp < ?",
+                        (cutoff_actions,),
+                    )
+                    results["Actions"] = cursor.fetchone()[0]
+                else:
+                    cursor.execute(
+                        "DELETE FROM actions WHERE timestamp < ?", (cutoff_actions,)
+                    )
+                    results["Actions"] = cursor.rowcount
+
+                # Login events older than 30 days
+                cutoff_logins = datetime.now() - timedelta(days=30)
+                if dry_run:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM login_events WHERE timestamp < ?",
+                        (cutoff_logins,),
+                    )
+                    results["Login Events"] = cursor.fetchone()[0]
+                else:
+                    cursor.execute(
+                        "DELETE FROM login_events WHERE timestamp < ?", (cutoff_logins,)
+                    )
+                    results["Login Events"] = cursor.rowcount
+
+                # Profile history older than 180 days
+                cutoff_profile = datetime.now() - timedelta(days=180)
+                if dry_run:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM profile_history WHERE changed_at < ?",
+                        (cutoff_profile,),
+                    )
+                    results["Profile History"] = cursor.fetchone()[0]
+                else:
+                    cursor.execute(
+                        "DELETE FROM profile_history WHERE changed_at < ?",
+                        (cutoff_profile,),
+                    )
+                    results["Profile History"] = cursor.rowcount
+
+                if not dry_run:
+                    conn.commit()
+
+                return results
+
+        return await asyncio.to_thread(_cleanup_sync)
+
+    # ========================================================================
+    # CSV IMPORT (Consolidated from import_on_startup.py)
+    # ========================================================================
+
+    def _import_csv_profiles_sync(self, csv_path: str) -> int:
+        """SYNC: Import player profiles from CSV file"""
+        import csv
+
+        count = 0
+        try:
+            with open(csv_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                with self.get_connection() as conn:
+                    cursor = conn.cursor()
+                    for row in reader:
+                        try:
+                            cursor.execute(
+                                """
+                                INSERT INTO player_profiles (
+                                    player_id, username, is_online, last_seen,
+                                    faction, faction_rank, job, warnings,
+                                    played_hours, age_ic, last_profile_update
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                                ON CONFLICT(player_id) DO UPDATE SET
+                                    username = COALESCE(excluded.username, player_profiles.username),
+                                    faction = COALESCE(excluded.faction, player_profiles.faction),
+                                    faction_rank = COALESCE(excluded.faction_rank, player_profiles.faction_rank),
+                                    job = COALESCE(excluded.job, player_profiles.job),
+                                    warnings = COALESCE(excluded.warnings, player_profiles.warnings),
+                                    played_hours = COALESCE(excluded.played_hours, player_profiles.played_hours),
+                                    age_ic = COALESCE(excluded.age_ic, player_profiles.age_ic)
+                            """,
+                                (
+                                    row.get("player_id"),
+                                    row.get("username") or row.get("player_name"),
+                                    row.get("is_online", "0") == "1",
+                                    row.get("last_seen") or row.get("last_connection"),
+                                    row.get("faction") or None,
+                                    row.get("faction_rank") or None,
+                                    row.get("job") or None,
+                                    int(row.get("warnings") or row.get("warns") or 0),
+                                    float(row.get("played_hours") or 0),
+                                    int(row.get("age_ic") or 0) if row.get("age_ic") else None,
+                                ),
+                            )
+                            count += 1
+                            if count % 10000 == 0:
+                                conn.commit()
+                                logger.info(f"📊 Imported {count:,} profiles...")
+                        except Exception as e:
+                            logger.warning(f"Error importing row: {e}")
+                            continue
+                    conn.commit()
+            logger.info(f"✅ Imported {count:,} profiles from CSV")
+        except Exception as e:
+            logger.error(f"Error importing CSV: {e}", exc_info=True)
+        return count
+
+    async def import_csv_profiles(self, csv_path: str) -> int:
+        """ASYNC: Import player profiles from CSV file"""
+        return await asyncio.to_thread(self._import_csv_profiles_sync, csv_path)
+
+    async def auto_import_csv_if_needed(self, csv_paths: list = None) -> bool:
+        """Auto-import CSV if database is empty (consolidates import_on_startup.py)"""
+        import_flag = "/data/.csv_imported" if os.path.exists("/data") else ".csv_imported"
+
+        # Check if already imported
+        if os.path.exists(import_flag):
+            logger.info("📊 CSV already imported (flag exists) - skipping")
+            return False
+
+        # Check if database has enough data
+        stats = await self.get_database_stats()
+        total_players = stats.get("total_players", 0)
+
+        if total_players >= 1000:
+            logger.info(f"📊 Database has {total_players:,} players - skipping CSV import")
+            with open(import_flag, "w") as f:
+                f.write(f"Import skipped - already has {total_players} players\n")
+            return False
+
+        # Find CSV file
+        if csv_paths is None:
+            csv_paths = [
+                "player_profiles.csv",
+                "/app/player_profiles.csv",
+                os.path.join(os.path.dirname(__file__), "player_profiles.csv"),
+                "/data/player_profiles.csv",
+            ]
+
+        csv_file = None
+        for path in csv_paths:
+            if os.path.exists(path):
+                csv_file = path
+                break
+
+        if not csv_file:
+            logger.warning("⚠️ player_profiles.csv not found - skipping import")
+            return False
+
+        logger.info(f"🔄 Importing profiles from {csv_file}...")
+        count = await self.import_csv_profiles(csv_file)
+
+        # Create flag file
+        with open(import_flag, "w") as f:
+            f.write(f"Imported {count} profiles at {datetime.now()}\n")
+
+        logger.info(f"✅ CSV import complete: {count:,} profiles")
+        return True
