@@ -614,7 +614,15 @@ class Pro4KingsScraper:
         return factions
 
     async def get_latest_actions(self, limit: int = 200) -> List[PlayerAction]:
-        """Get latest actions - enhanced with multiple detection methods"""
+        """🔥 REWRITTEN: Get latest actions using precise Pro4Kings HTML structure.
+        
+        The Pro4Kings homepage has a specific structure:
+        - Card with h4 "Ultimele acțiuni"
+        - div.list-group.list-group-custom containing action items
+        - Each action is a div.list-group-item with:
+          - p.mb-1 containing the action text
+          - small > div containing timestamp (YYYY-MM-DD HH:MM:SS)
+        """
         url = f"{self.base_url}/"
         html = await self.fetch_page(url)
 
@@ -624,92 +632,313 @@ class Pro4KingsScraper:
 
         soup = BeautifulSoup(html, "lxml")
         actions = []
+        seen_raw_texts = set()  # Dedupe within same scrape
 
-        activity_keywords = ["Activitate", "Ultimele", "acțiuni", "actiuni", "Recent"]
-        possible_sections = []
-
-        for keyword in activity_keywords:
-            headings = soup.find_all(text=re.compile(keyword, re.IGNORECASE))
-            for heading in headings:
-                parent = heading.find_parent(["div", "section", "article", "main"])
-                if parent:
-                    possible_sections.append(parent)
-
-        all_lists = soup.find_all(
-            ["ul", "ol", "div"],
-            class_=re.compile(r"activity|actions|feed|timeline", re.IGNORECASE),
-        )
-        possible_sections.extend(all_lists)
-
-        direct_selectors = [
-            "#activity",
-            "#actions",
-            "#latest-actions",
-            "#recent-activity",
-            ".activity",
-            ".actions",
-            ".recent-actions",
-            ".latest-actions",
-            ".activity-feed",
-            ".action-log",
-            ".player-actions",
-        ]
-        for selector in direct_selectors:
-            elem = soup.select_one(selector)
-            if elem:
-                possible_sections.append(elem)
-
-        all_text_containers = soup.find_all(["ul", "ol", "div", "table"])
-        for container in all_text_containers:
-            text = container.get_text()
-            if text.count("Jucatorul") >= 3 or text.count("jucatorul") >= 3:
-                possible_sections.append(container)
-
-        for section in possible_sections:
-            if not section:
-                continue
-
-            entries = section.find_all(["li", "tr", "div"], recursive=True)
-            for entry in entries:
-                text = entry.get_text(strip=True)
-                if len(text) < 20:
-                    continue
-                if "Jucatorul" not in text and "jucatorul" not in text:
-                    continue
-
-                action = self.parse_action_entry(entry)
-                if action:
-                    actions.append(action)
-                    if len(actions) >= limit:
-                        break
-
-            if len(actions) > 0:
-                logger.info(
-                    f"Found actions in section: {section.name} (class: {section.get('class')})"
-                )
-                break
-
-        if len(actions) == 0:
-            logger.error("NO ACTIONS FOUND! Debugging HTML structure:")
-            logger.error(
-                f"Total 'Jucatorul' mentions: {soup.get_text().count('Jucatorul')}"
-            )
-            logger.error(f"Possible sections found: {len(possible_sections)}")
-
-            all_text = soup.get_text()
-            lines = all_text.split("\n")
-            for line in lines:
-                if "Jucatorul" in line and len(line) > 20:
-                    fake_elem = BeautifulSoup(f"<div>{line}</div>", "lxml").div
-                    action = self.parse_action_entry(fake_elem)
+        # 🔥 METHOD 1: Find the "Ultimele acțiuni" card directly
+        actions_header = soup.find("h4", string=re.compile(r"Ultimele\s*acț", re.IGNORECASE))
+        if actions_header:
+            # Find the parent card
+            card = actions_header.find_parent("div", class_="card")
+            if card:
+                # Find all list-group-item elements
+                action_items = card.find_all("div", class_="list-group-item")
+                logger.info(f"Found {len(action_items)} action items in Ultimele acțiuni card")
+                
+                for item in action_items:
+                    # Extract action text from p.mb-1
+                    p_tag = item.find("p", class_="mb-1")
+                    if not p_tag:
+                        continue
+                    action_text = p_tag.get_text(strip=True)
+                    
+                    # Extract timestamp from small > div
+                    timestamp = None
+                    small_tag = item.find("small")
+                    if small_tag:
+                        time_match = re.search(
+                            r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
+                            small_tag.get_text()
+                        )
+                        if time_match:
+                            try:
+                                timestamp = datetime.strptime(
+                                    time_match.group(1), "%Y-%m-%d %H:%M:%S"
+                                )
+                            except ValueError:
+                                timestamp = datetime.now()
+                    
+                    if not timestamp:
+                        timestamp = datetime.now()
+                    
+                    # Dedupe by raw text within this scrape
+                    if action_text in seen_raw_texts:
+                        continue
+                    seen_raw_texts.add(action_text)
+                    
+                    # Parse the action
+                    action = self._parse_action_text(action_text, timestamp)
                     if action:
                         actions.append(action)
+        
+        # 🔥 METHOD 2: Fallback - find list-group-custom directly
+        if not actions:
+            list_group = soup.find("div", class_="list-group-custom")
+            if list_group:
+                action_items = list_group.find_all("div", class_="list-group-item")
+                logger.info(f"Fallback: Found {len(action_items)} items in list-group-custom")
+                
+                for item in action_items:
+                    p_tag = item.find("p", class_="mb-1")
+                    if not p_tag:
+                        continue
+                    action_text = p_tag.get_text(strip=True)
+                    
+                    timestamp = None
+                    small_tag = item.find("small")
+                    if small_tag:
+                        time_match = re.search(
+                            r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
+                            small_tag.get_text()
+                        )
+                        if time_match:
+                            try:
+                                timestamp = datetime.strptime(
+                                    time_match.group(1), "%Y-%m-%d %H:%M:%S"
+                                )
+                            except ValueError:
+                                timestamp = datetime.now()
+                    
+                    if not timestamp:
+                        timestamp = datetime.now()
+                    
+                    if action_text in seen_raw_texts:
+                        continue
+                    seen_raw_texts.add(action_text)
+                    
+                    action = self._parse_action_text(action_text, timestamp)
+                    if action:
+                        actions.append(action)
+
+        if not actions:
+            logger.warning("No actions found with precise selectors, page structure may have changed")
+        else:
+            logger.info(f"✅ Scraped {len(actions)} unique actions from homepage")
 
         self.action_scraping_stats["total_attempts"] += 1
         self.action_scraping_stats["total_actions_found"] += len(actions)
 
-        logger.info(f"Parsed {len(actions)} actions from homepage")
         return actions[:limit]
+    
+    def _parse_action_text(self, text: str, timestamp: datetime) -> Optional[PlayerAction]:
+        """🔥 NEW: Parse action text into PlayerAction with all patterns."""
+        if not text or len(text) < 10:
+            return None
+        
+        # Clean up text
+        text = " ".join(text.split())
+        
+        # 🔥 PATTERN 1: Money withdrawal - "a retras suma de X$ (taxa Y$)"
+        withdraw_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\$",
+            text, re.IGNORECASE
+        )
+        if withdraw_match:
+            return PlayerAction(
+                player_id=withdraw_match.group(2),
+                player_name=withdraw_match.group(1).strip(),
+                action_type="money_withdraw",
+                action_detail=f"Retras {withdraw_match.group(3)}$",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 2: Money transfer - "ia transferat suma de X $ lui Player(ID)"
+        transfer_match = re.search(
+            r"([^(]+)\s*\((\d+)\)\s*i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\)\s*)?\$?\s*lui\s+([^(]+)\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if transfer_match:
+            return PlayerAction(
+                player_id=transfer_match.group(2),
+                player_name=transfer_match.group(1).strip(),
+                action_type="money_transfer",
+                action_detail=f"Transferat {transfer_match.group(3)}$ lui {transfer_match.group(4).strip()}",
+                target_player_id=transfer_match.group(5),
+                target_player_name=transfer_match.group(4).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 3: Chest deposit - "a pus in chest(id X), Nx Item"
+        chest_deposit_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+pus\s+in\s+chest\(id\s+([^)]+)\),\s*(\d+)x\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if chest_deposit_match:
+            return PlayerAction(
+                player_id=chest_deposit_match.group(2),
+                player_name=chest_deposit_match.group(1).strip(),
+                action_type="chest_deposit",
+                action_detail=f"Pus in chest({chest_deposit_match.group(3)}): {chest_deposit_match.group(4)}x {chest_deposit_match.group(5).strip()}",
+                item_name=chest_deposit_match.group(5).strip().rstrip("."),
+                item_quantity=int(chest_deposit_match.group(4)),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 4: Chest withdraw - "a retras din chest(id X), Nx Item"
+        chest_withdraw_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\(id\s+([^)]+)\),\s*(\d+)x\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if chest_withdraw_match:
+            return PlayerAction(
+                player_id=chest_withdraw_match.group(2),
+                player_name=chest_withdraw_match.group(1).strip(),
+                action_type="chest_withdraw",
+                action_detail=f"Retras din chest({chest_withdraw_match.group(3)}): {chest_withdraw_match.group(4)}x {chest_withdraw_match.group(5).strip()}",
+                item_name=chest_withdraw_match.group(5).strip().rstrip("."),
+                item_quantity=int(chest_withdraw_match.group(4)),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 5: Item given - "i-a dat lui" OR "ia dat lui" Player(ID) items
+        gave_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+i?-?a\s+dat\s+lui\s+([^(]+)\((\d+)\)\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if gave_match:
+            return PlayerAction(
+                player_id=gave_match.group(2),
+                player_name=gave_match.group(1).strip(),
+                action_type="item_given",
+                action_detail=f"Dat lui {gave_match.group(3).strip()}: {gave_match.group(5).strip()}",
+                item_name=gave_match.group(5).strip().rstrip("."),
+                target_player_id=gave_match.group(4),
+                target_player_name=gave_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 6: Item received - "a primit de la Player(ID) Nx Item"
+        received_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+de\s+la\s+([^(]+)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if received_match:
+            return PlayerAction(
+                player_id=received_match.group(2),
+                player_name=received_match.group(1).strip(),
+                action_type="item_received",
+                action_detail=f"Primit de la {received_match.group(3).strip()}: {received_match.group(5)}x {received_match.group(6).strip()}",
+                item_name=received_match.group(6).strip().rstrip("."),
+                item_quantity=int(received_match.group(5)),
+                target_player_id=received_match.group(4),
+                target_player_name=received_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 7: Contract/Vehicle transfer - "Contract Player1(ID) -> Player2(ID)"
+        contract_match = re.search(
+            r"Contract\s+([^(]+)\((\d+)\)\s*(?:->|→)\s*([^(]+)\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if contract_match:
+            # Try to extract vehicle info
+            vehicle_info = text.split(")")[-1].strip() if ")" in text else "Vehicle"
+            return PlayerAction(
+                player_id=contract_match.group(2),
+                player_name=contract_match.group(1).strip(),
+                action_type="contract",
+                action_detail=f"Contract către {contract_match.group(3).strip()}: {vehicle_info}",
+                item_name=vehicle_info.strip(".' "),
+                target_player_id=contract_match.group(4),
+                target_player_name=contract_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 8: Warning received
+        warning_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+(?:un\s+)?avertisment.*?(?:administratorul|admin)\s+([^(]+)\((\d+)\).*?motiv:\s*(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if warning_match:
+            return PlayerAction(
+                player_id=warning_match.group(2),
+                player_name=warning_match.group(1).strip(),
+                action_type="warning_received",
+                action_detail=f"Avertisment de la {warning_match.group(3).strip()}",
+                admin_id=warning_match.group(4),
+                admin_name=warning_match.group(3).strip(),
+                reason=warning_match.group(5).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 9: Property bought/sold
+        property_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(casa|afacere|proprietate)\s*(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if property_match:
+            action_type = "property_bought" if "cumparat" in property_match.group(3).lower() else "property_sold"
+            return PlayerAction(
+                player_id=property_match.group(2),
+                player_name=property_match.group(1).strip(),
+                action_type=action_type,
+                action_detail=f"{property_match.group(3)} {property_match.group(4)} {property_match.group(5).strip()}",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 10: Vehicle bought/sold (generic)
+        vehicle_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if vehicle_match:
+            action_type = "vehicle_bought" if "cumparat" in vehicle_match.group(3).lower() else "vehicle_sold"
+            return PlayerAction(
+                player_id=vehicle_match.group(2),
+                player_name=vehicle_match.group(1).strip(),
+                action_type=action_type,
+                action_detail=f"{vehicle_match.group(3)} {vehicle_match.group(4).strip()}",
+                item_name=vehicle_match.group(4).strip().rstrip("."),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 11: Any "Jucatorul" action not matched above
+        generic_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if generic_match:
+            return PlayerAction(
+                player_id=generic_match.group(2),
+                player_name=generic_match.group(1).strip(),
+                action_type="other",
+                action_detail=generic_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 12: Non-Jucatorul actions (like contracts without "Jucatorul" prefix)
+        # Only if text contains player IDs in parentheses
+        if re.search(r"\(\d+\)", text):
+            return PlayerAction(
+                player_id=None,
+                player_name=None,
+                action_type="other",
+                action_detail=text[:200],
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        return None
 
     def parse_action_entry(self, entry) -> Optional[PlayerAction]:
         """🔥 FIXED: Enhanced action parser with correct patterns for 'ia dat lui' and chest actions"""
