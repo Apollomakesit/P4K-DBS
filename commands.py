@@ -256,6 +256,41 @@ class ActionsPaginationView(discord.ui.View):
                 "detail_lines": [f"Detail: {detail}"],
             }
 
+        # 🔥 NEW: Handle contract/vehicle transfer actions
+        if action_type == "contract" or "contract" in detail.lower():
+            item_name = action.get("item_name", "Vehicle")
+            is_sender = player_id == viewing_player_id
+            is_receiver = target_player_id == viewing_player_id
+
+            if is_sender:
+                return {
+                    "emoji": "📝",
+                    "type_label": "CONTRACT GIVEN",
+                    "detail_lines": [
+                        f"**Vehicle:** {item_name}",
+                        f"**To:** {target_player_name} ({target_player_id})" if target_player_name else f"**To:** ID {target_player_id}",
+                    ],
+                }
+            elif is_receiver:
+                return {
+                    "emoji": "📝",
+                    "type_label": "CONTRACT RECEIVED",
+                    "detail_lines": [
+                        f"**Vehicle:** {item_name}",
+                        f"**From:** {player_name} ({player_id})",
+                    ],
+                }
+            else:
+                return {
+                    "emoji": "📝",
+                    "type_label": "CONTRACT",
+                    "detail_lines": [
+                        f"**Vehicle:** {item_name}",
+                        f"**From:** {player_name} ({player_id})",
+                        f"**To:** {target_player_name} ({target_player_id})" if target_player_name else "",
+                    ],
+                }
+
         # Handle warnings
         if action_type == "warning_received" or "avertisment" in detail.lower():
             return {
@@ -412,20 +447,25 @@ class FactionPaginationView(discord.ui.View):
         self.next_button.disabled = self.current_page >= self.total_pages - 1
 
     def build_embed(self) -> discord.Embed:
-        """🔥 FIXED: Build embed showing actual usernames (not placeholder IDs)"""
+        """🔥 FIXED: Build embed showing actual usernames with ACCURATE online status"""
         start_idx = self.current_page * self.items_per_page
         end_idx = min(start_idx + self.items_per_page, len(self.members))
         page_members = self.members[start_idx:end_idx]
 
+        # Count online members for description
+        online_count = sum(1 for m in self.members if m.get("is_online", 0) == 1)
+
         embed = discord.Embed(
             title=f"👥 {self.faction_name}",
-            description=f"Showing {start_idx + 1}-{end_idx} of {len(self.members)} member(s)",
+            description=f"Showing {start_idx + 1}-{end_idx} of {len(self.members)} member(s) • 🟢 {online_count} online",
             color=discord.Color.blue(),
             timestamp=datetime.now(),
         )
 
         for member in page_members:
-            status = "🟢" if member.get("isonline") else "🔴"
+            # 🔥 FIX: Use is_online field from JOIN query (returns 1 for online, 0 for offline)
+            is_online = member.get("is_online", 0) == 1
+            status = "🟢" if is_online else "🔴"
             rank = member.get("faction_rank")
 
             # Handle NULL, empty, and "null" string values
@@ -483,6 +523,119 @@ class FactionPaginationView(discord.ui.View):
             item.disabled = True
         try:
             # Try to edit the message to disable buttons
+            if self.message:
+                await self.message.edit(view=self)
+        except:
+            pass
+
+
+class OnlinePaginationView(discord.ui.View):
+    """🆕 Pagination view for online players with Previous/Next buttons"""
+
+    def __init__(
+        self,
+        players: List[dict],
+        author_id: int,
+        db_instance,
+        items_per_page: int = 20,
+    ):
+        super().__init__(timeout=180)  # 3 minutes timeout
+        self.players = players
+        self.author_id = author_id
+        self.db = db_instance
+        self.items_per_page = items_per_page
+        self.current_page = 0
+        self.total_pages = (
+            (len(self.players) + items_per_page - 1) // items_per_page
+            if self.players
+            else 1
+        )
+        self.message = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        """Update button enabled/disabled states based on current page"""
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page >= self.total_pages - 1
+
+    def build_embed(self) -> discord.Embed:
+        """Build embed for current page"""
+        start_idx = self.current_page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, len(self.players))
+        page_players = self.players[start_idx:end_idx]
+
+        embed = discord.Embed(
+            title="🟢 Online Players",
+            description=f"**Total:** {len(self.players)} players online",
+            color=discord.Color.green(),
+            timestamp=datetime.now(),
+        )
+
+        for player in page_players:
+            player_name = player.get("player_name", "Unknown")
+            player_id = player.get("player_id", "?")
+            
+            # Try to get faction from player_profiles
+            faction = "Unknown"
+            try:
+                with self.db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT faction FROM player_profiles WHERE player_id = ?",
+                        (player_id,)
+                    )
+                    row = cursor.fetchone()
+                    if row and row["faction"]:
+                        faction = row["faction"]
+            except:
+                pass
+
+            embed.add_field(
+                name=f"🟢 {player_name} ({player_id})",
+                value=f"Faction: {faction}",
+                inline=True,
+            )
+
+        embed.set_footer(
+            text=f"Page {self.current_page + 1}/{self.total_pages} • Showing {start_idx + 1}-{end_idx} of {len(self.players)}"
+        )
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Ensure only the command author can use the buttons"""
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the person who ran this command can use these buttons!",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.primary)
+    async def previous_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        """Go to previous page"""
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.primary)
+    async def next_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        """Go to next page"""
+        self.current_page = min(self.total_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_timeout(self):
+        """Disable buttons when view times out"""
+        for item in self.children:
+            item.disabled = True
+        try:
             if self.message:
                 await self.message.edit(view=self)
         except:
@@ -2148,10 +2301,10 @@ def setup_commands(bot, db, scraper_getter):
     # ONLINE COMMAND
     # ========================================================================
 
-    @bot.tree.command(name="online", description="Current online players")
+    @bot.tree.command(name="online", description="🆕 Current online players with pagination")
     @app_commands.checks.cooldown(1, 10)
     async def online_command(interaction: discord.Interaction):
-        """Current online players"""
+        """Current online players with pagination support"""
         await interaction.response.defer()
 
         try:
@@ -2161,26 +2314,16 @@ def setup_commands(bot, db, scraper_getter):
                 await interaction.followup.send("📊 **No Players Online**")
                 return
 
-            embed = discord.Embed(
-                title="🟢 Online Players",
-                description=f"{len(online_players)} player(s) online",
-                color=discord.Color.green(),
-                timestamp=datetime.now(),
+            # 🆕 Create pagination view for handling 500+ players
+            view = OnlinePaginationView(
+                players=online_players,
+                author_id=interaction.user.id,
+                db_instance=db,
             )
 
-            # Show up to 20 players
-            for player in online_players[:20]:
-                player_name = player.get("player_name", "Unknown")
-                player_id = player.get("player_id", "?")
-
-                embed.add_field(
-                    name=f"{player_name}", value=f"ID: {player_id}", inline=True
-                )
-
-            if len(online_players) > 20:
-                embed.set_footer(text=f"Showing 20 of {len(online_players)} players")
-
-            await interaction.followup.send(embed=embed)
+            embed = view.build_embed()
+            message = await interaction.followup.send(embed=embed, view=view)
+            view.message = message  # Store message reference for timeout handling
 
         except Exception as e:
             logger.error(f"Error in online command: {e}", exc_info=True)
@@ -2305,23 +2448,36 @@ def setup_commands(bot, db, scraper_getter):
                         f"✅ Refreshed player {player['player_id']}: username={profile_obj.username}, rank={profile_obj.faction_rank}, age_ic={profile_obj.age_ic}"
                     )
 
-            # Build profile embed
-            status_icon = "🟢" if player.get("is_online") else "⚪"
+            # 🔥 FIX: Check if player is CURRENTLY online from online_players table
+            def check_is_online():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cutoff = datetime.now() - timedelta(minutes=2)
+                    cursor.execute(
+                        "SELECT 1 FROM online_players WHERE player_id = ? AND detected_online_at > ?",
+                        (player['player_id'], cutoff)
+                    )
+                    return cursor.fetchone() is not None
+            
+            is_currently_online = await asyncio.to_thread(check_is_online)
+
+            # Build profile embed with ACCURATE online status
+            status_icon = "🟢" if is_currently_online else "🔴"
 
             embed = discord.Embed(
                 title=f"{status_icon} {player['username']}",
                 description=f"Player ID: `{player['player_id']}`",
                 color=discord.Color.green()
-                if player.get("is_online")
+                if is_currently_online
                 else discord.Color.greyple(),
                 timestamp=datetime.now(),
             )
 
-            # Status
+            # Status with accurate online check
             status_value = (
-                "Online now"
-                if player.get("is_online")
-                else f"Last seen: {format_last_seen(player.get('last_seen'))}"
+                "🟢 **Online now**"
+                if is_currently_online
+                else f"🔴 **Last seen:** {format_last_seen(player.get('last_seen'))}"
             )
             embed.add_field(name="Status", value=status_value, inline=True)
 
