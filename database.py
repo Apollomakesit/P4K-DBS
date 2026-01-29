@@ -361,40 +361,54 @@ class Database:
                     new_faction = profile.get("faction")
                     new_rank = profile.get("faction_rank")
 
-                    # 🔥 FIXED: Only track rank history for players WITH valid factions
-                    # Skip if faction is NULL or civilian values
-                    if (
-                        (old_faction != new_faction or old_rank != new_rank)
-                        and new_rank
-                        and new_faction
+                    # 🔥 FIXED: Track rank changes even when old_rank is NULL
+                    # This enables /promotions to detect first rank assignments
+                    if new_faction and new_faction not in (
+                        None,
+                        "",
+                        "Civil",
+                        "Fără",
+                        "None",
+                        "Fara",
+                        "-",
+                        "N/A",
                     ):
-                        # Check if faction is valid (not civilian/empty)
-                        if new_faction not in (
-                            None,
-                            "",
-                            "Civil",
-                            "Fără",
-                            "None",
-                            "-",
-                            "N/A",
-                        ):
-                            if old_rank:
+                        # Check if rank actually changed (including NULL -> rank)
+                        if new_rank and new_rank not in (None, "", "-", "N/A"):
+                            if old_rank != new_rank:
+                                # End previous rank if it exists
+                                if old_rank:
+                                    cursor.execute(
+                                        """
+                                        UPDATE rank_history
+                                        SET rank_lost = CURRENT_TIMESTAMP, is_current = FALSE
+                                        WHERE player_id = ? AND is_current = TRUE
+                                    """,
+                                        (profile["player_id"],),
+                                    )
+
+                                # Insert new rank in rank_history
                                 cursor.execute(
                                     """
-                                    UPDATE rank_history
-                                    SET rank_lost = CURRENT_TIMESTAMP, is_current = FALSE
-                                    WHERE player_id = ? AND is_current = TRUE
+                                    INSERT INTO rank_history (player_id, faction, rank_name, is_current)
+                                    VALUES (?, ?, ?, TRUE)
                                 """,
-                                    (profile["player_id"],),
+                                    (profile["player_id"], new_faction, new_rank),
                                 )
 
-                            cursor.execute(
-                                """
-                                INSERT INTO rank_history (player_id, faction, rank_name, is_current)
-                                VALUES (?, ?, ?, TRUE)
-                            """,
-                                (profile["player_id"], new_faction, new_rank),
-                            )
+                                # 🔥 ALSO track in profile_history for /promotions command
+                                cursor.execute(
+                                    """
+                                    INSERT INTO profile_history (player_id, field_name, old_value, new_value)
+                                    VALUES (?, 'faction_rank', ?, ?)
+                                """,
+                                    (profile["player_id"], old_rank or "None", new_rank),
+                                )
+
+                                username = profile.get("player_name") or profile.get("username", f"Player_{profile['player_id']}")
+                                logger.info(
+                                    f"✅ Promotion detected: {username} | {old_rank or 'None'} → {new_rank} in {new_faction}"
+                                )
 
                     # 🔥 UPDATED: Track other field changes (removed level, respect_points)
                     fields = ["faction", "job", "warnings"]
@@ -545,6 +559,8 @@ class Database:
         except Exception as e:
             logger.error(f"Error checking action existence: {e}")
             return False
+
+
 
     async def action_exists(self, timestamp: datetime, text: str) -> bool:
         """🔥 ASYNC: Check if action exists"""
