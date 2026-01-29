@@ -2910,6 +2910,326 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in action_stats command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
+    # ========================================================================
+    # 🆕 ADMIN HISTORY COMMAND - View warnings, bans, jails for a player
+    # ========================================================================
+
+    @bot.tree.command(
+        name="adminhistory",
+        description="🆕 View admin actions (warnings, bans, jails) for a player",
+    )
+    @app_commands.describe(
+        identifier="Player ID or name",
+        days="Days to look back (default: 90, max: 365)"
+    )
+    @app_commands.checks.cooldown(1, 10)
+    async def admin_history_command(
+        interaction: discord.Interaction, identifier: str, days: int = 90
+    ):
+        """View admin actions (warnings, bans, jails, mutes, etc.) for a player"""
+        await interaction.response.defer()
+
+        try:
+            if days < 1 or days > 365:
+                await interaction.followup.send("❌ Days must be between 1 and 365!")
+                return
+
+            # Resolve player info
+            scraper = await scraper_getter()
+            player = await resolve_player_info(db, scraper, identifier)
+
+            if not player:
+                await interaction.followup.send(
+                    f"🔍 **Not Found**\n\nNo player found with identifier: `{identifier}`"
+                )
+                return
+
+            player_id = str(player["player_id"])
+            player_name = player.get("username", f"Player_{player_id}")
+
+            # Query admin-related actions
+            admin_action_types = (
+                'warning_received', 'ban_received', 'admin_jail', 'admin_unjail',
+                'admin_unban', 'mute_received', 'faction_kicked', 'kill_character'
+            )
+
+            def _get_admin_actions():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cutoff = datetime.now() - timedelta(days=days)
+                    
+                    # Build placeholders for action types
+                    type_placeholders = ",".join("?" * len(admin_action_types))
+                    
+                    cursor.execute(f"""
+                        SELECT * FROM actions
+                        WHERE player_id = ?
+                        AND action_type IN ({type_placeholders})
+                        AND timestamp >= ?
+                        ORDER BY timestamp DESC
+                        LIMIT 50
+                    """, (player_id, *admin_action_types, cutoff))
+                    
+                    return [dict(row) for row in cursor.fetchall()]
+
+            admin_actions = await asyncio.to_thread(_get_admin_actions)
+
+            if not admin_actions:
+                embed = discord.Embed(
+                    title=f"✅ Clean Record - {player_name}",
+                    description=f"No admin actions found in the last {days} days!",
+                    color=discord.Color.green(),
+                    timestamp=datetime.now(),
+                )
+                embed.add_field(name="Player ID", value=player_id, inline=True)
+                await interaction.followup.send(embed=embed)
+                return
+
+            # Group by action type
+            grouped = defaultdict(list)
+            for action in admin_actions:
+                grouped[action["action_type"]].append(action)
+
+            embed = discord.Embed(
+                title=f"⚠️ Admin History - {player_name}",
+                description=f"**Player ID:** {player_id}\n**Period:** Last {days} days\n**Total:** {len(admin_actions)} admin action(s)",
+                color=discord.Color.orange(),
+                timestamp=datetime.now(),
+            )
+
+            # Action type emojis
+            type_emojis = {
+                "warning_received": "⚠️",
+                "ban_received": "🔨",
+                "admin_jail": "🔒",
+                "admin_unjail": "🔓",
+                "admin_unban": "✅",
+                "mute_received": "🔇",
+                "faction_kicked": "👢",
+                "kill_character": "💀",
+            }
+
+            # Add fields for each action type
+            for action_type, actions in grouped.items():
+                emoji = type_emojis.get(action_type, "📋")
+                type_label = action_type.replace("_", " ").title()
+                
+                # Build value showing recent actions of this type
+                lines = []
+                for action in actions[:5]:  # Show up to 5 per type
+                    timestamp = action.get("timestamp")
+                    if isinstance(timestamp, str):
+                        try:
+                            timestamp = datetime.fromisoformat(timestamp)
+                        except:
+                            timestamp = None
+                    
+                    time_str = timestamp.strftime("%Y-%m-%d") if timestamp else "?"
+                    admin = action.get("admin_name") or "Unknown Admin"
+                    reason = action.get("reason") or action.get("action_detail", "")[:50]
+                    
+                    lines.append(f"• `{time_str}` by {admin}")
+                    if reason:
+                        lines.append(f"  └ {reason[:40]}...")
+                
+                if len(actions) > 5:
+                    lines.append(f"  *...and {len(actions) - 5} more*")
+                
+                embed.add_field(
+                    name=f"{emoji} {type_label} ({len(actions)})",
+                    value="\n".join(lines) or "No details",
+                    inline=False,
+                )
+
+            embed.set_footer(text="Use /actions for full action history")
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in admin_history command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    # ========================================================================
+    # 🆕 LEGACY ACTIONS COMMAND - View/analyze legacy_multi_action entries
+    # ========================================================================
+
+    @bot.tree.command(
+        name="legacyactions",
+        description="🆕 View legacy multi-action entries that couldn't be parsed (Admin only)",
+    )
+    @app_commands.describe(
+        limit="Max entries to show (default: 20, max: 100)",
+        player_id="Filter by player ID (optional)"
+    )
+    @app_commands.checks.cooldown(1, 30)
+    async def legacy_actions_command(
+        interaction: discord.Interaction,
+        limit: int = 20,
+        player_id: Optional[str] = None
+    ):
+        """View legacy_multi_action entries - these are old concatenated actions"""
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ **Access Denied**\n\nThis command is restricted to bot administrators.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        try:
+            limit = max(1, min(limit, 100))
+            
+            def _get_legacy_actions():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    
+                    if player_id:
+                        cursor.execute("""
+                            SELECT id, player_id, raw_text, timestamp
+                            FROM actions 
+                            WHERE action_type = 'legacy_multi_action'
+                            AND player_id = ?
+                            ORDER BY timestamp DESC
+                            LIMIT ?
+                        """, (player_id, limit))
+                    else:
+                        cursor.execute("""
+                            SELECT id, player_id, raw_text, timestamp
+                            FROM actions 
+                            WHERE action_type = 'legacy_multi_action'
+                            ORDER BY timestamp DESC
+                            LIMIT ?
+                        """, (limit,))
+                    
+                    return [dict(row) for row in cursor.fetchall()]
+
+            def _get_total_count():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM actions WHERE action_type = 'legacy_multi_action'"
+                    )
+                    return cursor.fetchone()[0]
+
+            legacy_actions = await asyncio.to_thread(_get_legacy_actions)
+            total_count = await asyncio.to_thread(_get_total_count)
+
+            if not legacy_actions:
+                await interaction.followup.send(
+                    "✅ **No legacy actions found!**\n\nAll actions have been properly categorized."
+                )
+                return
+
+            embed = discord.Embed(
+                title="📜 Legacy Multi-Action Entries",
+                description=(
+                    f"**Total:** {total_count:,} legacy entries in database\n"
+                    f"**Showing:** {len(legacy_actions)}\n\n"
+                    "⚠️ These entries contain multiple actions concatenated together from the old scraper. "
+                    "They can't be cleanly separated but are preserved for reference."
+                ),
+                color=discord.Color.greyple(),
+                timestamp=datetime.now(),
+            )
+
+            # Show first few entries
+            for i, action in enumerate(legacy_actions[:10], 1):
+                raw_text = action.get("raw_text", "")[:150]
+                pid = action.get("player_id", "?")
+                
+                embed.add_field(
+                    name=f"#{i} - Player {pid}",
+                    value=f"```{raw_text}...```" if len(action.get("raw_text", "")) > 150 else f"```{raw_text}```",
+                    inline=False,
+                )
+
+            embed.set_footer(
+                text="💡 These entries are from the old scraper and cannot be automatically split. "
+                     "They're preserved for manual reference if needed."
+            )
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in legacy_actions command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    # ========================================================================
+    # 🆕 DELETE LEGACY COMMAND - Remove legacy_multi_action entries (Admin only)
+    # ========================================================================
+
+    @bot.tree.command(
+        name="deletelegacy",
+        description="🗑️ Delete legacy_multi_action entries from database (Admin only)",
+    )
+    @app_commands.describe(
+        confirm="Type 'DELETE' to confirm deletion"
+    )
+    @app_commands.checks.cooldown(1, 300)
+    async def delete_legacy_command(
+        interaction: discord.Interaction,
+        confirm: str = ""
+    ):
+        """Delete all legacy_multi_action entries - they're garbage data anyway"""
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ **Access Denied**\n\nThis command is restricted to bot administrators.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        try:
+            def _get_count():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM actions WHERE action_type = 'legacy_multi_action'"
+                    )
+                    return cursor.fetchone()[0]
+
+            count = await asyncio.to_thread(_get_count)
+
+            if count == 0:
+                await interaction.followup.send(
+                    "✅ **No legacy actions to delete!**\n\nDatabase is already clean."
+                )
+                return
+
+            if confirm != "DELETE":
+                await interaction.followup.send(
+                    f"⚠️ **Confirmation Required**\n\n"
+                    f"This will permanently delete **{count:,}** legacy_multi_action entries.\n\n"
+                    f"These entries are garbage data from the old scraper (multiple actions concatenated together) "
+                    f"and cannot be properly parsed.\n\n"
+                    f"To confirm, run:\n`/deletelegacy confirm:DELETE`"
+                )
+                return
+
+            # Actually delete
+            def _delete_legacy():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "DELETE FROM actions WHERE action_type = 'legacy_multi_action'"
+                    )
+                    deleted = cursor.rowcount
+                    conn.commit()
+                    return deleted
+
+            deleted = await asyncio.to_thread(_delete_legacy)
+
+            await interaction.followup.send(
+                f"✅ **Deleted {deleted:,} legacy_multi_action entries!**\n\n"
+                f"Database has been cleaned of garbage concatenated data."
+            )
+            logger.info(f"🗑️ Admin {interaction.user} deleted {deleted:,} legacy_multi_action entries")
+
+        except Exception as e:
+            logger.error(f"Error in delete_legacy command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
     logger.info(
         "✅ All slash commands registered successfully with auto-refresh for placeholder usernames"
     )
