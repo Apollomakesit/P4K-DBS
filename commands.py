@@ -2557,11 +2557,11 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in faction list command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
-    @bot.tree.command(name="promotions", description="Recent faction promotions")
+    @bot.tree.command(name="promotions", description="Recent faction promotions with pagination")
     @app_commands.describe(days="Days to look back (default: 7, max: 30)")
     @app_commands.checks.cooldown(1, 30)
     async def promotions_command(interaction: discord.Interaction, days: int = 7):
-        """Recent faction promotions"""
+        """Recent faction promotions with pagination"""
         await interaction.response.defer()
 
         try:
@@ -2577,31 +2577,17 @@ def setup_commands(bot, db, scraper_getter):
                 )
                 return
 
-            embed = discord.Embed(
-                title=f"📊 Recent Promotions",
-                description=f"Last {days} days • {len(promotions)} promotion(s)",
-                color=discord.Color.blue(),
-                timestamp=datetime.now(),
+            # Create pagination view
+            view = PromotionsPaginationView(
+                promotions=promotions,
+                author_id=interaction.user.id,
+                days=days,
             )
 
-            for promo in promotions[:15]:
-                player_name = promo.get("player_name", "Unknown")
-                old_rank = promo.get("old_rank", "None")
-                new_rank = promo.get("new_rank", "Unknown")
-                faction = promo.get("faction", "Unknown")
-                timestamp = promo.get("timestamp")
-
-                if isinstance(timestamp, str):
-                    timestamp = datetime.fromisoformat(timestamp)
-                time_str = timestamp.strftime("%Y-%m-%d") if timestamp else "Unknown"
-
-                value = f"{faction}\n{old_rank} → {new_rank}\n{time_str}"
-                embed.add_field(name=player_name, value=value, inline=True)
-
-            if len(promotions) > 15:
-                embed.set_footer(text=f"Showing 15 of {len(promotions)} promotions")
-
-            await interaction.followup.send(embed=embed)
+            # Send initial page with pagination buttons
+            embed = view.build_embed()
+            message = await interaction.followup.send(embed=embed, view=view)
+            view.message = message  # Store message reference for timeout handling
 
         except Exception as e:
             logger.error(f"Error in promotions command: {e}", exc_info=True)
@@ -2611,17 +2597,34 @@ def setup_commands(bot, db, scraper_getter):
     # BAN COMMANDS
     # ========================================================================
 
-    @bot.tree.command(name="bans", description="View banned players")
-    @app_commands.describe(show_expired="Include expired bans (default: false)")
+    @bot.tree.command(name="bans", description="View banned players with pagination")
+    @app_commands.describe(
+        show_expired="Include expired bans (default: false)",
+        refresh="Fetch fresh ban data from website (default: false)"
+    )
     @app_commands.checks.cooldown(1, 30)
     async def bans_command(
-        interaction: discord.Interaction, show_expired: Optional[bool] = False
+        interaction: discord.Interaction, 
+        show_expired: Optional[bool] = False,
+        refresh: Optional[bool] = False
     ):
-        """View banned players"""
+        """View banned players with pagination, played hours, and faction info"""
         await interaction.response.defer()
 
         try:
-            bans = await db.get_banned_players(show_expired)
+            # Optionally refresh ban data from website
+            if refresh:
+                await interaction.followup.send("🔄 Fetching fresh ban data from all pages...")
+                scraper = await scraper_getter()
+                fresh_bans = await scraper.get_banned_players_all_pages()
+                
+                # Save to database
+                for ban_data in fresh_bans:
+                    await db.save_banned_player(ban_data)
+                
+                logger.info(f"✅ Refreshed {len(fresh_bans)} bans from website")
+
+            bans = await db.get_banned_players_with_details(show_expired)
 
             if not bans:
                 await interaction.followup.send(
@@ -2629,31 +2632,17 @@ def setup_commands(bot, db, scraper_getter):
                 )
                 return
 
-            embed = discord.Embed(
-                title="🚫 Banned Players",
-                description=f"{len(bans)} ban(s)",
-                color=discord.Color.red(),
-                timestamp=datetime.now(),
+            # Create pagination view
+            view = BansPaginationView(
+                bans=bans,
+                author_id=interaction.user.id,
+                show_expired=show_expired,
             )
 
-            for ban in bans[:15]:
-                player_name = ban.get("player_name", "Unknown")
-                reason = ban.get("reason", "No reason")
-                admin = ban.get("admin", "Unknown")
-                duration = ban.get("duration", "Unknown")
-                is_active = ban.get("is_active", False)
-
-                status = "🔴 Active" if is_active else "⚪ Expired"
-                value = (
-                    f"{status}\nReason: {reason}\nAdmin: {admin}\nDuration: {duration}"
-                )
-
-                embed.add_field(name=player_name, value=value, inline=False)
-
-            if len(bans) > 15:
-                embed.set_footer(text=f"Showing 15 of {len(bans)} bans")
-
-            await interaction.followup.send(embed=embed)
+            # Send initial page with pagination buttons
+            embed = view.build_embed()
+            message = await interaction.followup.send(embed=embed, view=view)
+            view.message = message  # Store message reference for timeout handling
 
         except Exception as e:
             logger.error(f"Error in bans command: {e}", exc_info=True)
