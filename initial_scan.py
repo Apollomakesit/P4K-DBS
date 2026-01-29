@@ -88,14 +88,9 @@ class FastScanner:
                             "faction": profile.faction,
                             "faction_rank": profile.faction_rank,
                             "job": profile.job,
-                            "level": profile.level,
-                            "respect_points": profile.respect_points,
                             "warns": profile.warnings,
                             "played_hours": profile.played_hours,
                             "age_ic": profile.age_ic,
-                            "phone_number": profile.phone_number,
-                            "vehicles_count": profile.vehicles_count,
-                            "properties_count": profile.properties_count,
                         }
                         await self.db.save_player_profile(profile_dict)
                         async with self.stats_lock:
@@ -130,14 +125,9 @@ class FastScanner:
                                     "faction": profile.faction,
                                     "faction_rank": profile.faction_rank,
                                     "job": profile.job,
-                                    "level": profile.level,
-                                    "respect_points": profile.respect_points,
                                     "warns": profile.warnings,
                                     "played_hours": profile.played_hours,
                                     "age_ic": profile.age_ic,
-                                    "phone_number": profile.phone_number,
-                                    "vehicles_count": profile.vehicles_count,
-                                    "properties_count": profile.properties_count,
                                 }
                                 await self.db.save_player_profile(profile_dict)
                         async with self.stats_lock:
