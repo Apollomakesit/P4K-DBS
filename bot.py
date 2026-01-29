@@ -356,7 +356,7 @@ async def log_database_startup_info():
             return
 
         # Get stats
-        stats = await db.getdatabasestats()
+        stats = await db.get_database_stats()
         total_players = stats.get("total_players", 0)
         total_actions = stats.get("total_actions", 0)
         online_count = stats.get("online_count", 0)
