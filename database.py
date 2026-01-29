@@ -402,10 +402,16 @@ class Database:
                                     INSERT INTO profile_history (player_id, field_name, old_value, new_value)
                                     VALUES (?, 'faction_rank', ?, ?)
                                 """,
-                                    (profile["player_id"], old_rank or "None", new_rank),
+                                    (
+                                        profile["player_id"],
+                                        old_rank or "None",
+                                        new_rank,
+                                    ),
                                 )
 
-                                username = profile.get("player_name") or profile.get("username", f"Player_{profile['player_id']}")
+                                username = profile.get("player_name") or profile.get(
+                                    "username", f"Player_{profile['player_id']}"
+                                )
                                 logger.info(
                                     f"✅ Promotion detected: {username} | {old_rank or 'None'} → {new_rank} in {new_faction}"
                                 )
@@ -559,8 +565,6 @@ class Database:
         except Exception as e:
             logger.error(f"Error checking action existence: {e}")
             return False
-
-
 
     async def action_exists(self, timestamp: datetime, text: str) -> bool:
         """🔥 ASYNC: Check if action exists"""
