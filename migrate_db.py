@@ -11,22 +11,34 @@ from datetime import datetime
 
 # GitHub raw file URL for your backup
 GITHUB_BACKUP_URL = "https://github.com/Apollomakesit/P4K-DBS/raw/main/backup.db.gz"
-TEMP_BACKUP_GZ = '/tmp/backup.db.gz'
-TEMP_BACKUP_DB = '/tmp/backup_extracted.db'
+TEMP_BACKUP_GZ = '/data/temp_backup_download.db.gz'      # Changed from /tmp
+TEMP_BACKUP_DB = '/data/temp_backup_extracted.db'        # Changed from /tmp
 CURRENT_DB = '/data/pro4kings.db'
 
 def download_backup():
     """Download backup from GitHub"""
     print("\n📥 Downloading backup from GitHub...")
     print(f"   URL: {GITHUB_BACKUP_URL}")
+    print(f"   Saving to: {TEMP_BACKUP_GZ}")
     
     try:
+        # Ensure /data directory exists and is writable
+        if not os.path.exists('/data'):
+            os.makedirs('/data')
+        
         urllib.request.urlretrieve(GITHUB_BACKUP_URL, TEMP_BACKUP_GZ)
+        
+        if not os.path.exists(TEMP_BACKUP_GZ):
+            print(f"❌ File was not created at {TEMP_BACKUP_GZ}")
+            return False
+        
         size_mb = os.path.getsize(TEMP_BACKUP_GZ) / (1024 * 1024)
         print(f"✅ Downloaded {size_mb:.2f} MB")
         return True
     except Exception as e:
         print(f"❌ Download failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def extract_backup():
@@ -34,20 +46,33 @@ def extract_backup():
     print("\n📦 Extracting backup.db.gz...")
     
     try:
+        if not os.path.exists(TEMP_BACKUP_GZ):
+            print(f"❌ Compressed file not found: {TEMP_BACKUP_GZ}")
+            return False
+        
         with gzip.open(TEMP_BACKUP_GZ, 'rb') as f_in:
             with open(TEMP_BACKUP_DB, 'wb') as f_out:
                 shutil.copyfileobj(f_in, f_out)
+        
+        if not os.path.exists(TEMP_BACKUP_DB):
+            print(f"❌ Extracted file was not created: {TEMP_BACKUP_DB}")
+            return False
         
         size_mb = os.path.getsize(TEMP_BACKUP_DB) / (1024 * 1024)
         print(f"✅ Extracted {size_mb:.2f} MB")
         return True
     except Exception as e:
         print(f"❌ Extraction failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def check_schema(db_path):
     """Check database schema"""
     try:
+        if not os.path.exists(db_path):
+            return None, f"File not found: {db_path}"
+        
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
@@ -84,12 +109,23 @@ def migrate():
     print("🔄 DATABASE MIGRATION - GITHUB BACKUP")
     print("=" * 80)
     
+    # Check if current database exists
+    if not os.path.exists(CURRENT_DB):
+        print(f"❌ Current database not found: {CURRENT_DB}")
+        return False
+    
     # Step 1: Download backup from GitHub
     if not download_backup():
         return False
     
     # Step 2: Extract backup
     if not extract_backup():
+        print("\n🧹 Cleaning up downloaded file...")
+        try:
+            if os.path.exists(TEMP_BACKUP_GZ):
+                os.remove(TEMP_BACKUP_GZ)
+        except:
+            pass
         return False
     
     # Step 3: Check schemas
@@ -102,7 +138,8 @@ def migrate():
         print("⚠️ GitHub backup doesn't have OLD schema - migration may not be needed!")
         if old_schema == "NEW":
             print("   This backup already uses the NEW schema.")
-            return False
+        cleanup_temp_files()
+        return False
     
     current_schema, current_info = check_schema(CURRENT_DB)
     print(f"   Current database: {current_info}")
@@ -110,6 +147,7 @@ def migrate():
     if current_schema != "NEW":
         print("❌ Current database doesn't have NEW schema!")
         print("   This script expects your current database to use the NEW schema.")
+        cleanup_temp_files()
         return False
     
     # Step 4: Create safety backup
@@ -122,7 +160,7 @@ def migrate():
     print(f"✅ Safety backup: {safety_backup} ({backup_size:.2f} MB)")
     
     print(f"\n💡 If migration fails, restore with:")
-    print(f"   mv {safety_backup} {CURRENT_DB}")
+    print(f"   cp {safety_backup} {CURRENT_DB}")
     
     # Step 5: Connect to databases
     print("\n🔄 Starting migration...")
@@ -229,13 +267,7 @@ def migrate():
     conn_new.close()
     
     # Step 10: Cleanup temp files
-    print("\n🧹 Cleaning up temporary files...")
-    try:
-        os.remove(TEMP_BACKUP_GZ)
-        os.remove(TEMP_BACKUP_DB)
-        print("✅ Temporary files removed")
-    except:
-        pass
+    cleanup_temp_files()
     
     # Step 11: Results
     print("\n" + "=" * 80)
@@ -265,6 +297,22 @@ def migrate():
     
     return True
 
+def cleanup_temp_files():
+    """Remove temporary files"""
+    print("\n🧹 Cleaning up temporary files...")
+    removed = 0
+    for temp_file in [TEMP_BACKUP_GZ, TEMP_BACKUP_DB]:
+        try:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+                print(f"   ✓ Removed {os.path.basename(temp_file)}")
+                removed += 1
+        except Exception as e:
+            print(f"   ⚠️ Could not remove {os.path.basename(temp_file)}: {e}")
+    
+    if removed > 0:
+        print(f"✅ Cleaned up {removed} temporary file(s)")
+
 if __name__ == "__main__":
     try:
         print("\n⚠️  This will download backup from GitHub and migrate your database!")
@@ -282,9 +330,11 @@ if __name__ == "__main__":
         
     except KeyboardInterrupt:
         print("\n\n⚠️ Migration interrupted by user")
+        cleanup_temp_files()
         exit(1)
     except Exception as e:
         print(f"\n❌ FATAL ERROR: {e}")
         import traceback
         traceback.print_exc()
+        cleanup_temp_files()
         exit(1)
