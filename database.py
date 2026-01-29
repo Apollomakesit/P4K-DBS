@@ -544,12 +544,14 @@ class Database:
         """ASYNC: Save action to database"""
         await asyncio.to_thread(self._save_action_sync, action)
 
-    def _action_exists_sync(self, timestamp: Optional[datetime], text: Optional[str]) -> bool:
+    def _action_exists_sync(
+        self, timestamp: Optional[datetime], text: Optional[str]
+    ) -> bool:
         """SYNC: Check if action exists - improved duplicate detection with 2-second window"""
         # If timestamp or text is None, can't check for duplicates
         if timestamp is None or text is None:
             return False
-        
+
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -570,7 +572,9 @@ class Database:
             logger.error(f"Error checking action existence: {e}")
             return False
 
-    async def action_exists(self, timestamp: Optional[datetime], text: Optional[str]) -> bool:
+    async def action_exists(
+        self, timestamp: Optional[datetime], text: Optional[str]
+    ) -> bool:
         """🔥 ASYNC: Check if action exists"""
         return await asyncio.to_thread(self._action_exists_sync, timestamp, text)
 
@@ -1392,7 +1396,9 @@ class Database:
                                     row.get("job") or None,
                                     int(row.get("warnings") or row.get("warns") or 0),
                                     float(row.get("played_hours") or 0),
-                                    int(row.get("age_ic") or 0) if row.get("age_ic") else None,
+                                    int(row.get("age_ic") or 0)
+                                    if row.get("age_ic")
+                                    else None,
                                 ),
                             )
                             count += 1
@@ -1414,7 +1420,9 @@ class Database:
 
     async def auto_import_csv_if_needed(self, csv_paths: list = None) -> bool:
         """Auto-import CSV if database is empty (consolidates import_on_startup.py)"""
-        import_flag = "/data/.csv_imported" if os.path.exists("/data") else ".csv_imported"
+        import_flag = (
+            "/data/.csv_imported" if os.path.exists("/data") else ".csv_imported"
+        )
 
         # Check if already imported
         if os.path.exists(import_flag):
@@ -1426,7 +1434,9 @@ class Database:
         total_players = stats.get("total_players", 0)
 
         if total_players >= 1000:
-            logger.info(f"📊 Database has {total_players:,} players - skipping CSV import")
+            logger.info(
+                f"📊 Database has {total_players:,} players - skipping CSV import"
+            )
             with open(import_flag, "w") as f:
                 f.write(f"Import skipped - already has {total_players} players\n")
             return False
