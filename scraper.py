@@ -828,6 +828,136 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
+        # 🔥 ID-ONLY PATTERN D: Money withdrawal - "Jucatorul (ID) a retras suma de X$ (taxa Y$)"
+        withdraw_idonly = re.search(
+            r"Jucatorul\s+\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\$\s*\(taxa\s+([\d.,]+)\$\)",
+            text, re.IGNORECASE
+        )
+        if withdraw_idonly:
+            return PlayerAction(
+                player_id=withdraw_idonly.group(1),
+                player_name=None,
+                action_type="money_withdraw",
+                action_detail=f"Retras {withdraw_idonly.group(2)}$ (taxa {withdraw_idonly.group(3)}$)",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # ============================================================================
+        # EMAIL/SPECIAL NAME PATTERNS: Handle "Jucatorulname@email.com(ID)" format
+        # ============================================================================
+        
+        # 🔥 EMAIL PATTERN A: Chest actions - "Jucatorulname@email(ID) a pus/retras..."
+        chest_email = re.search(
+            r"Jucatorul([^\s(]+)\((\d+)\)\s+a\s+(pus\s+in|retras\s+din)\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if chest_email:
+            action_type = "chest_deposit" if "pus" in chest_email.group(3) else "chest_withdraw"
+            action_verb = "Pus in" if "pus" in chest_email.group(3) else "Retras din"
+            return PlayerAction(
+                player_id=chest_email.group(2),
+                player_name=chest_email.group(1).strip(),
+                action_type=action_type,
+                action_detail=f"{action_verb} chest({chest_email.group(4)}): {chest_email.group(5)}x {chest_email.group(6).strip()}",
+                item_name=chest_email.group(6).strip().rstrip("."),
+                item_quantity=int(chest_email.group(5)),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 EMAIL PATTERN B: Item given - "Jucatorulname@email(ID) ia dat lui..."
+        gave_email = re.search(
+            r"Jucatorul([^\s(]+)\((\d+)\)\s+i?a\s+dat\s+lui\s+(.+?)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if gave_email:
+            return PlayerAction(
+                player_id=gave_email.group(2),
+                player_name=gave_email.group(1).strip(),
+                action_type="item_given",
+                action_detail=f"Dat lui {gave_email.group(3).strip()}: {gave_email.group(5)}x {gave_email.group(6).strip()}",
+                item_name=gave_email.group(6).strip().rstrip("."),
+                item_quantity=int(gave_email.group(5)),
+                target_player_id=gave_email.group(4),
+                target_player_name=gave_email.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 EMAIL PATTERN C: Item sold - "Jucatorul [ID]name@email a vandut xN Item pentru suma de $X"
+        item_sold_email = re.search(
+            r"Jucatorul\s+\[(\d+)\]([^\s]+)\s*a\s+vandut\s+x?(\d+)\s+(.+?)\s+pentru\s+suma\s+de\s+\$?([\d.,]+)",
+            text, re.IGNORECASE
+        )
+        if item_sold_email:
+            return PlayerAction(
+                player_id=item_sold_email.group(1),
+                player_name=item_sold_email.group(2).strip(),
+                action_type="item_sold",
+                action_detail=f"Vândut {item_sold_email.group(3)}x {item_sold_email.group(4).strip()} pentru {item_sold_email.group(5)}$",
+                item_name=item_sold_email.group(4).strip(),
+                item_quantity=int(item_sold_email.group(3)),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # ============================================================================
+        # ADMIN ACTION PATTERNS
+        # ============================================================================
+        
+        # 🔥 ADMIN PATTERN A: Kill Character - "Administratorul Name(ID) ia dat KILL CHARACTER jucatorului Name(ID)"
+        kill_char_match = re.search(
+            r"Administratorul\s+(.+?)\((\d+)\)\s+i?a\s+dat\s+KILL\s+CHARACTER\s+jucatorului\s+(.+?)\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if kill_char_match:
+            return PlayerAction(
+                player_id=kill_char_match.group(4),  # Target player
+                player_name=kill_char_match.group(3).strip(),
+                action_type="kill_character",
+                action_detail=f"Kill Character de la {kill_char_match.group(1).strip()}",
+                admin_id=kill_char_match.group(2),
+                admin_name=kill_char_match.group(1).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 ADMIN PATTERN B: Deban - "a fost debanat de catre administratorul Name(ID)"
+        deban_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+fost\s+debanat\s+de\s+catre\s+administratorul\s+(.+?)\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if deban_match:
+            return PlayerAction(
+                player_id=deban_match.group(2),
+                player_name=deban_match.group(1).strip(),
+                action_type="admin_unban",
+                action_detail=f"Debanat de {deban_match.group(3).strip()}",
+                admin_id=deban_match.group(4),
+                admin_name=deban_match.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 ADMIN PATTERN C: Ban alt format - handles "(de)" in duration like "30 (de) zi(le)"
+        ban_alt_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+fost\s+banat\s+de\s+catre\s+admin(?:ul)?\s+(.+?)\((\d+)\)\s*,\s*durata\s+(.+?)\s*,\s*motiv\s+['\"]?(.+?)['\"]?(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if ban_alt_match:
+            return PlayerAction(
+                player_id=ban_alt_match.group(2),
+                player_name=ban_alt_match.group(1).strip(),
+                action_type="ban_received",
+                action_detail=f"Ban de la {ban_alt_match.group(3).strip()}: {ban_alt_match.group(6).strip()} ({ban_alt_match.group(5)})",
+                admin_id=ban_alt_match.group(4),
+                admin_name=ban_alt_match.group(3).strip(),
+                reason=ban_alt_match.group(6).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
         # ============================================================================
         # REGULAR PATTERNS: "Jucatorul Name(ID)" format
         # ============================================================================
