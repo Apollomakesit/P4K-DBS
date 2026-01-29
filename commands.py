@@ -3052,22 +3052,34 @@ def setup_commands(bot, db, scraper_getter):
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
     # ========================================================================
-    # 🆕 ADMIN HISTORY COMMAND - View warnings, bans, jails for a player
+    # 🆕 ADMIN HISTORY COMMAND - View ALL admin actions with pagination
     # ========================================================================
 
     @bot.tree.command(
         name="adminhistory",
-        description="🆕 View admin actions (warnings, bans, jails) for a player",
+        description="🆕 View all admin actions (warnings, bans, jails) with pagination",
     )
     @app_commands.describe(
-        identifier="Player ID or name",
-        days="Days to look back (default: 90, max: 365)"
+        days="Days to look back (default: 30, max: 365)",
+        action_type="Filter by action type (optional)"
     )
+    @app_commands.choices(action_type=[
+        app_commands.Choice(name="⚠️ Warnings", value="warning_received"),
+        app_commands.Choice(name="🔨 Bans", value="ban_received"),
+        app_commands.Choice(name="🔒 Admin Jail", value="admin_jail"),
+        app_commands.Choice(name="🔓 Admin Unjail", value="admin_unjail"),
+        app_commands.Choice(name="✅ Unbans", value="admin_unban"),
+        app_commands.Choice(name="🔇 Mutes", value="mute_received"),
+        app_commands.Choice(name="👢 Faction Kicks", value="faction_kicked"),
+        app_commands.Choice(name="💀 Kill Character", value="kill_character"),
+    ])
     @app_commands.checks.cooldown(1, 10)
     async def admin_history_command(
-        interaction: discord.Interaction, identifier: str, days: int = 90
+        interaction: discord.Interaction, 
+        days: int = 30,
+        action_type: Optional[str] = None
     ):
-        """View admin actions (warnings, bans, jails, mutes, etc.) for a player"""
+        """View all admin actions (warnings, bans, jails, mutes, etc.) across ALL players"""
         await interaction.response.defer()
 
         try:
@@ -3075,115 +3087,60 @@ def setup_commands(bot, db, scraper_getter):
                 await interaction.followup.send("❌ Days must be between 1 and 365!")
                 return
 
-            # Resolve player info
-            scraper = await scraper_getter()
-            player = await resolve_player_info(db, scraper, identifier)
-
-            if not player:
-                await interaction.followup.send(
-                    f"🔍 **Not Found**\n\nNo player found with identifier: `{identifier}`"
-                )
-                return
-
-            player_id = str(player["player_id"])
-            player_name = player.get("username", f"Player_{player_id}")
-
-            # Query admin-related actions
+            # All admin action types
             admin_action_types = (
                 'warning_received', 'ban_received', 'admin_jail', 'admin_unjail',
                 'admin_unban', 'mute_received', 'faction_kicked', 'kill_character'
             )
 
-            def _get_admin_actions():
+            def _get_all_admin_actions():
                 with db.get_connection() as conn:
                     cursor = conn.cursor()
                     cutoff = datetime.now() - timedelta(days=days)
                     
-                    # Build placeholders for action types
-                    type_placeholders = ",".join("?" * len(admin_action_types))
-                    
-                    cursor.execute(f"""
-                        SELECT * FROM actions
-                        WHERE player_id = ?
-                        AND action_type IN ({type_placeholders})
-                        AND timestamp >= ?
-                        ORDER BY timestamp DESC
-                        LIMIT 50
-                    """, (player_id, *admin_action_types, cutoff))
+                    if action_type:
+                        # Filter by specific action type
+                        cursor.execute("""
+                            SELECT * FROM actions
+                            WHERE action_type = ?
+                            AND timestamp >= ?
+                            ORDER BY timestamp DESC
+                            LIMIT 500
+                        """, (action_type, cutoff))
+                    else:
+                        # All admin action types
+                        type_placeholders = ",".join("?" * len(admin_action_types))
+                        cursor.execute(f"""
+                            SELECT * FROM actions
+                            WHERE action_type IN ({type_placeholders})
+                            AND timestamp >= ?
+                            ORDER BY timestamp DESC
+                            LIMIT 500
+                        """, (*admin_action_types, cutoff))
                     
                     return [dict(row) for row in cursor.fetchall()]
 
-            admin_actions = await asyncio.to_thread(_get_admin_actions)
+            admin_actions = await asyncio.to_thread(_get_all_admin_actions)
 
             if not admin_actions:
-                embed = discord.Embed(
-                    title=f"✅ Clean Record - {player_name}",
-                    description=f"No admin actions found in the last {days} days!",
-                    color=discord.Color.green(),
-                    timestamp=datetime.now(),
+                filter_text = f" of type '{action_type.replace('_', ' ')}'" if action_type else ""
+                await interaction.followup.send(
+                    f"✅ **No admin actions found{filter_text} in the last {days} days!**"
                 )
-                embed.add_field(name="Player ID", value=player_id, inline=True)
-                await interaction.followup.send(embed=embed)
                 return
 
-            # Group by action type
-            grouped = defaultdict(list)
-            for action in admin_actions:
-                grouped[action["action_type"]].append(action)
-
-            embed = discord.Embed(
-                title=f"⚠️ Admin History - {player_name}",
-                description=f"**Player ID:** {player_id}\n**Period:** Last {days} days\n**Total:** {len(admin_actions)} admin action(s)",
-                color=discord.Color.orange(),
-                timestamp=datetime.now(),
+            # Create pagination view
+            view = AdminHistoryPaginationView(
+                actions=admin_actions,
+                author_id=interaction.user.id,
+                days=days,
+                action_type_filter=action_type,
             )
 
-            # Action type emojis
-            type_emojis = {
-                "warning_received": "⚠️",
-                "ban_received": "🔨",
-                "admin_jail": "🔒",
-                "admin_unjail": "🔓",
-                "admin_unban": "✅",
-                "mute_received": "🔇",
-                "faction_kicked": "👢",
-                "kill_character": "💀",
-            }
-
-            # Add fields for each action type
-            for action_type, actions in grouped.items():
-                emoji = type_emojis.get(action_type, "📋")
-                type_label = action_type.replace("_", " ").title()
-                
-                # Build value showing recent actions of this type
-                lines = []
-                for action in actions[:5]:  # Show up to 5 per type
-                    timestamp = action.get("timestamp")
-                    if isinstance(timestamp, str):
-                        try:
-                            timestamp = datetime.fromisoformat(timestamp)
-                        except:
-                            timestamp = None
-                    
-                    time_str = timestamp.strftime("%Y-%m-%d") if timestamp else "?"
-                    admin = action.get("admin_name") or "Unknown Admin"
-                    reason = action.get("reason") or action.get("action_detail", "")[:50]
-                    
-                    lines.append(f"• `{time_str}` by {admin}")
-                    if reason:
-                        lines.append(f"  └ {reason[:40]}...")
-                
-                if len(actions) > 5:
-                    lines.append(f"  *...and {len(actions) - 5} more*")
-                
-                embed.add_field(
-                    name=f"{emoji} {type_label} ({len(actions)})",
-                    value="\n".join(lines) or "No details",
-                    inline=False,
-                )
-
-            embed.set_footer(text="Use /actions for full action history")
-            await interaction.followup.send(embed=embed)
+            # Send initial page with pagination buttons
+            embed = view.build_embed()
+            message = await interaction.followup.send(embed=embed, view=view)
+            view.message = message
 
         except Exception as e:
             logger.error(f"Error in admin_history command: {e}", exc_info=True)
