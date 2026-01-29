@@ -1,5 +1,4 @@
-# HTTP Client with Brotli
-httpx[brotli]>=0.27.0
+# HTTP Client
 aiohttp==3.13.3
 
 # Discord Bot
