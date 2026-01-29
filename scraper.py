@@ -1081,10 +1081,10 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 16: Bank heist delivery - "a livrat bani de la banca(...) jefuita si a primit..."
-        # Handles names with spaces and special chars, and "bani murdari si 1x Moneda sindicat" suffix
+        # 🔥 PATTERN 16: Bank heist delivery - "a livrat bani de la banca(Bank (Location)) jefuita si a primit..."
+        # Bank names have nested parentheses like "Fleeca Bank (Alta)" so we match up to "))"
         heist_match = re.search(
-            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\(([^)]+)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)",
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\((.+?)\)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)",
             text, re.IGNORECASE
         )
         if heist_match:
@@ -1092,7 +1092,7 @@ class Pro4KingsScraper:
                 player_id=heist_match.group(2),
                 player_name=heist_match.group(1).strip(),
                 action_type="bank_heist_delivery",
-                action_detail=f"Livrat bani de la {heist_match.group(3)}: {heist_match.group(4)}$",
+                action_detail=f"Livrat bani de la {heist_match.group(3)}): {heist_match.group(4)}$",
                 timestamp=timestamp,
                 raw_text=text,
             )
@@ -1379,7 +1379,27 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 32: Non-Jucatorul actions with player IDs (like contracts without "Jucatorul" prefix)
+        # 🔥 PATTERN 32: Money transfer without "Jucatorul" prefix - "Name (ID) ia transferat suma de X (de) $ lui Name (ID) [IN MANA]"
+        # Example: "Finn (97424) ia transferat suma de 8.000.000 (de) $ lui (136629) [IN MANA]"
+        transfer_no_prefix_match = re.search(
+            r"^([^(]+)\s*\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s+(?:([^(]*)\s*)?\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if transfer_no_prefix_match:
+            target_name = transfer_no_prefix_match.group(4)
+            target_name = target_name.strip() if target_name else None
+            return PlayerAction(
+                player_id=transfer_no_prefix_match.group(2),
+                player_name=transfer_no_prefix_match.group(1).strip(),
+                action_type="money_transfer",
+                action_detail=f"Transferat {transfer_no_prefix_match.group(3)}$ lui {target_name or 'ID:' + transfer_no_prefix_match.group(5)}",
+                target_player_id=transfer_no_prefix_match.group(5),
+                target_player_name=target_name,
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 33: Non-Jucatorul actions with player IDs (like contracts without "Jucatorul" prefix)
         if re.search(r"\(\d+\)", text):
             id_match = re.search(r"([^(]+)\((\d+)\)", text)
             if id_match:
@@ -1392,7 +1412,7 @@ class Pro4KingsScraper:
                     raw_text=text,
                 )
         
-        # 🔥 PATTERN 33: CATCH-ALL - Save ANY action text even if no patterns match
+        # 🔥 PATTERN 34: CATCH-ALL - Save ANY action text even if no patterns match
         if len(text) >= 10:
             logger.debug(f"⚠️ Unrecognized action pattern saved as 'unknown': {text[:80]}...")
             return PlayerAction(
