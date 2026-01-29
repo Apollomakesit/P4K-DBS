@@ -776,6 +776,230 @@ class AdminHistoryPaginationView(discord.ui.View):
             pass
 
 
+class PromotionsPaginationView(discord.ui.View):
+    """🆕 Pagination view for faction promotions"""
+
+    def __init__(
+        self,
+        promotions: List[dict],
+        author_id: int,
+        days: int,
+        items_per_page: int = 10,
+    ):
+        super().__init__(timeout=180)
+        self.promotions = promotions
+        self.author_id = author_id
+        self.days = days
+        self.items_per_page = items_per_page
+        self.current_page = 0
+        self.total_pages = (
+            (len(self.promotions) + items_per_page - 1) // items_per_page
+            if self.promotions
+            else 1
+        )
+        self.message: Optional[discord.Message] = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        """Update button enabled/disabled states based on current page"""
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page >= self.total_pages - 1
+
+    def build_embed(self) -> discord.Embed:
+        """Build embed for current page"""
+        start_idx = self.current_page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, len(self.promotions))
+        page_promotions = self.promotions[start_idx:end_idx]
+
+        embed = discord.Embed(
+            title="📊 Recent Promotions",
+            description=f"**Total:** {len(self.promotions)} promotion(s) in last {self.days} days",
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+
+        for promo in page_promotions:
+            player_name = promo.get("player_name", "Unknown")
+            player_id = promo.get("player_id", "?")
+            old_rank = promo.get("old_rank", "None")
+            new_rank = promo.get("new_rank", "Unknown")
+            faction = promo.get("faction", "Unknown")
+            timestamp = promo.get("timestamp")
+
+            if isinstance(timestamp, str):
+                try:
+                    timestamp = datetime.fromisoformat(timestamp)
+                except:
+                    timestamp = None
+            time_str = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else "Unknown"
+
+            embed.add_field(
+                name=f"⬆️ {player_name} ({player_id})",
+                value=(
+                    f"**Faction:** {faction}\n"
+                    f"**Rank:** {old_rank} → **{new_rank}**\n"
+                    f"**Date:** {time_str}"
+                ),
+                inline=False,
+            )
+
+        embed.set_footer(
+            text=f"Page {self.current_page + 1}/{self.total_pages} • Use buttons to navigate"
+        )
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the person who ran this command can use these buttons!",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.primary)
+    async def previous_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.primary)
+    async def next_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        self.current_page = min(self.total_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
+class BansPaginationView(discord.ui.View):
+    """🆕 Pagination view for banned players with played hours and faction"""
+
+    def __init__(
+        self,
+        bans: List[dict],
+        author_id: int,
+        show_expired: bool = False,
+        items_per_page: int = 10,
+    ):
+        super().__init__(timeout=180)
+        self.bans = bans
+        self.author_id = author_id
+        self.show_expired = show_expired
+        self.items_per_page = items_per_page
+        self.current_page = 0
+        self.total_pages = (
+            (len(self.bans) + items_per_page - 1) // items_per_page
+            if self.bans
+            else 1
+        )
+        self.message: Optional[discord.Message] = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page >= self.total_pages - 1
+
+    def build_embed(self) -> discord.Embed:
+        start_idx = self.current_page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, len(self.bans))
+        page_bans = self.bans[start_idx:end_idx]
+
+        active_count = sum(1 for b in self.bans if b.get("is_active", True))
+        
+        embed = discord.Embed(
+            title="🚫 Banned Players",
+            description=f"**Total:** {len(self.bans)} ban(s) • **Active:** {active_count}",
+            color=discord.Color.red(),
+            timestamp=datetime.now(),
+        )
+
+        for ban in page_bans:
+            player_name = ban.get("player_name", "Unknown")
+            player_id = ban.get("player_id", "?")
+            reason = ban.get("reason", "No reason")
+            admin = ban.get("admin", "Unknown")
+            duration = ban.get("duration", "Unknown")
+            is_active = ban.get("is_active", True)
+            played_hours = ban.get("played_hours", 0)
+            faction = ban.get("faction") or "No faction"
+            ban_date = ban.get("ban_date", "?")
+
+            # Truncate long reasons
+            if reason and len(reason) > 60:
+                reason = reason[:57] + "..."
+
+            status = "🔴 Active" if is_active else "⚪ Expired"
+            hours_str = f"{played_hours:.1f}h" if played_hours else "N/A"
+            
+            embed.add_field(
+                name=f"{status} {player_name} ({player_id})",
+                value=(
+                    f"**Reason:** {reason}\n"
+                    f"**Admin:** {admin} • **Duration:** {duration}\n"
+                    f"**Ore jucate:** {hours_str} • **Facțiune:** {faction}\n"
+                    f"**Ban date:** {ban_date}"
+                ),
+                inline=False,
+            )
+
+        embed.set_footer(
+            text=f"Page {self.current_page + 1}/{self.total_pages} • Use buttons to navigate"
+        )
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the person who ran this command can use these buttons!",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.primary)
+    async def previous_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.primary)
+    async def next_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        self.current_page = min(self.total_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
 # Helper Functions
 def format_time_duration(seconds: float) -> str:
     """Format seconds into human-readable time"""
