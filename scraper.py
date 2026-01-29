@@ -1045,7 +1045,58 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 14: Any "Jucatorul" action not matched above - mark as "other" but still extract player info
+        # 🔥 PATTERN 14: Mute received - "a primit mute de la administratorul..."
+        mute_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+mute\s+de\s+la\s+administratorul\s+([^(]+)\((\d+)\)\s*,\s*motiv\s+(.+?)(?:,\s*timp|$)",
+            text, re.IGNORECASE
+        )
+        if mute_match:
+            return PlayerAction(
+                player_id=mute_match.group(2),
+                player_name=mute_match.group(1).strip(),
+                action_type="mute_received",
+                action_detail=f"Mute de la {mute_match.group(3).strip()}: {mute_match.group(5).strip()}",
+                admin_id=mute_match.group(4),
+                admin_name=mute_match.group(3).strip(),
+                reason=mute_match.group(5).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 15: Ban received - "a fost banat de catre adminul..."
+        ban_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+fost\s+banat\s+de\s+catre\s+admin(?:ul)?\s+([^(]+)\((\d+)\)\s*,\s*durata\s+(.+?)\s*,\s*motiv\s+['\"]?(.+?)['\"]?(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if ban_match:
+            return PlayerAction(
+                player_id=ban_match.group(2),
+                player_name=ban_match.group(1).strip(),
+                action_type="ban_received",
+                action_detail=f"Ban de la {ban_match.group(3).strip()}: {ban_match.group(6).strip()} ({ban_match.group(5)})",
+                admin_id=ban_match.group(4),
+                admin_name=ban_match.group(3).strip(),
+                reason=ban_match.group(6).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 16: Bank heist delivery - "a livrat bani de la banca(...) jefuita si a primit..."
+        heist_match = re.search(
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\(([^)]+)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)",
+            text, re.IGNORECASE
+        )
+        if heist_match:
+            return PlayerAction(
+                player_id=heist_match.group(2),
+                player_name=heist_match.group(1).strip(),
+                action_type="bank_heist_delivery",
+                action_detail=f"Livrat bani de la {heist_match.group(3)}: {heist_match.group(4)}$",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 17: Any "Jucatorul" action not matched above - mark as "other" but still extract player info
         generic_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
