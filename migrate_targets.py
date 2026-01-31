@@ -223,6 +223,7 @@ def migrate_targets(dry_run: bool = False, batch_size: int = 1000, limit: int = 
         'contract', 'vehicle_contract', 'trade',
         'warning_received', 'ban_received', 'admin_jail', 'admin_unjail',
         'mute_received', 'gambling_win', 'license_plate_sale',
+        'faction_kicked', 'kill_character',
         'unknown', 'other'
     ]
     
