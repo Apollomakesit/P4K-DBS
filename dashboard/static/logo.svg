@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs>
+    <linearGradient id="crown-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFD700;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FFA500;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="bg-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366f1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="48" fill="url(#bg-gradient)" stroke="#fff" stroke-width="2"/>
+  
+  <!-- Crown icon -->
+  <path d="M25 65 L30 40 L40 50 L50 35 L60 50 L70 40 L75 65 Z" 
+        fill="url(#crown-gradient)" 
+        stroke="#fff" 
+        stroke-width="2"
+        stroke-linejoin="round"/>
+  
+  <!-- Crown jewels -->
+  <circle cx="30" cy="40" r="3" fill="#fff"/>
+  <circle cx="50" cy="35" r="4" fill="#fff"/>
+  <circle cx="70" cy="40" r="3" fill="#fff"/>
+  
+  <!-- P4K text -->
+  <text x="50" y="82" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="14" font-weight="bold" fill="#fff">P4K</text>
+</svg>

@@ -21,8 +21,13 @@ CORS(app)
 @app.context_processor
 def inject_branding():
     """Inject branding variables into templates."""
+    # Check for custom logo URL from env, otherwise use local static file
+    logo_url = os.getenv("DASHBOARD_LOGO_URL", "")
+    if not logo_url:
+        # Use local SVG logo
+        logo_url = "/static/logo.svg"
     return {
-        "logo_url": os.getenv("DASHBOARD_LOGO_URL", "/static/logo.png")
+        "logo_url": logo_url
     }
 
 @app.after_request
@@ -145,6 +150,30 @@ def sessions_page():
 def faction_actions_page():
     return render_template('faction_actions.html')
 
+@app.route('/online-24h')
+def online_24h_page():
+    return render_template('online_24h.html')
+
+@app.route('/unknown-actions')
+def unknown_actions_page():
+    return render_template('unknown_actions.html')
+
+@app.route('/action-stats')
+def action_stats_page():
+    return render_template('action_stats.html')
+
+@app.route('/scan-progress')
+def scan_progress_page():
+    return render_template('scan_progress.html')
+
+@app.route('/profile-history')
+def profile_history_page():
+    return render_template('profile_history.html')
+
+@app.route('/rank-history')
+def rank_history_page():
+    return render_template('rank_history.html')
+
 @app.route('/api/stats')
 def api_stats():
     """Get overall database statistics"""
@@ -230,6 +259,53 @@ def api_online():
         })
     except Exception as e:
         logger.error(f"Error getting online players: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/online-24h')
+def api_online_24h():
+    """Get players who were online within the last 24 hours"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cutoff = datetime.now() - timedelta(hours=24)
+        
+        # Get unique players who logged in within last 24 hours
+        cursor.execute("""
+            SELECT DISTINCT 
+                le.player_id,
+                COALESCE(p.username, le.player_name) as player_name,
+                p.faction,
+                p.faction_rank,
+                p.played_hours,
+                MAX(le.timestamp) as last_activity,
+                CASE 
+                    WHEN o.player_id IS NOT NULL THEN 1 
+                    ELSE 0 
+                END as is_currently_online
+            FROM login_events le
+            LEFT JOIN player_profiles p ON le.player_id = p.player_id
+            LEFT JOIN online_players o ON le.player_id = o.player_id 
+                AND o.detected_online_at >= datetime('now', '-5 minutes')
+            WHERE le.event_type = 'login'
+            AND le.timestamp >= ?
+            GROUP BY le.player_id
+            ORDER BY is_currently_online DESC, last_activity DESC
+        """, (cutoff,))
+        
+        players = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        
+        # Count currently online vs recently online
+        online_now = sum(1 for p in players if p.get('is_currently_online') == 1)
+        
+        return jsonify({
+            'count': len(players),
+            'online_now': online_now,
+            'recently_online': len(players) - online_now,
+            'players': players
+        })
+    except Exception as e:
+        logger.error(f"Error getting online 24h players: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/actions')

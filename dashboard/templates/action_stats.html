@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+
+{% block title %}Action Stats - P4K Dashboard{% endblock %}
+
+{% block content %}
+<div x-data="actionStatsApp()" x-init="init()">
+    <!-- Page Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-white mb-2">
+            <i class="fas fa-chart-bar text-primary mr-3"></i>Action Statistics
+        </h1>
+        <p class="text-gray-400">Breakdown of all action types in the database</p>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Total Actions</p>
+                    <p class="text-3xl font-bold text-white mt-1" x-text="totalActions.toLocaleString()"></p>
+                </div>
+                <div class="bg-primary/20 p-3 rounded-lg">
+                    <i class="fas fa-database text-2xl text-primary"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Recognized</p>
+                    <p class="text-3xl font-bold text-green-400 mt-1" x-text="recognizedCount.toLocaleString()"></p>
+                </div>
+                <div class="bg-green-500/20 p-3 rounded-lg">
+                    <i class="fas fa-check-circle text-2xl text-green-400"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Unrecognized</p>
+                    <p class="text-3xl font-bold text-orange-400 mt-1" x-text="unrecognizedCount.toLocaleString()"></p>
+                </div>
+                <div class="bg-orange-500/20 p-3 rounded-lg">
+                    <i class="fas fa-question-circle text-2xl text-orange-400"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Action Types</p>
+                    <p class="text-3xl font-bold text-blue-400 mt-1" x-text="stats.length"></p>
+                </div>
+                <div class="bg-blue-500/20 p-3 rounded-lg">
+                    <i class="fas fa-tags text-2xl text-blue-400"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="bg-dark-200 rounded-xl p-12 text-center">
+        <i class="fas fa-spinner fa-spin text-4xl text-primary mb-4"></i>
+        <p class="text-gray-400">Loading statistics...</p>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div x-show="!loading" class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Recognized Actions -->
+        <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+            <div class="bg-dark-300 px-6 py-4 flex items-center gap-3">
+                <i class="fas fa-check-circle text-green-400"></i>
+                <h2 class="text-lg font-semibold text-white">Recognized Actions</h2>
+                <span class="ml-auto bg-green-500/20 text-green-400 px-3 py-1 rounded-full text-sm">
+                    <span x-text="recognizedStats.length"></span> types
+                </span>
+            </div>
+            <div class="p-6">
+                <div class="space-y-4 max-h-[500px] overflow-y-auto">
+                    <template x-for="stat in recognizedStats" :key="stat.action_type">
+                        <div class="flex items-center justify-between bg-dark-300 rounded-lg p-4 hover:bg-dark-100 transition-colors">
+                            <div class="flex items-center gap-3">
+                                <span class="text-2xl" x-text="getEmoji(stat.action_type)"></span>
+                                <div>
+                                    <p class="text-white font-medium" x-text="formatActionType(stat.action_type)"></p>
+                                    <p class="text-gray-500 text-sm" x-text="stat.action_type"></p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-white font-bold" x-text="stat.count.toLocaleString()"></p>
+                                <p class="text-gray-500 text-sm" x-text="((stat.count / totalActions) * 100).toFixed(1) + '%'"></p>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Unrecognized Actions -->
+        <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+            <div class="bg-dark-300 px-6 py-4 flex items-center gap-3">
+                <i class="fas fa-question-circle text-orange-400"></i>
+                <h2 class="text-lg font-semibold text-white">Unrecognized Actions</h2>
+                <span class="ml-auto bg-orange-500/20 text-orange-400 px-3 py-1 rounded-full text-sm">
+                    <span x-text="unrecognizedStats.length"></span> types
+                </span>
+            </div>
+            <div class="p-6">
+                <template x-if="unrecognizedStats.length === 0">
+                    <div class="text-center py-8">
+                        <i class="fas fa-check-circle text-5xl text-green-400 mb-4"></i>
+                        <p class="text-white font-medium">All actions recognized!</p>
+                        <p class="text-gray-500">No unknown or other action types found.</p>
+                    </div>
+                </template>
+                <template x-if="unrecognizedStats.length > 0">
+                    <div class="space-y-4 max-h-[500px] overflow-y-auto">
+                        <template x-for="stat in unrecognizedStats" :key="stat.action_type">
+                            <div class="flex items-center justify-between bg-dark-300 rounded-lg p-4 hover:bg-dark-100 transition-colors">
+                                <div class="flex items-center gap-3">
+                                    <span class="text-2xl">⚠️</span>
+                                    <div>
+                                        <p class="text-orange-400 font-medium" x-text="formatActionType(stat.action_type)"></p>
+                                        <p class="text-gray-500 text-sm" x-text="stat.action_type"></p>
+                                    </div>
+                                </div>
+                                <div class="text-right">
+                                    <p class="text-orange-400 font-bold" x-text="stat.count.toLocaleString()"></p>
+                                    <p class="text-gray-500 text-sm" x-text="((stat.count / totalActions) * 100).toFixed(1) + '%'"></p>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Bar Chart -->
+    <div x-show="!loading" class="mt-8 bg-dark-200 rounded-xl shadow-lg p-6">
+        <h2 class="text-lg font-semibold text-white mb-6">
+            <i class="fas fa-chart-pie text-primary mr-2"></i>Distribution Overview
+        </h2>
+        <div class="space-y-4">
+            <template x-for="stat in topStats" :key="stat.action_type">
+                <div>
+                    <div class="flex justify-between mb-1">
+                        <span class="text-gray-300 flex items-center gap-2">
+                            <span x-text="getEmoji(stat.action_type)"></span>
+                            <span x-text="formatActionType(stat.action_type)"></span>
+                        </span>
+                        <span class="text-gray-400" x-text="stat.count.toLocaleString() + ' (' + ((stat.count / totalActions) * 100).toFixed(1) + '%)'"></span>
+                    </div>
+                    <div class="w-full bg-dark-300 rounded-full h-3">
+                        <div class="h-3 rounded-full transition-all duration-500"
+                             :class="['unknown', 'other'].includes(stat.action_type) ? 'bg-orange-500' : 'bg-primary'"
+                             :style="'width: ' + ((stat.count / topStats[0].count) * 100) + '%'"></div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+
+<script>
+function actionStatsApp() {
+    return {
+        stats: [],
+        loading: true,
+
+        async init() {
+            await this.fetchStats();
+        },
+
+        async fetchStats() {
+            this.loading = true;
+            try {
+                const response = await fetch('/api/action-stats');
+                const data = await response.json();
+                this.stats = data.stats || [];
+            } catch (error) {
+                console.error('Error fetching action stats:', error);
+                this.stats = [];
+            }
+            this.loading = false;
+        },
+
+        get totalActions() {
+            return this.stats.reduce((sum, s) => sum + s.count, 0);
+        },
+
+        get recognizedStats() {
+            return this.stats.filter(s => !['unknown', 'other'].includes(s.action_type))
+                           .sort((a, b) => b.count - a.count);
+        },
+
+        get unrecognizedStats() {
+            return this.stats.filter(s => ['unknown', 'other'].includes(s.action_type))
+                           .sort((a, b) => b.count - a.count);
+        },
+
+        get recognizedCount() {
+            return this.recognizedStats.reduce((sum, s) => sum + s.count, 0);
+        },
+
+        get unrecognizedCount() {
+            return this.unrecognizedStats.reduce((sum, s) => sum + s.count, 0);
+        },
+
+        get topStats() {
+            return [...this.stats].sort((a, b) => b.count - a.count).slice(0, 10);
+        },
+
+        formatActionType(type) {
+            return type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+        },
+
+        getEmoji(type) {
+            const emojis = {
+                'item_given': '📤',
+                'item_received': '📥',
+                'money_transfer': '💸',
+                'money_deposit': '🏦',
+                'money_withdraw': '🏧',
+                'chest_deposit': '📦',
+                'chest_withdraw': '📂',
+                'vehicle_contract': '📝',
+                'vehicle_bought': '🚗',
+                'vehicle_sold': '💰',
+                'vehicle_scrapped': '🗑️',
+                'property_bought': '🏠',
+                'property_sold': '🏠',
+                'bank_heist_delivery': '💵',
+                'warning_received': '⚠️',
+                'ban_received': '🔨',
+                'admin_jail': '🔒',
+                'admin_unjail': '🔓',
+                'admin_unban': '✅',
+                'faction_kicked': '🚫',
+                'mute_received': '🔇',
+                'kill_character': '💀',
+                'trade': '🤝',
+                'gambling_win': '🎰',
+                'license_plate_sale': '🔢',
+                'house_safe_withdraw': '🏠',
+                'house_safe_deposit': '🏠',
+                'item_sold': '🛒',
+                'unknown': '❓',
+                'other': '📋',
+                'legacy_multi_action': '📜'
+            };
+            return emojis[type] || '📋';
+        }
+    }
+}
+</script>
+{% endblock %}

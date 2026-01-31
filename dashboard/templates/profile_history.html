@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+
+{% block title %}Profile History - P4K Dashboard{% endblock %}
+
+{% block content %}
+<div x-data="profileHistoryApp()" x-init="init()">
+    <!-- Page Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-white mb-2">
+            <i class="fas fa-history text-primary mr-3"></i>Profile History
+        </h1>
+        <p class="text-gray-400">Track changes to player profiles over time</p>
+    </div>
+
+    <!-- Search Section -->
+    <div class="bg-dark-200 rounded-xl p-6 shadow-lg mb-8">
+        <div class="flex flex-col md:flex-row gap-4">
+            <div class="flex-1">
+                <label class="block text-sm text-gray-400 mb-2">Player ID or Name</label>
+                <div class="relative">
+                    <input type="text" 
+                           x-model="searchQuery" 
+                           @keyup.enter="searchPlayer()"
+                           placeholder="Enter player ID or name..."
+                           class="w-full bg-dark-100 text-white rounded-lg pl-12 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary">
+                    <i class="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-500"></i>
+                </div>
+            </div>
+            <div class="flex items-end">
+                <button @click="searchPlayer()" 
+                        :disabled="!searchQuery.trim()"
+                        class="bg-primary hover:bg-primary/80 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-8 py-3 rounded-lg transition-colors flex items-center gap-2">
+                    <i class="fas fa-search"></i>
+                    Search
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="bg-dark-200 rounded-xl p-12 text-center">
+        <i class="fas fa-spinner fa-spin text-4xl text-primary mb-4"></i>
+        <p class="text-gray-400">Loading profile history...</p>
+    </div>
+
+    <!-- Player Info -->
+    <template x-if="player && !loading">
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg mb-8">
+            <div class="flex items-center gap-6">
+                <div class="bg-primary/20 p-4 rounded-full">
+                    <i class="fas fa-user text-3xl text-primary"></i>
+                </div>
+                <div class="flex-1">
+                    <h2 class="text-2xl font-bold text-white" x-text="player.username"></h2>
+                    <p class="text-gray-400">Player ID: <span class="text-primary" x-text="player.player_id"></span></p>
+                </div>
+                <div class="text-right">
+                    <p class="text-sm text-gray-400">Current Faction</p>
+                    <p class="text-lg font-semibold" :class="player.faction ? 'text-white' : 'text-gray-500'" x-text="player.faction || 'No faction'"></p>
+                    <template x-if="player.faction_rank">
+                        <p class="text-sm text-gray-400">Rank: <span class="text-primary" x-text="player.faction_rank"></span></p>
+                    </template>
+                </div>
+                <a :href="'/player/' + player.player_id" class="bg-dark-100 hover:bg-dark-300 text-white px-4 py-2 rounded-lg transition-colors">
+                    <i class="fas fa-external-link-alt mr-2"></i>View Profile
+                </a>
+            </div>
+        </div>
+    </template>
+
+    <!-- No Player Selected -->
+    <template x-if="!player && !loading && !searched">
+        <div class="bg-dark-200 rounded-xl p-12 text-center">
+            <i class="fas fa-search text-6xl text-gray-600 mb-4"></i>
+            <h3 class="text-xl font-semibold text-gray-400 mb-2">Search for a Player</h3>
+            <p class="text-gray-500">Enter a player ID or name above to view their profile history</p>
+        </div>
+    </template>
+
+    <!-- No Results -->
+    <template x-if="!player && !loading && searched">
+        <div class="bg-dark-200 rounded-xl p-12 text-center">
+            <i class="fas fa-user-slash text-6xl text-red-500/50 mb-4"></i>
+            <h3 class="text-xl font-semibold text-gray-400 mb-2">Player Not Found</h3>
+            <p class="text-gray-500">No player found with ID or name: "<span x-text="lastSearch"></span>"</p>
+        </div>
+    </template>
+
+    <!-- History Timeline -->
+    <template x-if="player && history.length > 0">
+        <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+            <div class="bg-dark-300 px-6 py-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <i class="fas fa-stream text-primary"></i>
+                    <h2 class="text-lg font-semibold text-white">Profile Changes</h2>
+                </div>
+                <span class="bg-primary/20 text-primary px-3 py-1 rounded-full text-sm font-medium" x-text="history.length + ' change(s)'"></span>
+            </div>
+            <div class="p-6">
+                <div class="relative">
+                    <!-- Timeline line -->
+                    <div class="absolute left-6 top-0 bottom-0 w-0.5 bg-dark-100"></div>
+                    
+                    <!-- Timeline items -->
+                    <div class="space-y-6">
+                        <template x-for="(change, index) in history" :key="index">
+                            <div class="relative flex gap-6">
+                                <!-- Timeline dot -->
+                                <div class="relative z-10 flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center"
+                                     :class="getFieldColor(change.field_name) + '/20'">
+                                    <i class="fas" :class="[getFieldIcon(change.field_name), getFieldColor(change.field_name).replace('bg-', 'text-')]"></i>
+                                </div>
+                                
+                                <!-- Content -->
+                                <div class="flex-1 bg-dark-100 rounded-lg p-4">
+                                    <div class="flex items-center justify-between mb-2">
+                                        <span class="font-semibold text-white" x-text="formatFieldName(change.field_name)"></span>
+                                        <span class="text-sm text-gray-500" x-text="formatDate(change.changed_at)"></span>
+                                    </div>
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-gray-400 line-through" x-text="change.old_value || 'None'"></span>
+                                        <i class="fas fa-arrow-right text-gray-600"></i>
+                                        <span class="text-green-400 font-medium" x-text="change.new_value || 'None'"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- No History -->
+    <template x-if="player && history.length === 0 && !loading">
+        <div class="bg-dark-200 rounded-xl p-12 text-center">
+            <i class="fas fa-clipboard-list text-6xl text-gray-600 mb-4"></i>
+            <h3 class="text-xl font-semibold text-gray-400 mb-2">No Profile Changes</h3>
+            <p class="text-gray-500">This player has no recorded profile changes</p>
+        </div>
+    </template>
+</div>
+
+<script>
+function profileHistoryApp() {
+    return {
+        searchQuery: '',
+        lastSearch: '',
+        player: null,
+        history: [],
+        loading: false,
+        searched: false,
+
+        init() {
+            // Check URL for player_id parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            const playerId = urlParams.get('player_id');
+            if (playerId) {
+                this.searchQuery = playerId;
+                this.searchPlayer();
+            }
+        },
+
+        async searchPlayer() {
+            if (!this.searchQuery.trim()) return;
+            
+            this.loading = true;
+            this.searched = true;
+            this.lastSearch = this.searchQuery;
+            this.player = null;
+            this.history = [];
+
+            try {
+                // First try to get player by exact ID
+                let playerId = this.searchQuery.trim();
+                
+                // If not a number, search by name first
+                if (!/^\d+$/.test(playerId)) {
+                    const searchResponse = await fetch('/api/search?q=' + encodeURIComponent(playerId));
+                    const searchData = await searchResponse.json();
+                    if (searchData.players && searchData.players.length > 0) {
+                        playerId = searchData.players[0].player_id;
+                    } else {
+                        this.loading = false;
+                        return;
+                    }
+                }
+
+                // Get player profile
+                const playerResponse = await fetch('/api/player/' + playerId);
+                if (!playerResponse.ok) {
+                    this.loading = false;
+                    return;
+                }
+                this.player = await playerResponse.json();
+
+                // Get profile history
+                const historyResponse = await fetch('/api/profile-history/' + playerId);
+                if (historyResponse.ok) {
+                    const historyData = await historyResponse.json();
+                    this.history = historyData.history || [];
+                }
+
+            } catch (error) {
+                console.error('Error searching player:', error);
+            }
+            
+            this.loading = false;
+        },
+
+        formatFieldName(field) {
+            const names = {
+                'faction': 'Faction',
+                'faction_rank': 'Faction Rank',
+                'job': 'Job',
+                'warnings': 'Warnings',
+                'played_hours': 'Played Hours',
+                'age_ic': 'Age (IC)',
+                'username': 'Username'
+            };
+            return names[field] || field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        },
+
+        getFieldIcon(field) {
+            const icons = {
+                'faction': 'fa-users',
+                'faction_rank': 'fa-star',
+                'job': 'fa-briefcase',
+                'warnings': 'fa-exclamation-triangle',
+                'played_hours': 'fa-clock',
+                'age_ic': 'fa-birthday-cake',
+                'username': 'fa-user-edit'
+            };
+            return icons[field] || 'fa-edit';
+        },
+
+        getFieldColor(field) {
+            const colors = {
+                'faction': 'bg-blue-500',
+                'faction_rank': 'bg-yellow-500',
+                'job': 'bg-purple-500',
+                'warnings': 'bg-red-500',
+                'played_hours': 'bg-green-500',
+                'age_ic': 'bg-pink-500',
+                'username': 'bg-cyan-500'
+            };
+            return colors[field] || 'bg-gray-500';
+        },
+
+        formatDate(dateStr) {
+            if (!dateStr) return 'Unknown';
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+
+            if (diffMins < 60) return diffMins + 'm ago';
+            if (diffHours < 24) return diffHours + 'h ago';
+            if (diffDays < 7) return diffDays + 'd ago';
+            
+            return date.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+    }
+}
+</script>
+{% endblock %}

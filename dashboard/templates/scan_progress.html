@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+
+{% block title %}Scan Progress - P4K Dashboard{% endblock %}
+
+{% block content %}
+<div x-data="scanProgressApp()" x-init="init()">
+    <!-- Page Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-white mb-2">
+            <i class="fas fa-sync-alt text-primary mr-3"></i>Scan Progress
+        </h1>
+        <p class="text-gray-400">Monitor database scan progress and statistics</p>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="bg-dark-200 rounded-xl p-12 text-center">
+        <i class="fas fa-spinner fa-spin text-4xl text-primary mb-4"></i>
+        <p class="text-gray-400">Loading scan status...</p>
+    </div>
+
+    <!-- Main Content -->
+    <div x-show="!loading">
+        <!-- Status Banner -->
+        <div class="mb-8 rounded-xl p-6 shadow-lg" :class="isScanning ? 'bg-green-500/20 border border-green-500/30' : 'bg-dark-200'">
+            <div class="flex items-center gap-4">
+                <div class="p-4 rounded-full" :class="isScanning ? 'bg-green-500/30' : 'bg-gray-500/30'">
+                    <i class="fas text-3xl" :class="isScanning ? 'fa-play-circle text-green-400 animate-pulse' : 'fa-pause-circle text-gray-400'"></i>
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold" :class="isScanning ? 'text-green-400' : 'text-gray-400'">
+                        <span x-text="isScanning ? 'Scan In Progress' : 'No Active Scan'"></span>
+                    </h2>
+                    <p class="text-gray-400" x-text="isScanning ? 'Database scan is currently running' : 'Start a scan with /scan start command'"></p>
+                </div>
+                <div class="ml-auto">
+                    <button @click="fetchProgress()" 
+                            class="bg-primary hover:bg-primary/80 text-white px-6 py-3 rounded-lg transition-colors flex items-center gap-2">
+                        <i class="fas fa-sync-alt" :class="refreshing && 'animate-spin'"></i>
+                        Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm">Last Scanned ID</p>
+                        <p class="text-3xl font-bold text-white mt-1" x-text="progress.last_scanned_id ? progress.last_scanned_id.toLocaleString() : '0'"></p>
+                    </div>
+                    <div class="bg-primary/20 p-3 rounded-lg">
+                        <i class="fas fa-hashtag text-2xl text-primary"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm">Players Found</p>
+                        <p class="text-3xl font-bold text-green-400 mt-1" x-text="progress.found_count ? progress.found_count.toLocaleString() : '0'"></p>
+                    </div>
+                    <div class="bg-green-500/20 p-3 rounded-lg">
+                        <i class="fas fa-users text-2xl text-green-400"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm">Errors</p>
+                        <p class="text-3xl font-bold text-red-400 mt-1" x-text="progress.error_count ? progress.error_count.toLocaleString() : '0'"></p>
+                    </div>
+                    <div class="bg-red-500/20 p-3 rounded-lg">
+                        <i class="fas fa-exclamation-circle text-2xl text-red-400"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-gray-400 text-sm">Last Updated</p>
+                        <p class="text-xl font-bold text-gray-300 mt-1" x-text="formatDate(progress.updated_at)"></p>
+                    </div>
+                    <div class="bg-blue-500/20 p-3 rounded-lg">
+                        <i class="fas fa-clock text-2xl text-blue-400"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <template x-if="isScanning && scanState.end_id">
+            <div class="bg-dark-200 rounded-xl p-6 shadow-lg mb-8">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-white">Scan Progress</h3>
+                    <span class="text-primary font-bold" x-text="progressPercent.toFixed(1) + '%'"></span>
+                </div>
+                <div class="w-full bg-dark-300 rounded-full h-6 overflow-hidden">
+                    <div class="h-6 rounded-full bg-gradient-to-r from-primary to-green-400 transition-all duration-500 flex items-center justify-center"
+                         :style="'width: ' + progressPercent + '%'">
+                        <span x-show="progressPercent > 10" class="text-white text-sm font-bold" x-text="progressPercent.toFixed(1) + '%'"></span>
+                    </div>
+                </div>
+                <div class="flex justify-between mt-2 text-sm text-gray-500">
+                    <span>ID <span x-text="scanState.start_id?.toLocaleString() || '1'"></span></span>
+                    <span>Current: <span x-text="scanState.current_id?.toLocaleString() || '?'"></span></span>
+                    <span>ID <span x-text="scanState.end_id?.toLocaleString() || '?'"></span></span>
+                </div>
+            </div>
+        </template>
+
+        <!-- Scan Details -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Database Stats -->
+            <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-dark-300 px-6 py-4 flex items-center gap-3">
+                    <i class="fas fa-database text-primary"></i>
+                    <h2 class="text-lg font-semibold text-white">Database Statistics</h2>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div class="flex items-center justify-between py-3 border-b border-dark-100">
+                        <span class="text-gray-400">Total Players</span>
+                        <span class="text-white font-bold" x-text="dbStats.total_players?.toLocaleString() || '0'"></span>
+                    </div>
+                    <div class="flex items-center justify-between py-3 border-b border-dark-100">
+                        <span class="text-gray-400">Total Actions</span>
+                        <span class="text-white font-bold" x-text="dbStats.total_actions?.toLocaleString() || '0'"></span>
+                    </div>
+                    <div class="flex items-center justify-between py-3 border-b border-dark-100">
+                        <span class="text-gray-400">Online Now</span>
+                        <span class="text-green-400 font-bold" x-text="dbStats.online_count?.toLocaleString() || '0'"></span>
+                    </div>
+                    <div class="flex items-center justify-between py-3">
+                        <span class="text-gray-400">Success Rate</span>
+                        <span class="text-primary font-bold" x-text="successRate.toFixed(2) + '%'"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scan Commands -->
+            <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-dark-300 px-6 py-4 flex items-center gap-3">
+                    <i class="fas fa-terminal text-green-400"></i>
+                    <h2 class="text-lg font-semibold text-white">Discord Commands</h2>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div class="bg-dark-100 rounded-lg p-4">
+                        <code class="text-green-400">/scan start [start_id] [end_id]</code>
+                        <p class="text-gray-500 text-sm mt-2">Start a new database scan</p>
+                    </div>
+                    <div class="bg-dark-100 rounded-lg p-4">
+                        <code class="text-yellow-400">/scan status</code>
+                        <p class="text-gray-500 text-sm mt-2">View current scan progress (auto-refreshes)</p>
+                    </div>
+                    <div class="bg-dark-100 rounded-lg p-4">
+                        <code class="text-blue-400">/scan pause</code> / <code class="text-blue-400">/scan resume</code>
+                        <p class="text-gray-500 text-sm mt-2">Pause or resume the scan</p>
+                    </div>
+                    <div class="bg-dark-100 rounded-lg p-4">
+                        <code class="text-red-400">/scan cancel</code>
+                        <p class="text-gray-500 text-sm mt-2">Cancel the current scan</p>
+                    </div>
+                    <div class="bg-dark-100 rounded-lg p-4">
+                        <code class="text-purple-400">/scanconfig</code>
+                        <p class="text-gray-500 text-sm mt-2">View or modify scan configuration</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Auto-refresh Toggle -->
+        <div class="mt-8 bg-dark-200 rounded-xl p-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <i class="fas fa-clock text-gray-400"></i>
+                <span class="text-gray-300">Auto-refresh every 5 seconds</span>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" x-model="autoRefresh" class="sr-only peer">
+                <div class="w-11 h-6 bg-dark-100 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+            </label>
+        </div>
+    </div>
+</div>
+
+<script>
+function scanProgressApp() {
+    return {
+        progress: {},
+        scanState: {},
+        dbStats: {},
+        loading: true,
+        refreshing: false,
+        autoRefresh: false,
+        refreshInterval: null,
+
+        async init() {
+            await this.fetchProgress();
+            await this.fetchDbStats();
+            
+            // Watch auto-refresh toggle
+            this.$watch('autoRefresh', (value) => {
+                if (value) {
+                    this.refreshInterval = setInterval(() => this.fetchProgress(), 5000);
+                } else if (this.refreshInterval) {
+                    clearInterval(this.refreshInterval);
+                    this.refreshInterval = null;
+                }
+            });
+        },
+
+        async fetchProgress() {
+            this.refreshing = true;
+            try {
+                const response = await fetch('/api/scan-progress');
+                const data = await response.json();
+                this.progress = data.progress || {};
+                this.scanState = data.scan_state || {};
+            } catch (error) {
+                console.error('Error fetching scan progress:', error);
+            }
+            this.loading = false;
+            this.refreshing = false;
+        },
+
+        async fetchDbStats() {
+            try {
+                const response = await fetch('/api/stats');
+                this.dbStats = await response.json();
+            } catch (error) {
+                console.error('Error fetching db stats:', error);
+            }
+        },
+
+        get isScanning() {
+            return this.scanState.is_scanning || false;
+        },
+
+        get progressPercent() {
+            if (!this.scanState.end_id || !this.scanState.start_id) return 0;
+            const total = this.scanState.end_id - this.scanState.start_id + 1;
+            const scanned = this.scanState.total_scanned || 0;
+            return Math.min(100, (scanned / total) * 100);
+        },
+
+        get successRate() {
+            const scanned = this.progress.last_scanned_id || 0;
+            const found = this.progress.found_count || 0;
+            if (scanned === 0) return 0;
+            return (found / scanned) * 100;
+        },
+
+        formatDate(dateStr) {
+            if (!dateStr) return 'Never';
+            const date = new Date(dateStr);
+            return date.toLocaleString();
+        }
+    }
+}
+</script>
+{% endblock %}

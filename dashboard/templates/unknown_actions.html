@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block title %}Unknown Actions - P4K Dashboard{% endblock %}
+
+{% block content %}
+<div x-data="unknownActionsApp()" x-init="init()">
+    <!-- Page Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-white mb-2">
+            <i class="fas fa-question-circle text-orange-400 mr-3"></i>Unknown Action Patterns
+        </h1>
+        <p class="text-gray-400">Action patterns that weren't recognized by the parser. Use these to add new action type parsers.</p>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Total Unknown</p>
+                    <p class="text-3xl font-bold text-orange-400 mt-1" x-text="totalCount.toLocaleString()"></p>
+                </div>
+                <div class="bg-orange-500/20 p-3 rounded-lg">
+                    <i class="fas fa-exclamation-triangle text-2xl text-orange-400"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Unique Patterns</p>
+                    <p class="text-3xl font-bold text-blue-400 mt-1" x-text="patterns.length.toLocaleString()"></p>
+                </div>
+                <div class="bg-blue-500/20 p-3 rounded-lg">
+                    <i class="fas fa-fingerprint text-2xl text-blue-400"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Most Common</p>
+                    <p class="text-xl font-bold text-white mt-1" x-text="patterns.length > 0 ? patterns[0].count.toLocaleString() + 'x' : '0'"></p>
+                </div>
+                <div class="bg-primary/20 p-3 rounded-lg">
+                    <i class="fas fa-fire text-2xl text-primary"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="bg-dark-200 rounded-xl p-4 mb-6 flex flex-wrap items-center gap-4">
+        <div class="flex items-center gap-2">
+            <label class="text-gray-400 text-sm">Limit:</label>
+            <select x-model="limit" @change="fetchPatterns()" class="bg-dark-300 border border-dark-100 text-white rounded-lg px-3 py-2 focus:ring-primary focus:border-primary">
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+            </select>
+        </div>
+
+        <div class="flex-1">
+            <input type="text" 
+                   x-model="searchQuery" 
+                   placeholder="Search patterns..." 
+                   class="w-full bg-dark-300 border border-dark-100 text-white rounded-lg px-4 py-2 focus:ring-primary focus:border-primary">
+        </div>
+
+        <button @click="fetchPatterns()" 
+                class="bg-primary hover:bg-primary/80 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2">
+            <i class="fas fa-sync-alt" :class="loading && 'animate-spin'"></i>
+            Refresh
+        </button>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="bg-dark-200 rounded-xl p-12 text-center">
+        <i class="fas fa-spinner fa-spin text-4xl text-primary mb-4"></i>
+        <p class="text-gray-400">Loading unknown patterns...</p>
+    </div>
+
+    <!-- No Patterns Found -->
+    <template x-if="!loading && patterns.length === 0">
+        <div class="bg-dark-200 rounded-xl p-12 text-center">
+            <i class="fas fa-check-circle text-6xl text-green-400 mb-4"></i>
+            <h3 class="text-xl font-bold text-white mb-2">All Actions Recognized!</h3>
+            <p class="text-gray-400">No unknown or unrecognized action patterns found in the database.</p>
+        </div>
+    </template>
+
+    <!-- Patterns List -->
+    <div x-show="!loading && patterns.length > 0" class="space-y-4">
+        <template x-for="(pattern, index) in filteredPatterns" :key="index">
+            <div class="bg-dark-200 rounded-xl p-6 shadow-lg hover:bg-dark-300 transition-colors">
+                <div class="flex items-start justify-between mb-4">
+                    <div class="flex items-center gap-3">
+                        <span class="bg-orange-500/20 text-orange-400 px-3 py-1 rounded-full text-sm font-medium">
+                            #<span x-text="index + 1"></span>
+                        </span>
+                        <span class="bg-dark-100 text-gray-300 px-3 py-1 rounded-full text-sm">
+                            <span x-text="pattern.action_type"></span>
+                        </span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="bg-primary/20 text-primary px-3 py-1 rounded-full text-sm font-bold">
+                            ×<span x-text="pattern.count.toLocaleString()"></span>
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="bg-dark-100 rounded-lg p-4 font-mono text-sm text-gray-300 overflow-x-auto">
+                    <pre class="whitespace-pre-wrap break-all" x-text="pattern.raw_text"></pre>
+                </div>
+                
+                <div class="mt-4 flex items-center gap-4 text-sm text-gray-500">
+                    <span>
+                        <i class="fas fa-percentage mr-1"></i>
+                        <span x-text="((pattern.count / totalCount) * 100).toFixed(2) + '% of unknown'"></span>
+                    </span>
+                    <template x-if="pattern.player_id">
+                        <a :href="'/player/' + pattern.player_id" class="text-primary hover:underline">
+                            <i class="fas fa-user mr-1"></i>
+                            Player <span x-text="pattern.player_id"></span>
+                        </a>
+                    </template>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Info Box -->
+    <div x-show="!loading && patterns.length > 0" class="mt-8 bg-blue-500/10 border border-blue-500/30 rounded-xl p-6">
+        <div class="flex items-start gap-4">
+            <i class="fas fa-lightbulb text-2xl text-blue-400 mt-1"></i>
+            <div>
+                <h3 class="text-blue-400 font-semibold mb-2">Developer Tip</h3>
+                <p class="text-gray-300 text-sm">
+                    Use these patterns to add new action type parsers in <code class="bg-dark-300 px-2 py-1 rounded text-primary">scraper.py</code> 
+                    in the <code class="bg-dark-300 px-2 py-1 rounded text-primary">_parse_action_text()</code> method. 
+                    Look for common patterns and create regex matches to properly categorize them.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function unknownActionsApp() {
+    return {
+        patterns: [],
+        totalCount: 0,
+        limit: '50',
+        loading: true,
+        searchQuery: '',
+
+        async init() {
+            await this.fetchPatterns();
+        },
+
+        async fetchPatterns() {
+            this.loading = true;
+            try {
+                const response = await fetch(`/api/unknown-actions?limit=${this.limit}`);
+                const data = await response.json();
+                this.patterns = data.patterns || [];
+                this.totalCount = data.total_count || 0;
+            } catch (error) {
+                console.error('Error fetching unknown actions:', error);
+                this.patterns = [];
+                this.totalCount = 0;
+            }
+            this.loading = false;
+        },
+
+        get filteredPatterns() {
+            if (!this.searchQuery) return this.patterns;
+            const query = this.searchQuery.toLowerCase();
+            return this.patterns.filter(p => 
+                (p.raw_text && p.raw_text.toLowerCase().includes(query)) ||
+                (p.action_type && p.action_type.toLowerCase().includes(query))
+            );
+        }
+    }
+}
+</script>
+{% endblock %}

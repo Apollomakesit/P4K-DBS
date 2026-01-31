@@ -534,7 +534,8 @@
 
                 async init() {
                     await this.fetchAll();
-                    setInterval(() => this.fetchAll(), 30000); // Refresh every 30s
+                    setInterval(() => this.fetchAll(), 30000); // Refresh data every 30s
+                    setInterval(() => this.lastUpdate = new Date().toLocaleTimeString(), 1000); // Update clock every second
                 },
 
                 async fetchAll() {

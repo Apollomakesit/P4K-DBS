@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+
+{% block title %}Online (24h) - P4K Dashboard{% endblock %}
+
+{% block content %}
+<div x-data="online24hApp()" x-init="init()">
+    <!-- Page Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-white mb-2">
+            <i class="fas fa-clock text-primary mr-3"></i>Online (24h)
+        </h1>
+        <p class="text-gray-400">Players who have been online within the last 24 hours</p>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Total Active (24h)</p>
+                    <p class="text-3xl font-bold text-white mt-1" x-text="stats.total_count || 0"></p>
+                </div>
+                <div class="bg-primary/20 p-3 rounded-lg">
+                    <i class="fas fa-users text-2xl text-primary"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Currently Online</p>
+                    <p class="text-3xl font-bold text-green-400 mt-1" x-text="stats.online_now || 0"></p>
+                </div>
+                <div class="bg-green-500/20 p-3 rounded-lg">
+                    <i class="fas fa-circle text-2xl text-green-400"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Recently Offline</p>
+                    <p class="text-3xl font-bold text-gray-400 mt-1" x-text="stats.recently_online || 0"></p>
+                </div>
+                <div class="bg-gray-500/20 p-3 rounded-lg">
+                    <i class="fas fa-user-clock text-2xl text-gray-400"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter and Search -->
+    <div class="bg-dark-200 rounded-xl p-4 mb-6 flex flex-wrap gap-4 items-center">
+        <div class="flex-1 min-w-[200px]">
+            <input type="text" 
+                   x-model="searchQuery"
+                   placeholder="Search by name or ID..." 
+                   class="w-full bg-dark-300 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-primary">
+        </div>
+        <div class="flex gap-2">
+            <button @click="filter = 'all'" 
+                    :class="filter === 'all' ? 'bg-primary text-white' : 'bg-dark-300 text-gray-300'"
+                    class="px-4 py-2 rounded-lg hover:bg-primary/80 transition-colors">
+                All
+            </button>
+            <button @click="filter = 'online'" 
+                    :class="filter === 'online' ? 'bg-green-600 text-white' : 'bg-dark-300 text-gray-300'"
+                    class="px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
+                🟢 Online Now
+            </button>
+            <button @click="filter = 'offline'" 
+                    :class="filter === 'offline' ? 'bg-gray-600 text-white' : 'bg-dark-300 text-gray-300'"
+                    class="px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors">
+                ⚪ Offline
+            </button>
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="bg-dark-200 rounded-xl p-12 text-center">
+        <i class="fas fa-spinner fa-spin text-4xl text-primary mb-4"></i>
+        <p class="text-gray-400">Loading players...</p>
+    </div>
+
+    <!-- Players Table -->
+    <div x-show="!loading" class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-dark-300">
+                    <tr>
+                        <th class="px-6 py-4 text-left text-sm font-medium text-gray-400">Status</th>
+                        <th class="px-6 py-4 text-left text-sm font-medium text-gray-400">Player</th>
+                        <th class="px-6 py-4 text-left text-sm font-medium text-gray-400">Faction</th>
+                        <th class="px-6 py-4 text-left text-sm font-medium text-gray-400">Rank</th>
+                        <th class="px-6 py-4 text-left text-sm font-medium text-gray-400">Played Hours</th>
+                        <th class="px-6 py-4 text-left text-sm font-medium text-gray-400">Last Activity</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-700">
+                    <template x-for="player in filteredPlayers" :key="player.player_id">
+                        <tr class="hover:bg-dark-300/50 transition-colors">
+                            <td class="px-6 py-4">
+                                <span x-show="player.is_currently_online" class="inline-flex items-center gap-2 text-green-400">
+                                    <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+                                    Online
+                                </span>
+                                <span x-show="!player.is_currently_online" class="inline-flex items-center gap-2 text-gray-400">
+                                    <span class="w-2 h-2 rounded-full bg-gray-400"></span>
+                                    Offline
+                                </span>
+                            </td>
+                            <td class="px-6 py-4">
+                                <a :href="'/player/' + player.player_id" class="text-primary hover:text-primary/80 font-medium">
+                                    <span x-text="player.player_name"></span>
+                                    <span class="text-gray-500" x-text="'(' + player.player_id + ')'"></span>
+                                </a>
+                            </td>
+                            <td class="px-6 py-4">
+                                <template x-if="player.faction && player.faction !== 'None' && player.faction !== '-'">
+                                    <a :href="'/faction/' + encodeURIComponent(player.faction)" 
+                                       class="text-purple-400 hover:text-purple-300 hover:underline"
+                                       x-text="player.faction"></a>
+                                </template>
+                                <template x-if="!player.faction || player.faction === 'None' || player.faction === '-'">
+                                    <span class="text-gray-500">No faction</span>
+                                </template>
+                            </td>
+                            <td class="px-6 py-4 text-gray-300" x-text="player.faction_rank || '-'"></td>
+                            <td class="px-6 py-4 text-gray-300" x-text="player.played_hours ? player.played_hours.toFixed(1) + 'h' : '-'"></td>
+                            <td class="px-6 py-4 text-gray-400 text-sm" x-text="formatTime(player.last_activity)"></td>
+                        </tr>
+                    </template>
+
+                    <!-- Empty State -->
+                    <tr x-show="filteredPlayers.length === 0 && !loading">
+                        <td colspan="6" class="px-6 py-12 text-center text-gray-400">
+                            <i class="fas fa-search text-4xl mb-4 opacity-50"></i>
+                            <p>No players found matching your criteria</p>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination Info -->
+        <div class="bg-dark-300 px-6 py-4 border-t border-gray-700">
+            <p class="text-gray-400 text-sm">
+                Showing <span class="text-white font-medium" x-text="filteredPlayers.length"></span> 
+                of <span class="text-white font-medium" x-text="players.length"></span> players
+            </p>
+        </div>
+    </div>
+</div>
+
+<script>
+function online24hApp() {
+    return {
+        players: [],
+        stats: {},
+        loading: true,
+        searchQuery: '',
+        filter: 'all',
+
+        async init() {
+            await this.fetchPlayers();
+        },
+
+        async fetchPlayers() {
+            this.loading = true;
+            try {
+                const response = await fetch('/api/online-24h');
+                const data = await response.json();
+                this.players = data.players || [];
+                this.stats = {
+                    total_count: data.count || 0,
+                    online_now: data.online_now || 0,
+                    recently_online: data.recently_online || 0
+                };
+            } catch (error) {
+                console.error('Error fetching online-24h data:', error);
+                this.players = [];
+            }
+            this.loading = false;
+        },
+
+        get filteredPlayers() {
+            let result = this.players;
+
+            // Filter by search query
+            if (this.searchQuery) {
+                const query = this.searchQuery.toLowerCase();
+                result = result.filter(p => 
+                    (p.player_name && p.player_name.toLowerCase().includes(query)) ||
+                    (p.player_id && p.player_id.toString().includes(query)) ||
+                    (p.faction && p.faction.toLowerCase().includes(query))
+                );
+            }
+
+            // Filter by online status
+            if (this.filter === 'online') {
+                result = result.filter(p => p.is_currently_online);
+            } else if (this.filter === 'offline') {
+                result = result.filter(p => !p.is_currently_online);
+            }
+
+            return result;
+        },
+
+        formatTime(timestamp) {
+            if (!timestamp) return '-';
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = Math.floor((now - date) / 1000);
+
+            if (diff < 60) return 'Just now';
+            if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+            if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+            return date.toLocaleDateString();
+        }
+    }
+}
+</script>
+{% endblock %}

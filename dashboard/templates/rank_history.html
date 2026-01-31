@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block title %}Rank History - P4K Dashboard{% endblock %}
+
+{% block content %}
+<div x-data="rankHistoryApp()" x-init="init()">
+    <!-- Page Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-white mb-2">
+            <i class="fas fa-medal text-yellow-500 mr-3"></i>Rank History
+        </h1>
+        <p class="text-gray-400">View player faction rank progression over time</p>
+    </div>
+
+    <!-- Search Section -->
+    <div class="bg-dark-200 rounded-xl p-6 shadow-lg mb-8">
+        <div class="flex flex-col md:flex-row gap-4">
+            <div class="flex-1">
+                <label class="block text-sm text-gray-400 mb-2">Player ID or Name</label>
+                <div class="relative">
+                    <input type="text" 
+                           x-model="searchQuery" 
+                           @keyup.enter="searchPlayer()"
+                           placeholder="Enter player ID or name..."
+                           class="w-full bg-dark-100 text-white rounded-lg pl-12 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary">
+                    <i class="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-500"></i>
+                </div>
+            </div>
+            <div class="flex items-end">
+                <button @click="searchPlayer()" 
+                        :disabled="!searchQuery.trim()"
+                        class="bg-primary hover:bg-primary/80 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-8 py-3 rounded-lg transition-colors flex items-center gap-2">
+                    <i class="fas fa-search"></i>
+                    Search
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="bg-dark-200 rounded-xl p-12 text-center">
+        <i class="fas fa-spinner fa-spin text-4xl text-primary mb-4"></i>
+        <p class="text-gray-400">Loading rank history...</p>
+    </div>
+
+    <!-- Player Info with Current Rank -->
+    <template x-if="player && !loading">
+        <div class="bg-dark-200 rounded-xl p-6 shadow-lg mb-8">
+            <div class="flex flex-col lg:flex-row items-start lg:items-center gap-6">
+                <div class="flex items-center gap-4 flex-1">
+                    <div class="bg-yellow-500/20 p-4 rounded-full">
+                        <i class="fas fa-crown text-3xl text-yellow-500"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-2xl font-bold text-white" x-text="player.username"></h2>
+                        <p class="text-gray-400">Player ID: <span class="text-primary" x-text="player.player_id"></span></p>
+                    </div>
+                </div>
+                
+                <!-- Current Rank Display -->
+                <div class="bg-dark-100 rounded-lg p-4 flex-1 lg:max-w-md">
+                    <p class="text-sm text-gray-400 mb-2">Current Status</p>
+                    <template x-if="player.faction && player.faction !== 'Civil' && player.faction !== 'Fără'">
+                        <div>
+                            <p class="text-lg font-semibold text-white">
+                                <i class="fas fa-users text-primary mr-2"></i>
+                                <span x-text="player.faction"></span>
+                            </p>
+                            <p class="text-yellow-500">
+                                <i class="fas fa-star mr-2"></i>
+                                <span x-text="player.faction_rank || 'Membru'"></span>
+                            </p>
+                        </div>
+                    </template>
+                    <template x-if="!player.faction || player.faction === 'Civil' || player.faction === 'Fără'">
+                        <p class="text-gray-500">
+                            <i class="fas fa-user mr-2"></i>No faction
+                        </p>
+                    </template>
+                </div>
+
+                <a :href="'/player/' + player.player_id" class="bg-dark-100 hover:bg-dark-300 text-white px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+                    <i class="fas fa-external-link-alt mr-2"></i>View Profile
+                </a>
+            </div>
+        </div>
+    </template>
+
+    <!-- No Player Selected -->
+    <template x-if="!player && !loading && !searched">
+        <div class="bg-dark-200 rounded-xl p-12 text-center">
+            <i class="fas fa-search text-6xl text-gray-600 mb-4"></i>
+            <h3 class="text-xl font-semibold text-gray-400 mb-2">Search for a Player</h3>
+            <p class="text-gray-500">Enter a player ID or name above to view their rank history</p>
+        </div>
+    </template>
+
+    <!-- No Results -->
+    <template x-if="!player && !loading && searched">
+        <div class="bg-dark-200 rounded-xl p-12 text-center">
+            <i class="fas fa-user-slash text-6xl text-red-500/50 mb-4"></i>
+            <h3 class="text-xl font-semibold text-gray-400 mb-2">Player Not Found</h3>
+            <p class="text-gray-500">No player found with ID or name: "<span x-text="lastSearch"></span>"</p>
+        </div>
+    </template>
+
+    <!-- Rank History Cards -->
+    <template x-if="player && rankHistory.length > 0">
+        <div>
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-semibold text-white">
+                    <i class="fas fa-history text-primary mr-2"></i>Rank Progression
+                </h2>
+                <span class="bg-yellow-500/20 text-yellow-500 px-3 py-1 rounded-full text-sm font-medium" x-text="rankHistory.length + ' rank(s)'"></span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <template x-for="(rank, index) in rankHistory" :key="index">
+                    <div class="bg-dark-200 rounded-xl p-5 shadow-lg relative overflow-hidden"
+                         :class="rank.is_current ? 'border-2 border-yellow-500' : ''">
+                        <!-- Current Badge -->
+                        <template x-if="rank.is_current">
+                            <div class="absolute top-0 right-0 bg-yellow-500 text-dark-300 px-3 py-1 text-xs font-bold rounded-bl-lg">
+                                CURRENT
+                            </div>
+                        </template>
+
+                        <!-- Rank Info -->
+                        <div class="flex items-start gap-4">
+                            <div class="p-3 rounded-full" :class="rank.is_current ? 'bg-yellow-500/20' : 'bg-dark-100'">
+                                <i class="fas fa-medal text-2xl" :class="rank.is_current ? 'text-yellow-500' : 'text-gray-500'"></i>
+                            </div>
+                            <div class="flex-1">
+                                <h3 class="text-lg font-bold" :class="rank.is_current ? 'text-yellow-500' : 'text-white'" x-text="rank.rank_name"></h3>
+                                <p class="text-primary text-sm" x-text="rank.faction"></p>
+                            </div>
+                        </div>
+
+                        <!-- Dates -->
+                        <div class="mt-4 pt-4 border-t border-dark-100 space-y-2">
+                            <div class="flex items-center justify-between text-sm">
+                                <span class="text-gray-500">
+                                    <i class="fas fa-calendar-plus mr-2"></i>Obtained
+                                </span>
+                                <span class="text-green-400" x-text="formatDate(rank.rank_obtained)"></span>
+                            </div>
+                            <template x-if="rank.rank_lost">
+                                <div class="flex items-center justify-between text-sm">
+                                    <span class="text-gray-500">
+                                        <i class="fas fa-calendar-minus mr-2"></i>Lost
+                                    </span>
+                                    <span class="text-red-400" x-text="formatDate(rank.rank_lost)"></span>
+                                </div>
+                            </template>
+                            <template x-if="!rank.rank_lost && !rank.is_current">
+                                <div class="flex items-center justify-between text-sm">
+                                    <span class="text-gray-500">
+                                        <i class="fas fa-calendar-minus mr-2"></i>Lost
+                                    </span>
+                                    <span class="text-gray-600">Unknown</span>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- Duration -->
+                        <div class="mt-3 text-center">
+                            <span class="text-xs text-gray-500">Duration: </span>
+                            <span class="text-sm font-medium" :class="rank.is_current ? 'text-yellow-500' : 'text-gray-400'" x-text="calculateDuration(rank)"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </template>
+
+    <!-- No Rank History -->
+    <template x-if="player && rankHistory.length === 0 && !loading">
+        <div class="bg-dark-200 rounded-xl p-12 text-center">
+            <i class="fas fa-medal text-6xl text-gray-600 mb-4"></i>
+            <h3 class="text-xl font-semibold text-gray-400 mb-2">No Rank History</h3>
+            <p class="text-gray-500">This player has no recorded faction rank changes</p>
+            <template x-if="player.faction && player.faction !== 'Civil' && player.faction !== 'Fără'">
+                <p class="text-gray-400 mt-4">
+                    Current: <span class="text-primary" x-text="player.faction"></span> 
+                    <span class="text-yellow-500" x-text="player.faction_rank ? ' - ' + player.faction_rank : ''"></span>
+                </p>
+            </template>
+        </div>
+    </template>
+</div>
+
+<script>
+function rankHistoryApp() {
+    return {
+        searchQuery: '',
+        lastSearch: '',
+        player: null,
+        rankHistory: [],
+        loading: false,
+        searched: false,
+
+        init() {
+            // Check URL for player_id parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            const playerId = urlParams.get('player_id');
+            if (playerId) {
+                this.searchQuery = playerId;
+                this.searchPlayer();
+            }
+        },
+
+        async searchPlayer() {
+            if (!this.searchQuery.trim()) return;
+            
+            this.loading = true;
+            this.searched = true;
+            this.lastSearch = this.searchQuery;
+            this.player = null;
+            this.rankHistory = [];
+
+            try {
+                // First try to get player by exact ID
+                let playerId = this.searchQuery.trim();
+                
+                // If not a number, search by name first
+                if (!/^\d+$/.test(playerId)) {
+                    const searchResponse = await fetch('/api/search?q=' + encodeURIComponent(playerId));
+                    const searchData = await searchResponse.json();
+                    if (searchData.players && searchData.players.length > 0) {
+                        playerId = searchData.players[0].player_id;
+                    } else {
+                        this.loading = false;
+                        return;
+                    }
+                }
+
+                // Get player profile
+                const playerResponse = await fetch('/api/player/' + playerId);
+                if (!playerResponse.ok) {
+                    this.loading = false;
+                    return;
+                }
+                this.player = await playerResponse.json();
+
+                // Get rank history
+                const historyResponse = await fetch('/api/rank-history/' + playerId);
+                if (historyResponse.ok) {
+                    const historyData = await historyResponse.json();
+                    this.rankHistory = historyData.history || [];
+                }
+
+            } catch (error) {
+                console.error('Error searching player:', error);
+            }
+            
+            this.loading = false;
+        },
+
+        formatDate(dateStr) {
+            if (!dateStr) return 'Unknown';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            });
+        },
+
+        calculateDuration(rank) {
+            if (!rank.rank_obtained) return 'Unknown';
+            
+            const start = new Date(rank.rank_obtained);
+            const end = rank.rank_lost ? new Date(rank.rank_lost) : new Date();
+            const diffMs = end - start;
+            const diffDays = Math.floor(diffMs / 86400000);
+            
+            if (diffDays < 1) return 'Less than a day';
+            if (diffDays === 1) return '1 day';
+            if (diffDays < 7) return diffDays + ' days';
+            if (diffDays < 30) {
+                const weeks = Math.floor(diffDays / 7);
+                return weeks + (weeks === 1 ? ' week' : ' weeks');
+            }
+            if (diffDays < 365) {
+                const months = Math.floor(diffDays / 30);
+                return months + (months === 1 ? ' month' : ' months');
+            }
+            const years = Math.floor(diffDays / 365);
+            const remainingMonths = Math.floor((diffDays % 365) / 30);
+            if (remainingMonths > 0) {
+                return years + (years === 1 ? ' year ' : ' years ') + remainingMonths + (remainingMonths === 1 ? ' month' : ' months');
+            }
+            return years + (years === 1 ? ' year' : ' years');
+        }
+    }
+}
+</script>
+{% endblock %}
