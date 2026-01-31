@@ -146,6 +146,14 @@ def extract_target_from_text(text: str) -> tuple:
     if match:
         return (match.group(2), match.group(1).strip())
     
+    # Pattern 12: Kill character "jucatorului PlayerName(ID)"
+    # Note: For kill_character, the target is WHO GOT KILLED
+    match = re.search(
+        r"(?:KILL\s+CHARACTER\s+)?jucatorului\s+([^(]+)\((\d+)\)", text, re.IGNORECASE
+    )
+    if match:
+        return (match.group(2), match.group(1).strip())
+    
     return (None, None)
 
 
