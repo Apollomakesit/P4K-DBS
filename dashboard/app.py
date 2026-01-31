@@ -445,6 +445,462 @@ def api_admin_actions():
         logger.error(f"Error getting admin actions: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/promotions')
+def api_promotions():
+    """Get recent faction promotions (rank changes)"""
+    try:
+        days = min(int(request.args.get('days', 7)), 90)
+        limit = min(int(request.args.get('limit', 100)), 500)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cutoff = datetime.now() - timedelta(days=days)
+        
+        cursor.execute("""
+            SELECT 
+                p.player_id,
+                p.username as player_name,
+                ph.old_value as old_rank,
+                ph.new_value as new_rank,
+                p.faction,
+                ph.changed_at as timestamp
+            FROM profile_history ph
+            JOIN player_profiles p ON p.player_id = ph.player_id
+            WHERE ph.field_name = 'faction_rank' 
+            AND ph.changed_at >= ?
+            ORDER BY ph.changed_at DESC
+            LIMIT ?
+        """, (cutoff, limit))
+        
+        promotions = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        
+        return jsonify({
+            'count': len(promotions),
+            'days': days,
+            'promotions': promotions
+        })
+    except Exception as e:
+        logger.error(f"Error getting promotions: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/heists')
+def api_heists():
+    """Get bank heist deliveries with player faction info"""
+    try:
+        days = min(int(request.args.get('days', 30)), 90)
+        limit = min(int(request.args.get('limit', 100)), 500)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cutoff = datetime.now() - timedelta(days=days)
+        
+        cursor.execute("""
+            SELECT 
+                a.player_id,
+                a.player_name,
+                a.action_type,
+                a.action_detail,
+                a.timestamp,
+                p.faction,
+                p.faction_rank
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.player_id = p.player_id
+            WHERE a.action_type = 'bank_heist_delivery'
+            AND a.timestamp >= ?
+            ORDER BY a.timestamp DESC
+            LIMIT ?
+        """, (cutoff, limit))
+        
+        heists = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        
+        return jsonify({
+            'count': len(heists),
+            'days': days,
+            'heists': heists
+        })
+    except Exception as e:
+        logger.error(f"Error getting heists: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/rank-history/<player_id>')
+def api_rank_history(player_id):
+    """Get player's faction rank history"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get rank history
+        cursor.execute("""
+            SELECT * FROM rank_history 
+            WHERE player_id = ? 
+            ORDER BY rank_obtained DESC
+        """, (player_id,))
+        
+        history = [dict(row) for row in cursor.fetchall()]
+        
+        # Get player name
+        cursor.execute("SELECT username FROM player_profiles WHERE player_id = ?", (player_id,))
+        row = cursor.fetchone()
+        player_name = row['username'] if row else f"Player_{player_id}"
+        
+        conn.close()
+        
+        return jsonify({
+            'player_id': player_id,
+            'player_name': player_name,
+            'count': len(history),
+            'history': history
+        })
+    except Exception as e:
+        logger.error(f"Error getting rank history for {player_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sessions/<player_id>')
+def api_sessions(player_id):
+    """Get player's detailed session history with first/last login info"""
+    try:
+        days = min(int(request.args.get('days', 7)), 90)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get player name
+        cursor.execute("SELECT username FROM player_profiles WHERE player_id = ?", (player_id,))
+        row = cursor.fetchone()
+        player_name = row['username'] if row else f"Player_{player_id}"
+        
+        # Get first ever login
+        cursor.execute("""
+            SELECT timestamp FROM login_events
+            WHERE player_id = ? AND event_type = 'login'
+            ORDER BY timestamp ASC
+            LIMIT 1
+        """, (player_id,))
+        row = cursor.fetchone()
+        first_login = row['timestamp'] if row else None
+        
+        # Get last login
+        cursor.execute("""
+            SELECT timestamp FROM login_events
+            WHERE player_id = ? AND event_type = 'login'
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """, (player_id,))
+        row = cursor.fetchone()
+        last_login = row['timestamp'] if row else None
+        
+        # Count total logins
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM login_events
+            WHERE player_id = ? AND event_type = 'login'
+        """, (player_id,))
+        total_logins = cursor.fetchone()['count']
+        
+        # Get recent sessions (login/logout pairs) with duration
+        cutoff = datetime.now() - timedelta(days=days)
+        
+        cursor.execute("""
+            WITH ordered_events AS (
+                SELECT 
+                    id,
+                    event_type,
+                    timestamp,
+                    session_duration_seconds,
+                    ROW_NUMBER() OVER (ORDER BY timestamp ASC) as rn
+                FROM login_events
+                WHERE player_id = ?
+                AND timestamp >= ?
+            ),
+            logouts_with_prev AS (
+                SELECT 
+                    o.rn as logout_rn,
+                    o.timestamp as logout_time,
+                    o.session_duration_seconds,
+                    COALESCE(
+                        (SELECT MAX(p.rn) FROM ordered_events p 
+                         WHERE p.event_type = 'logout' AND p.rn < o.rn),
+                        0
+                    ) as prev_logout_rn
+                FROM ordered_events o
+                WHERE o.event_type = 'logout'
+            )
+            SELECT 
+                (SELECT MIN(e.timestamp) 
+                 FROM ordered_events e 
+                 WHERE e.event_type = 'login' 
+                 AND e.rn > lwp.prev_logout_rn 
+                 AND e.rn < lwp.logout_rn) as login_time,
+                lwp.logout_time,
+                lwp.session_duration_seconds
+            FROM logouts_with_prev lwp
+            WHERE (SELECT MIN(e.timestamp) 
+                   FROM ordered_events e 
+                   WHERE e.event_type = 'login' 
+                   AND e.rn > lwp.prev_logout_rn 
+                   AND e.rn < lwp.logout_rn) IS NOT NULL
+            ORDER BY lwp.logout_time DESC
+            LIMIT 100
+        """, (player_id, cutoff))
+        
+        sessions = [dict(row) for row in cursor.fetchall()]
+        
+        # Calculate total playtime from sessions
+        total_seconds = sum(s.get('session_duration_seconds', 0) or 0 for s in sessions)
+        total_hours = total_seconds / 3600
+        
+        conn.close()
+        
+        return jsonify({
+            'player_id': player_id,
+            'player_name': player_name,
+            'first_login': first_login,
+            'last_login': last_login,
+            'total_logins': total_logins,
+            'days': days,
+            'session_count': len(sessions),
+            'total_hours': round(total_hours, 2),
+            'sessions': sessions
+        })
+    except Exception as e:
+        logger.error(f"Error getting sessions for {player_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/faction-actions/<faction_name>')
+def api_faction_actions(faction_name):
+    """Get all actions for players in a specific faction"""
+    try:
+        days = min(int(request.args.get('days', 7)), 30)
+        limit = min(int(request.args.get('limit', 200)), 500)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cutoff = datetime.now() - timedelta(days=days)
+        
+        # Get all player IDs in this faction
+        cursor.execute("""
+            SELECT player_id FROM player_profiles WHERE faction = ?
+        """, (faction_name,))
+        faction_player_ids = [row['player_id'] for row in cursor.fetchall()]
+        
+        if not faction_player_ids:
+            conn.close()
+            return jsonify({
+                'faction': faction_name,
+                'count': 0,
+                'actions': []
+            })
+        
+        # Get all actions for these players
+        placeholders = ','.join('?' * len(faction_player_ids))
+        cursor.execute(f"""
+            SELECT 
+                a.*,
+                p.faction,
+                p.faction_rank
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.player_id = p.player_id
+            WHERE a.player_id IN ({placeholders})
+            AND a.timestamp >= ?
+            ORDER BY a.timestamp DESC
+            LIMIT ?
+        """, (*faction_player_ids, cutoff, limit))
+        
+        actions = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        
+        return jsonify({
+            'faction': faction_name,
+            'days': days,
+            'member_count': len(faction_player_ids),
+            'count': len(actions),
+            'actions': actions
+        })
+    except Exception as e:
+        logger.error(f"Error getting faction actions for {faction_name}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/unknown-actions')
+def api_unknown_actions():
+    """Get unrecognized action patterns for analysis"""
+    try:
+        limit = min(int(request.args.get('limit', 50)), 500)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get unique unknown patterns with counts
+        cursor.execute("""
+            SELECT action_type, action_detail, raw_text, COUNT(*) as count
+            FROM actions 
+            WHERE action_type IN ('unknown', 'other')
+            GROUP BY raw_text
+            ORDER BY count DESC
+            LIMIT ?
+        """, (limit,))
+        
+        patterns = [dict(row) for row in cursor.fetchall()]
+        
+        # Get total count
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM actions 
+            WHERE action_type IN ('unknown', 'other')
+        """)
+        total = cursor.fetchone()['total']
+        
+        conn.close()
+        
+        return jsonify({
+            'total_unknown': total,
+            'unique_patterns': len(patterns),
+            'patterns': patterns
+        })
+    except Exception as e:
+        logger.error(f"Error getting unknown actions: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/action-stats')
+def api_action_stats():
+    """Get action type statistics breakdown"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT action_type, COUNT(*) as count
+            FROM actions
+            GROUP BY action_type
+            ORDER BY count DESC
+        """)
+        
+        stats = [dict(row) for row in cursor.fetchall()]
+        total = sum(s['count'] for s in stats)
+        
+        # Separate recognized vs unrecognized
+        recognized = [s for s in stats if s['action_type'] not in ('unknown', 'other')]
+        unrecognized = [s for s in stats if s['action_type'] in ('unknown', 'other')]
+        
+        recognized_count = sum(s['count'] for s in recognized)
+        unrecognized_count = sum(s['count'] for s in unrecognized)
+        
+        conn.close()
+        
+        return jsonify({
+            'total_actions': total,
+            'recognized_count': recognized_count,
+            'unrecognized_count': unrecognized_count,
+            'recognition_rate': round((recognized_count / total * 100), 2) if total > 0 else 0,
+            'by_type': stats
+        })
+    except Exception as e:
+        logger.error(f"Error getting action stats: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/scan-progress')
+def api_scan_progress():
+    """Get initial scan progress (admin info)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM scan_progress WHERE id = 1")
+        row = cursor.fetchone()
+        
+        if not row:
+            conn.close()
+            return jsonify({'error': 'No scan progress data'}), 404
+        
+        progress = dict(row)
+        conn.close()
+        
+        return jsonify(progress)
+    except Exception as e:
+        logger.error(f"Error getting scan progress: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/profile-history/<player_id>')
+def api_profile_history(player_id):
+    """Get player's profile change history"""
+    try:
+        limit = min(int(request.args.get('limit', 50)), 200)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT * FROM profile_history
+            WHERE player_id = ?
+            ORDER BY changed_at DESC
+            LIMIT ?
+        """, (player_id, limit))
+        
+        history = [dict(row) for row in cursor.fetchall()]
+        
+        # Get player name
+        cursor.execute("SELECT username FROM player_profiles WHERE player_id = ?", (player_id,))
+        row = cursor.fetchone()
+        player_name = row['username'] if row else f"Player_{player_id}"
+        
+        conn.close()
+        
+        return jsonify({
+            'player_id': player_id,
+            'player_name': player_name,
+            'count': len(history),
+            'history': history
+        })
+    except Exception as e:
+        logger.error(f"Error getting profile history for {player_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/login-activity')
+def api_login_activity():
+    """Get login/logout activity for specified time period"""
+    try:
+        hours = min(int(request.args.get('hours', 24)), 168)  # Max 7 days
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cutoff = datetime.now() - timedelta(hours=hours)
+        
+        # Get hourly login/logout counts
+        data = []
+        now = datetime.now()
+        
+        for i in range(hours, 0, -1):
+            hour_start = now - timedelta(hours=i)
+            hour_end = now - timedelta(hours=i-1)
+            
+            cursor.execute("""
+                SELECT 
+                    SUM(CASE WHEN event_type = 'login' THEN 1 ELSE 0 END) as logins,
+                    SUM(CASE WHEN event_type = 'logout' THEN 1 ELSE 0 END) as logouts
+                FROM login_events 
+                WHERE timestamp >= ? AND timestamp < ?
+            """, (hour_start, hour_end))
+            
+            row = cursor.fetchone()
+            data.append({
+                'hour': hour_start.strftime('%Y-%m-%d %H:00'),
+                'logins': row['logins'] or 0,
+                'logouts': row['logouts'] or 0
+            })
+        
+        conn.close()
+        
+        return jsonify({
+            'hours': hours,
+            'data': data
+        })
+    except Exception as e:
+        logger.error(f"Error getting login activity: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # ============================================================================
 # MAIN
 # ============================================================================
