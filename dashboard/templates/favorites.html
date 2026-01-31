@@ -1,0 +1,365 @@
+{% extends "base.html" %}
+
+{% block title %}Favorites - P4K-DBS{% endblock %}
+
+{% block content %}
+<div x-data="favoritesPage()" x-init="init()">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-8">
+        <div>
+            <h1 class="text-3xl font-bold text-white flex items-center">
+                <i class="fas fa-star text-yellow-500 mr-3"></i>
+                Favorite Players
+            </h1>
+            <p class="text-gray-400 mt-1">Quick access to players you're tracking</p>
+        </div>
+        <div class="flex items-center space-x-4">
+            <span class="text-gray-400 text-sm">
+                <span x-text="favorites.length">0</span> player(s) saved
+            </span>
+            <button @click="refreshAll()" 
+                    :disabled="loading"
+                    class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition">
+                <i class="fas fa-sync-alt mr-2" :class="{ 'fa-spin': loading }"></i> Refresh All
+            </button>
+        </div>
+    </div>
+
+    <!-- Add Player -->
+    <div class="bg-gray-800 rounded-xl p-6 shadow-lg mb-6">
+        <h2 class="text-lg font-semibold text-white mb-4">
+            <i class="fas fa-plus-circle text-green-500 mr-2"></i>
+            Add Player to Favorites
+        </h2>
+        <div class="flex gap-4">
+            <input type="text" x-model="newPlayerId" 
+                   placeholder="Enter Player ID (e.g., 155733)" 
+                   @keyup.enter="addFavorite()"
+                   class="flex-1 bg-gray-700 text-white px-4 py-3 rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500">
+            <button @click="addFavorite()" 
+                    :disabled="!newPlayerId || addingPlayer"
+                    class="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg transition font-medium">
+                <i class="fas fa-star mr-2"></i> Add
+            </button>
+        </div>
+        <p x-show="addError" class="text-red-400 text-sm mt-2" x-text="addError"></p>
+    </div>
+
+    <!-- Empty State -->
+    <div x-show="favorites.length === 0 && !loading" class="text-center py-16 bg-gray-800 rounded-xl">
+        <i class="fas fa-star text-6xl text-gray-600 mb-4"></i>
+        <h3 class="text-xl text-gray-400 mb-2">No favorites yet</h3>
+        <p class="text-gray-500">Add player IDs above to start tracking them</p>
+    </div>
+
+    <!-- Loading -->
+    <div x-show="loading && favorites.length > 0" class="text-center py-8">
+        <i class="fas fa-spinner fa-spin text-3xl text-blue-500"></i>
+        <p class="text-gray-400 mt-2">Loading player data...</p>
+    </div>
+
+    <!-- Favorites Grid -->
+    <div x-show="favorites.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <template x-for="(player, idx) in favoritesData" :key="player.id">
+            <div class="bg-gray-800 rounded-xl p-6 shadow-lg hover:shadow-xl transition relative group">
+                <!-- Remove Button -->
+                <button @click="removeFavorite(player.id)" 
+                        class="absolute top-3 right-3 text-gray-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition"
+                        title="Remove from favorites">
+                    <i class="fas fa-times"></i>
+                </button>
+
+                <!-- Player Info -->
+                <div class="flex items-start mb-4">
+                    <div class="w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold mr-4"
+                         :class="player.is_online ? 'bg-green-600' : 'bg-gray-600'">
+                        <span x-text="(player.username || 'P')[0].toUpperCase()"></span>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <h3 class="text-lg font-semibold text-white truncate">
+                            <a :href="`/player/${player.id}`" class="hover:text-blue-400 transition">
+                                <span x-text="player.username || `Player ${player.id}`"></span>
+                            </a>
+                        </h3>
+                        <p class="text-sm text-gray-400">ID: <span x-text="player.id"></span></p>
+                    </div>
+                </div>
+
+                <!-- Status -->
+                <div class="flex items-center mb-4">
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-sm"
+                          :class="player.is_online ? 'bg-green-600/20 text-green-400' : 'bg-gray-700 text-gray-400'">
+                        <span class="w-2 h-2 rounded-full mr-2"
+                              :class="player.is_online ? 'bg-green-500' : 'bg-gray-500'"></span>
+                        <span x-text="player.is_online ? 'Online' : 'Offline'"></span>
+                    </span>
+                </div>
+
+                <!-- Stats -->
+                <div class="grid grid-cols-2 gap-3 text-sm">
+                    <div class="bg-gray-700/50 rounded-lg p-3">
+                        <div class="text-gray-400 text-xs mb-1">Faction</div>
+                        <div class="text-white truncate" x-text="player.faction || 'None'"></div>
+                    </div>
+                    <div class="bg-gray-700/50 rounded-lg p-3">
+                        <div class="text-gray-400 text-xs mb-1">Rank</div>
+                        <div class="text-white truncate" x-text="player.faction_rank || '-'"></div>
+                    </div>
+                    <div class="bg-gray-700/50 rounded-lg p-3">
+                        <div class="text-gray-400 text-xs mb-1">Played</div>
+                        <div class="text-white" x-text="player.played_hours ? player.played_hours.toFixed(1) + 'h' : '-'"></div>
+                    </div>
+                    <div class="bg-gray-700/50 rounded-lg p-3">
+                        <div class="text-gray-400 text-xs mb-1">Warnings</div>
+                        <div :class="player.warnings >= 3 ? 'text-red-400' : player.warnings > 0 ? 'text-yellow-400' : 'text-green-400'"
+                             x-text="(player.warnings || 0) + '/3'"></div>
+                    </div>
+                </div>
+
+                <!-- Last Seen -->
+                <div class="mt-4 pt-4 border-t border-gray-700 text-xs text-gray-500">
+                    <i class="fas fa-clock mr-1"></i>
+                    Last seen: <span x-text="player.last_seen ? formatDate(player.last_seen) : 'Unknown'"></span>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="mt-4 flex gap-2">
+                    <a :href="`/player/${player.id}`" 
+                       class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center py-2 rounded-lg text-sm transition">
+                        <i class="fas fa-user mr-1"></i> Profile
+                    </a>
+                    <a :href="`/actions/${player.id}`" 
+                       class="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-center py-2 rounded-lg text-sm transition">
+                        <i class="fas fa-list mr-1"></i> Actions
+                    </a>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Import/Export -->
+    <div x-show="favorites.length > 0" class="mt-8 bg-gray-800 rounded-xl p-6">
+        <h3 class="text-lg font-semibold text-white mb-4">
+            <i class="fas fa-file-export text-gray-400 mr-2"></i>
+            Backup & Restore
+        </h3>
+        <div class="flex flex-wrap gap-4">
+            <button @click="exportFavorites()" 
+                    class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition">
+                <i class="fas fa-download mr-2"></i> Export List
+            </button>
+            <label class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition cursor-pointer">
+                <i class="fas fa-upload mr-2"></i> Import List
+                <input type="file" accept=".json" @change="importFavorites($event)" class="hidden">
+            </label>
+            <button @click="clearAllFavorites()" 
+                    class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition ml-auto">
+                <i class="fas fa-trash mr-2"></i> Clear All
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function favoritesPage() {
+    return {
+        favorites: [],
+        favoritesData: [],
+        newPlayerId: '',
+        addError: '',
+        addingPlayer: false,
+        loading: false,
+        
+        init() {
+            this.loadFavorites();
+            this.refreshAll();
+        },
+        
+        loadFavorites() {
+            const stored = localStorage.getItem('p4k_favorites');
+            this.favorites = stored ? JSON.parse(stored) : [];
+        },
+        
+        saveFavorites() {
+            localStorage.setItem('p4k_favorites', JSON.stringify(this.favorites));
+        },
+        
+        async addFavorite() {
+            const id = this.newPlayerId.trim();
+            if (!id) return;
+            
+            if (!/^\d+$/.test(id)) {
+                this.addError = 'Please enter a valid numeric player ID';
+                return;
+            }
+            
+            if (this.favorites.includes(id)) {
+                this.addError = 'This player is already in your favorites';
+                return;
+            }
+            
+            this.addingPlayer = true;
+            this.addError = '';
+            
+            try {
+                // Verify player exists
+                const res = await fetch(`/api/player/${id}`);
+                if (!res.ok) {
+                    this.addError = 'Player not found';
+                    return;
+                }
+                
+                const player = await res.json();
+                
+                this.favorites.push(id);
+                this.saveFavorites();
+                
+                this.favoritesData.push({
+                    id: id,
+                    username: player.username,
+                    is_online: player.is_online,
+                    faction: player.faction,
+                    faction_rank: player.faction_rank,
+                    played_hours: player.played_hours,
+                    warnings: player.warnings,
+                    last_seen: player.last_seen
+                });
+                
+                this.newPlayerId = '';
+                
+            } catch (e) {
+                this.addError = 'Failed to add player';
+                console.error(e);
+            } finally {
+                this.addingPlayer = false;
+            }
+        },
+        
+        removeFavorite(id) {
+            if (!confirm('Remove this player from favorites?')) return;
+            
+            this.favorites = this.favorites.filter(f => f !== id);
+            this.favoritesData = this.favoritesData.filter(f => f.id !== id);
+            this.saveFavorites();
+        },
+        
+        clearAllFavorites() {
+            if (!confirm('Remove ALL favorites? This cannot be undone.')) return;
+            
+            this.favorites = [];
+            this.favoritesData = [];
+            this.saveFavorites();
+        },
+        
+        async refreshAll() {
+            if (this.favorites.length === 0) return;
+            
+            this.loading = true;
+            this.favoritesData = [];
+            
+            for (const id of this.favorites) {
+                try {
+                    const res = await fetch(`/api/player/${id}`);
+                    if (res.ok) {
+                        const player = await res.json();
+                        this.favoritesData.push({
+                            id: id,
+                            username: player.username,
+                            is_online: player.is_online,
+                            faction: player.faction,
+                            faction_rank: player.faction_rank,
+                            played_hours: player.played_hours,
+                            warnings: player.warnings,
+                            last_seen: player.last_seen
+                        });
+                    } else {
+                        // Player not found but keep in list
+                        this.favoritesData.push({
+                            id: id,
+                            username: null,
+                            is_online: false,
+                            faction: null,
+                            faction_rank: null,
+                            played_hours: null,
+                            warnings: null,
+                            last_seen: null
+                        });
+                    }
+                } catch (e) {
+                    console.error(`Failed to fetch player ${id}:`, e);
+                }
+            }
+            
+            this.loading = false;
+        },
+        
+        formatDate(dateStr) {
+            if (!dateStr) return 'Unknown';
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            
+            if (diffMins < 1) return 'Just now';
+            if (diffMins < 60) return `${diffMins}m ago`;
+            
+            const diffHours = Math.floor(diffMins / 60);
+            if (diffHours < 24) return `${diffHours}h ago`;
+            
+            const diffDays = Math.floor(diffHours / 24);
+            if (diffDays < 7) return `${diffDays}d ago`;
+            
+            return date.toLocaleDateString();
+        },
+        
+        exportFavorites() {
+            const data = {
+                version: 1,
+                exportedAt: new Date().toISOString(),
+                favorites: this.favorites
+            };
+            
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `p4k_favorites_${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            
+            URL.revokeObjectURL(url);
+        },
+        
+        importFavorites(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    
+                    if (data.favorites && Array.isArray(data.favorites)) {
+                        // Merge with existing
+                        const merged = [...new Set([...this.favorites, ...data.favorites])];
+                        this.favorites = merged;
+                        this.saveFavorites();
+                        this.refreshAll();
+                        alert(`Imported ${data.favorites.length} player(s)!`);
+                    } else {
+                        alert('Invalid favorites file format');
+                    }
+                } catch (err) {
+                    alert('Failed to parse favorites file');
+                    console.error(err);
+                }
+            };
+            reader.readAsText(file);
+            
+            // Reset input
+            event.target.value = '';
+        }
+    }
+}
+</script>
+{% endblock %}

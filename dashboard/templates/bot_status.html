@@ -1,0 +1,377 @@
+{% extends "base.html" %}
+
+{% block title %}Bot Status - P4K-DBS{% endblock %}
+
+{% block content %}
+<div x-data="botStatusPage()" x-init="init()">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-8">
+        <div>
+            <h1 class="text-3xl font-bold text-white flex items-center">
+                <i class="fas fa-robot text-blue-400 mr-3"></i>
+                Bot Status
+            </h1>
+            <p class="text-gray-400 mt-1">Discord bot health monitoring & diagnostics</p>
+        </div>
+        <div class="flex items-center gap-4">
+            <span class="text-sm text-gray-400">Last updated: <span x-text="lastUpdate"></span></span>
+            <button @click="refresh()" 
+                    :class="{ 'animate-spin': loading }"
+                    class="bg-gray-700 hover:bg-gray-600 text-white p-3 rounded-lg transition">
+                <i class="fas fa-sync-alt"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Connection Status Banner -->
+    <div class="mb-6 p-4 rounded-xl"
+         :class="{
+            'bg-green-600/20 border border-green-500': status.connected,
+            'bg-red-600/20 border border-red-500': !status.connected && !loading,
+            'bg-gray-700': loading
+         }">
+        <div class="flex items-center">
+            <div class="w-4 h-4 rounded-full mr-3"
+                 :class="{
+                    'bg-green-500 animate-pulse': status.connected,
+                    'bg-red-500': !status.connected && !loading,
+                    'bg-gray-500': loading
+                 }"></div>
+            <span class="text-lg font-medium"
+                  :class="{
+                    'text-green-400': status.connected,
+                    'text-red-400': !status.connected && !loading,
+                    'text-gray-400': loading
+                  }"
+                  x-text="loading ? 'Connecting...' : (status.connected ? '✓ Bot Online & Connected' : '✗ Bot Offline or Unreachable')">
+            </span>
+            <span x-show="status.uptime" class="ml-auto text-gray-400">
+                Uptime: <span x-text="status.uptime"></span>
+            </span>
+        </div>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <!-- Memory Usage -->
+        <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Memory Usage</p>
+                    <p class="text-2xl font-bold text-white mt-1">
+                        <span x-text="status.memory?.current_mb ? status.memory.current_mb.toFixed(1) + ' MB' : 'N/A'"></span>
+                    </p>
+                </div>
+                <div class="w-12 h-12 bg-blue-600/20 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-memory text-blue-400 text-xl"></i>
+                </div>
+            </div>
+            <div x-show="status.memory" class="mt-4">
+                <div class="flex justify-between text-xs text-gray-400 mb-1">
+                    <span>Peak: <span x-text="status.memory?.peak_mb ? status.memory.peak_mb.toFixed(1) + ' MB' : 'N/A'"></span></span>
+                </div>
+                <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+                    <div class="h-full bg-blue-500 transition-all duration-500 rounded-full"
+                         :style="{ width: (status.memory?.percent || 0) + '%' }"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CPU Usage -->
+        <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">CPU Usage</p>
+                    <p class="text-2xl font-bold text-white mt-1">
+                        <span x-text="status.cpu?.percent ? status.cpu.percent.toFixed(1) + '%' : 'N/A'"></span>
+                    </p>
+                </div>
+                <div class="w-12 h-12 bg-purple-600/20 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-microchip text-purple-400 text-xl"></i>
+                </div>
+            </div>
+            <div x-show="status.cpu" class="mt-4">
+                <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+                    <div class="h-full transition-all duration-500 rounded-full"
+                         :class="{ 'bg-green-500': status.cpu?.percent < 50, 'bg-yellow-500': status.cpu?.percent >= 50 && status.cpu?.percent < 80, 'bg-red-500': status.cpu?.percent >= 80 }"
+                         :style="{ width: (status.cpu?.percent || 0) + '%' }"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Active Tasks -->
+        <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Active Tasks</p>
+                    <p class="text-2xl font-bold text-white mt-1">
+                        <span x-text="activeTasks + '/' + totalTasks"></span>
+                    </p>
+                </div>
+                <div class="w-12 h-12 bg-green-600/20 rounded-lg flex items-center justify-center">
+                    <i class="fas fa-tasks text-green-400 text-xl"></i>
+                </div>
+            </div>
+            <div class="mt-4 text-sm">
+                <span :class="activeTasks === totalTasks ? 'text-green-400' : 'text-yellow-400'">
+                    <i :class="activeTasks === totalTasks ? 'fas fa-check-circle' : 'fas fa-exclamation-circle'" class="mr-1"></i>
+                    <span x-text="activeTasks === totalTasks ? 'All tasks healthy' : 'Some tasks need attention'"></span>
+                </span>
+            </div>
+        </div>
+
+        <!-- Error Count -->
+        <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-400 text-sm">Total Errors (24h)</p>
+                    <p class="text-2xl font-bold text-white mt-1">
+                        <span x-text="totalErrors"></span>
+                    </p>
+                </div>
+                <div class="w-12 h-12 rounded-lg flex items-center justify-center"
+                     :class="totalErrors > 10 ? 'bg-red-600/20' : 'bg-gray-700'">
+                    <i class="fas fa-bug text-xl" 
+                       :class="totalErrors > 10 ? 'text-red-400' : 'text-gray-400'"></i>
+                </div>
+            </div>
+            <div class="mt-4 text-sm">
+                <span :class="totalErrors === 0 ? 'text-green-400' : totalErrors > 10 ? 'text-red-400' : 'text-yellow-400'">
+                    <span x-text="totalErrors === 0 ? 'No errors!' : totalErrors > 10 ? 'High error rate' : 'Some errors'"></span>
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Task Health Grid -->
+    <div class="bg-gray-800 rounded-xl p-6 shadow-lg mb-8">
+        <h2 class="text-lg font-semibold text-white mb-4">
+            <i class="fas fa-heartbeat text-red-400 mr-2"></i>
+            Background Tasks
+        </h2>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <template x-for="(task, name) in status.tasks" :key="name">
+                <div class="bg-gray-700/50 rounded-lg p-4 border-l-4"
+                     :class="{
+                        'border-green-500': task.status === 'healthy',
+                        'border-yellow-500': task.status === 'warning',
+                        'border-red-500': task.status === 'error' || task.status === 'offline',
+                        'border-gray-500': task.status === 'unknown'
+                     }">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="font-medium text-white" x-text="formatTaskName(name)"></h3>
+                        <span class="text-xs px-2 py-1 rounded-full"
+                              :class="{
+                                'bg-green-600/20 text-green-400': task.status === 'healthy',
+                                'bg-yellow-600/20 text-yellow-400': task.status === 'warning',
+                                'bg-red-600/20 text-red-400': task.status === 'error' || task.status === 'offline',
+                                'bg-gray-600 text-gray-400': task.status === 'unknown'
+                              }"
+                              x-text="task.status?.toUpperCase() || 'UNKNOWN'">
+                        </span>
+                    </div>
+                    <div class="text-sm text-gray-400 space-y-1">
+                        <p>
+                            <i class="fas fa-clock mr-1"></i>
+                            Last run: <span x-text="task.last_run ? formatTimeAgo(task.last_run) : 'Never'"></span>
+                        </p>
+                        <p>
+                            <i class="fas fa-exclamation-triangle mr-1"></i>
+                            Errors: <span x-text="task.error_count || 0" 
+                                          :class="task.error_count > 0 ? 'text-red-400' : 'text-green-400'"></span>
+                        </p>
+                        <p x-show="task.is_running">
+                            <i class="fas fa-spinner fa-spin mr-1 text-blue-400"></i>
+                            <span class="text-blue-400">Currently running</span>
+                        </p>
+                    </div>
+                </div>
+            </template>
+        </div>
+        
+        <!-- No Tasks -->
+        <div x-show="!status.tasks || Object.keys(status.tasks).length === 0" class="text-center py-8 text-gray-400">
+            <i class="fas fa-info-circle text-2xl mb-2"></i>
+            <p>No task data available</p>
+        </div>
+    </div>
+
+    <!-- System Info -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Database Stats -->
+        <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
+            <h2 class="text-lg font-semibold text-white mb-4">
+                <i class="fas fa-database text-green-400 mr-2"></i>
+                Database Statistics
+            </h2>
+            <div class="space-y-3">
+                <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                    <span class="text-gray-400">Total Players</span>
+                    <span class="text-white font-medium" x-text="status.database?.total_players?.toLocaleString() || 'N/A'"></span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                    <span class="text-gray-400">Total Actions</span>
+                    <span class="text-white font-medium" x-text="status.database?.total_actions?.toLocaleString() || 'N/A'"></span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                    <span class="text-gray-400">Online Players</span>
+                    <span class="text-green-400 font-medium" x-text="status.database?.online_count?.toLocaleString() || 'N/A'"></span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                    <span class="text-gray-400">Database Size</span>
+                    <span class="text-white font-medium" x-text="status.database?.size_mb ? status.database.size_mb.toFixed(2) + ' MB' : 'N/A'"></span>
+                </div>
+                <div class="flex justify-between items-center py-2">
+                    <span class="text-gray-400">Database Path</span>
+                    <span class="text-gray-300 text-sm font-mono" x-text="status.database?.path || 'N/A'"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuration -->
+        <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
+            <h2 class="text-lg font-semibold text-white mb-4">
+                <i class="fas fa-cog text-yellow-400 mr-2"></i>
+                Configuration
+            </h2>
+            <div class="space-y-3">
+                <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                    <span class="text-gray-400">Scraper Workers</span>
+                    <span class="text-white font-medium" x-text="status.config?.scraper_workers || 'N/A'"></span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                    <span class="text-gray-400">Rate Limit</span>
+                    <span class="text-white font-medium" x-text="status.config?.rate_limit ? status.config.rate_limit + ' req/s' : 'N/A'"></span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                    <span class="text-gray-400">VIP Players</span>
+                    <span class="text-purple-400 font-medium" x-text="status.config?.vip_count || 0"></span>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-gray-700">
+                    <span class="text-gray-400">Actions Interval</span>
+                    <span class="text-white font-medium" x-text="status.config?.actions_interval ? status.config.actions_interval + 's' : 'N/A'"></span>
+                </div>
+                <div class="flex justify-between items-center py-2">
+                    <span class="text-gray-400">Online Tracking</span>
+                    <span :class="status.config?.track_online ? 'text-green-400' : 'text-gray-500'" 
+                          x-text="status.config?.track_online ? 'Enabled' : 'Disabled'"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scraper Stats -->
+    <div class="mt-6 bg-gray-800 rounded-xl p-6 shadow-lg" x-show="status.scraper">
+        <h2 class="text-lg font-semibold text-white mb-4">
+            <i class="fas fa-spider text-orange-400 mr-2"></i>
+            Scraper Statistics
+        </h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+            <div class="text-center">
+                <p class="text-3xl font-bold text-white" x-text="status.scraper?.success_count?.toLocaleString() || 0"></p>
+                <p class="text-gray-400 text-sm">Successful Requests</p>
+            </div>
+            <div class="text-center">
+                <p class="text-3xl font-bold text-red-400" x-text="status.scraper?.error_503_count?.toLocaleString() || 0"></p>
+                <p class="text-gray-400 text-sm">503 Errors</p>
+            </div>
+            <div class="text-center">
+                <p class="text-3xl font-bold text-yellow-400" x-text="status.scraper?.adaptive_delay ? status.scraper.adaptive_delay.toFixed(2) + 's' : '0s'"></p>
+                <p class="text-gray-400 text-sm">Adaptive Delay</p>
+            </div>
+            <div class="text-center">
+                <p class="text-3xl font-bold text-blue-400" x-text="status.scraper?.actions_found?.toLocaleString() || 0"></p>
+                <p class="text-gray-400 text-sm">Actions Found</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error when no connection -->
+    <div x-show="error && !loading" class="mt-8 bg-red-900/20 border border-red-500 rounded-xl p-6 text-center">
+        <i class="fas fa-exclamation-circle text-4xl text-red-400 mb-4"></i>
+        <h3 class="text-xl text-red-400 font-medium mb-2">Unable to fetch bot status</h3>
+        <p class="text-gray-400" x-text="error"></p>
+        <button @click="refresh()" class="mt-4 bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg transition">
+            <i class="fas fa-sync-alt mr-2"></i> Retry
+        </button>
+    </div>
+</div>
+
+<script>
+function botStatusPage() {
+    return {
+        status: {},
+        loading: true,
+        error: '',
+        lastUpdate: 'Never',
+        refreshInterval: null,
+        
+        get activeTasks() {
+            if (!this.status.tasks) return 0;
+            return Object.values(this.status.tasks).filter(t => t.status === 'healthy').length;
+        },
+        
+        get totalTasks() {
+            if (!this.status.tasks) return 0;
+            return Object.keys(this.status.tasks).length;
+        },
+        
+        get totalErrors() {
+            if (!this.status.tasks) return 0;
+            return Object.values(this.status.tasks).reduce((sum, t) => sum + (t.error_count || 0), 0);
+        },
+        
+        async init() {
+            await this.refresh();
+            // Auto-refresh every 30 seconds
+            this.refreshInterval = setInterval(() => this.refresh(), 30000);
+        },
+        
+        async refresh() {
+            this.loading = true;
+            this.error = '';
+            
+            try {
+                const res = await fetch('/api/bot-status');
+                if (!res.ok) {
+                    if (res.status === 403) {
+                        this.error = 'Access denied. Admin privileges required.';
+                    } else {
+                        this.error = 'Failed to fetch status: ' + res.statusText;
+                    }
+                    this.status = { connected: false };
+                    return;
+                }
+                
+                this.status = await res.json();
+                this.lastUpdate = new Date().toLocaleTimeString();
+                
+            } catch (e) {
+                this.error = 'Connection error: ' + e.message;
+                this.status = { connected: false };
+            } finally {
+                this.loading = false;
+            }
+        },
+        
+        formatTaskName(name) {
+            return name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        },
+        
+        formatTimeAgo(timestamp) {
+            if (!timestamp) return 'Never';
+            
+            const date = new Date(timestamp);
+            const now = new Date();
+            const seconds = Math.floor((now - date) / 1000);
+            
+            if (seconds < 60) return seconds + 's ago';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+            if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+            return Math.floor(seconds / 86400) + 'd ago';
+        }
+    }
+}
+</script>
+{% endblock %}

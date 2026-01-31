@@ -1117,6 +1117,319 @@ def api_login_activity():
         logger.error(f"Error getting login activity: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/actions-trend')
+def api_actions_trend():
+    """Get daily action counts for trend chart"""
+    try:
+        days = min(int(request.args.get('days', 30)), 90)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        data = []
+        now = datetime.now()
+        
+        for i in range(days, 0, -1):
+            day_start = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+            
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM actions 
+                WHERE timestamp >= ? AND timestamp < ?
+            """, (day_start, day_end))
+            
+            row = cursor.fetchone()
+            data.append({
+                'date': day_start.strftime('%Y-%m-%d'),
+                'count': row['count'] or 0
+            })
+        
+        conn.close()
+        
+        return jsonify({
+            'days': days,
+            'data': data
+        })
+    except Exception as e:
+        logger.error(f"Error getting actions trend: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/peak-times')
+def api_peak_times():
+    """Get peak online times heatmap data (hour of day x day of week)"""
+    try:
+        days = min(int(request.args.get('days', 14)), 30)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cutoff = datetime.now() - timedelta(days=days)
+        
+        # Get all login events in the period
+        cursor.execute("""
+            SELECT timestamp FROM login_events 
+            WHERE event_type = 'login' AND timestamp >= ?
+        """, (cutoff,))
+        
+        # Build heatmap: 7 days x 24 hours
+        heatmap = [[0 for _ in range(24)] for _ in range(7)]
+        
+        for row in cursor.fetchall():
+            ts = row['timestamp']
+            if isinstance(ts, str):
+                try:
+                    ts = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                except:
+                    continue
+            if ts:
+                day_of_week = ts.weekday()  # 0=Monday, 6=Sunday
+                hour = ts.hour
+                heatmap[day_of_week][hour] += 1
+        
+        conn.close()
+        
+        # Format for frontend
+        days_labels = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        
+        return jsonify({
+            'days': days,
+            'days_labels': days_labels,
+            'hours_labels': [f'{h:02d}:00' for h in range(24)],
+            'heatmap': heatmap
+        })
+    except Exception as e:
+        logger.error(f"Error getting peak times: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/faction-history')
+def api_faction_history():
+    """Get faction member count changes over time"""
+    try:
+        days = min(int(request.args.get('days', 30)), 90)
+        faction = request.args.get('faction', '')
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get top factions if none specified
+        if not faction:
+            cursor.execute("""
+                SELECT faction, COUNT(*) as member_count
+                FROM player_profiles
+                WHERE faction IS NOT NULL AND faction != ''
+                AND faction NOT IN ('Civil', 'Fără', 'None', '-', 'N/A')
+                GROUP BY faction
+                ORDER BY member_count DESC
+                LIMIT 10
+            """)
+            top_factions = [row['faction'] for row in cursor.fetchall()]
+        else:
+            top_factions = [faction]
+        
+        # For each faction, get current member count
+        # (Historical tracking would require additional DB tables - for now show current snapshot)
+        faction_data = []
+        for f in top_factions:
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM player_profiles WHERE faction = ?
+            """, (f,))
+            count = cursor.fetchone()['count']
+            faction_data.append({
+                'faction': f,
+                'member_count': count
+            })
+        
+        conn.close()
+        
+        return jsonify({
+            'factions': faction_data
+        })
+    except Exception as e:
+        logger.error(f"Error getting faction history: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/compare-players')
+def api_compare_players():
+    """Compare two players side-by-side"""
+    try:
+        player1_id = request.args.get('player1', '')
+        player2_id = request.args.get('player2', '')
+        
+        if not player1_id or not player2_id:
+            return jsonify({'error': 'Both player1 and player2 are required'}), 400
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        players = []
+        for pid in [player1_id, player2_id]:
+            # Get profile
+            cursor.execute("SELECT * FROM player_profiles WHERE player_id = ?", (pid,))
+            row = cursor.fetchone()
+            if not row:
+                players.append({'player_id': pid, 'error': 'Not found'})
+                continue
+            
+            profile = dict(row)
+            
+            # Get action count (last 30 days)
+            cutoff = datetime.now() - timedelta(days=30)
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM actions 
+                WHERE (player_id = ? OR target_player_id = ?) AND timestamp >= ?
+            """, (pid, pid, cutoff))
+            profile['actions_30d'] = cursor.fetchone()['count']
+            
+            # Get session count (last 30 days)
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM login_events 
+                WHERE player_id = ? AND event_type = 'login' AND timestamp >= ?
+            """, (pid, cutoff))
+            profile['sessions_30d'] = cursor.fetchone()['count']
+            
+            # Get total playtime from login events (sum of session durations)
+            cursor.execute("""
+                SELECT SUM(session_duration_seconds) as total FROM login_events
+                WHERE player_id = ? AND event_type = 'logout' AND session_duration_seconds IS NOT NULL
+            """, (pid,))
+            total_seconds = cursor.fetchone()['total'] or 0
+            profile['tracked_hours'] = round(total_seconds / 3600, 1)
+            
+            players.append(profile)
+        
+        conn.close()
+        
+        return jsonify({
+            'player1': players[0] if len(players) > 0 else None,
+            'player2': players[1] if len(players) > 1 else None
+        })
+    except Exception as e:
+        logger.error(f"Error comparing players: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/bot-status')
+def api_bot_status():
+    """Get bot health status (reads from shared state file if available)"""
+    try:
+        import json
+        import psutil
+        
+        status = {
+            'bot_connected': False,
+            'uptime': None,
+            'memory_mb': None,
+            'tasks': {},
+            'last_check': datetime.now().isoformat()
+        }
+        
+        # Check if bot status file exists (bot writes this periodically)
+        status_file = os.getenv('BOT_STATUS_FILE', '/data/bot_status.json')
+        if os.path.exists(status_file):
+            try:
+                with open(status_file, 'r') as f:
+                    bot_status = json.load(f)
+                    status.update(bot_status)
+                    status['bot_connected'] = True
+            except:
+                pass
+        
+        # Get system memory info
+        try:
+            process = psutil.Process(os.getpid())
+            status['dashboard_memory_mb'] = round(process.memory_info().rss / 1024 / 1024, 1)
+            status['system_memory_percent'] = psutil.virtual_memory().percent
+        except:
+            pass
+        
+        # Get database stats
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) as count FROM player_profiles")
+        status['total_players'] = cursor.fetchone()['count']
+        
+        cursor.execute("SELECT COUNT(*) as count FROM actions")
+        status['total_actions'] = cursor.fetchone()['count']
+        
+        # Get database file size
+        db_path = get_db_path()
+        if os.path.exists(db_path):
+            status['database_size_mb'] = round(os.path.getsize(db_path) / 1024 / 1024, 1)
+        
+        conn.close()
+        
+        return jsonify(status)
+    except Exception as e:
+        logger.error(f"Error getting bot status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/vip-events')
+def api_vip_events():
+    """Get recent VIP player login/logout events for toast notifications"""
+    try:
+        minutes = min(int(request.args.get('minutes', 5)), 30)
+        
+        # VIP player IDs from environment
+        vip_ids_str = os.getenv('VIP_PLAYER_IDS', '')
+        if not vip_ids_str:
+            return jsonify({'events': []})
+        
+        vip_ids = [pid.strip() for pid in vip_ids_str.split(',') if pid.strip()]
+        
+        if not vip_ids:
+            return jsonify({'events': []})
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cutoff = datetime.now() - timedelta(minutes=minutes)
+        
+        placeholders = ','.join('?' * len(vip_ids))
+        cursor.execute(f"""
+            SELECT le.*, pp.username, pp.faction
+            FROM login_events le
+            LEFT JOIN player_profiles pp ON le.player_id = pp.player_id
+            WHERE le.player_id IN ({placeholders})
+            AND le.timestamp >= ?
+            ORDER BY le.timestamp DESC
+            LIMIT 20
+        """, (*vip_ids, cutoff))
+        
+        events = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        
+        return jsonify({
+            'events': events,
+            'vip_count': len(vip_ids)
+        })
+    except Exception as e:
+        logger.error(f"Error getting VIP events: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# NEW PAGE ROUTES
+# ============================================================================
+
+@app.route('/analytics')
+def page_analytics():
+    """Analytics dashboard with charts and trends"""
+    return render_template('analytics.html')
+
+@app.route('/favorites')
+def page_favorites():
+    """User's starred/favorite players (client-side storage)"""
+    return render_template('favorites.html')
+
+@app.route('/compare')
+def page_compare():
+    """Compare two players side-by-side"""
+    return render_template('compare.html')
+
+@app.route('/bot-status')
+def page_bot_status():
+    """Bot health and status monitoring (admin view)"""
+    return render_template('bot_status.html')
+
 # ============================================================================
 # MAIN
 # ============================================================================

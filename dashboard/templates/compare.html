@@ -1,0 +1,414 @@
+{% extends "base.html" %}
+
+{% block title %}Compare Players - P4K-DBS{% endblock %}
+
+{% block content %}
+<div x-data="comparePage()" x-init="init()">
+    <!-- Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-white flex items-center">
+            <i class="fas fa-balance-scale text-blue-400 mr-3"></i>
+            Compare Players
+        </h1>
+        <p class="text-gray-400 mt-1">View two player profiles side-by-side</p>
+    </div>
+
+    <!-- Player Selection -->
+    <div class="bg-gray-800 rounded-xl p-6 shadow-lg mb-8">
+        <h2 class="text-lg font-semibold text-white mb-4">
+            <i class="fas fa-users text-purple-400 mr-2"></i>
+            Select Players to Compare
+        </h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Player 1 -->
+            <div>
+                <label class="block text-sm text-gray-400 mb-2">Player 1 ID</label>
+                <input type="text" x-model="player1Id" 
+                       placeholder="Enter Player ID" 
+                       @keyup.enter="compare()"
+                       class="w-full bg-gray-700 text-white px-4 py-3 rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500">
+            </div>
+            <!-- Player 2 -->
+            <div>
+                <label class="block text-sm text-gray-400 mb-2">Player 2 ID</label>
+                <input type="text" x-model="player2Id" 
+                       placeholder="Enter Player ID" 
+                       @keyup.enter="compare()"
+                       class="w-full bg-gray-700 text-white px-4 py-3 rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500">
+            </div>
+        </div>
+        <div class="mt-4 flex items-center">
+            <button @click="compare()" 
+                    :disabled="!player1Id || !player2Id || loading"
+                    class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg transition font-medium">
+                <i class="fas fa-exchange-alt mr-2"></i> Compare
+            </button>
+            <button @click="swapPlayers()" 
+                    x-show="player1 && player2"
+                    class="ml-4 bg-gray-700 hover:bg-gray-600 text-white px-4 py-3 rounded-lg transition">
+                <i class="fas fa-arrows-alt-h mr-2"></i> Swap
+            </button>
+            <p x-show="error" class="ml-4 text-red-400 text-sm" x-text="error"></p>
+        </div>
+    </div>
+
+    <!-- Loading -->
+    <div x-show="loading" class="text-center py-16">
+        <i class="fas fa-spinner fa-spin text-4xl text-blue-500"></i>
+        <p class="text-gray-400 mt-4">Loading comparison...</p>
+    </div>
+
+    <!-- Comparison Results -->
+    <div x-show="player1 && player2 && !loading">
+        <!-- Basic Info -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <!-- Player 1 Card -->
+            <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
+                <div class="flex items-center mb-4">
+                    <div class="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold mr-4"
+                         :class="player1.is_online ? 'bg-green-600' : 'bg-gray-600'">
+                        <span x-text="(player1.username || 'P')[0].toUpperCase()"></span>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold text-white">
+                            <a :href="`/player/${player1.player_id}`" class="hover:text-blue-400">
+                                <span x-text="player1.username || `Player ${player1.player_id}`"></span>
+                            </a>
+                        </h3>
+                        <p class="text-gray-400">ID: <span x-text="player1.player_id"></span></p>
+                    </div>
+                    <span class="ml-auto px-3 py-1 rounded-full text-sm"
+                          :class="player1.is_online ? 'bg-green-600/20 text-green-400' : 'bg-gray-700 text-gray-400'">
+                        <span x-text="player1.is_online ? '🟢 Online' : '⚪ Offline'"></span>
+                    </span>
+                </div>
+            </div>
+
+            <!-- Player 2 Card -->
+            <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
+                <div class="flex items-center mb-4">
+                    <div class="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold mr-4"
+                         :class="player2.is_online ? 'bg-green-600' : 'bg-gray-600'">
+                        <span x-text="(player2.username || 'P')[0].toUpperCase()"></span>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold text-white">
+                            <a :href="`/player/${player2.player_id}`" class="hover:text-blue-400">
+                                <span x-text="player2.username || `Player ${player2.player_id}`"></span>
+                            </a>
+                        </h3>
+                        <p class="text-gray-400">ID: <span x-text="player2.player_id"></span></p>
+                    </div>
+                    <span class="ml-auto px-3 py-1 rounded-full text-sm"
+                          :class="player2.is_online ? 'bg-green-600/20 text-green-400' : 'bg-gray-700 text-gray-400'">
+                        <span x-text="player2.is_online ? '🟢 Online' : '⚪ Offline'"></span>
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Comparison Table -->
+        <div class="bg-gray-800 rounded-xl shadow-lg overflow-hidden">
+            <table class="w-full">
+                <thead class="bg-gray-700">
+                    <tr>
+                        <th class="py-4 px-6 text-left text-gray-300 font-medium">Attribute</th>
+                        <th class="py-4 px-6 text-center text-gray-300 font-medium" x-text="player1.username || `Player ${player1.player_id}`"></th>
+                        <th class="py-4 px-6 text-center text-gray-300 font-medium" x-text="player2.username || `Player ${player2.player_id}`"></th>
+                        <th class="py-4 px-6 text-center text-gray-300 font-medium">Winner</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-700">
+                    <!-- Played Hours -->
+                    <tr class="hover:bg-gray-700/50">
+                        <td class="py-4 px-6 text-gray-400">
+                            <i class="fas fa-clock mr-2 text-blue-400"></i> Played Hours
+                        </td>
+                        <td class="py-4 px-6 text-center text-white" 
+                            :class="{ 'bg-green-600/10': (player1.played_hours || 0) > (player2.played_hours || 0) }">
+                            <span x-text="player1.played_hours ? player1.played_hours.toFixed(1) + 'h' : '0h'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-white"
+                            :class="{ 'bg-green-600/10': (player2.played_hours || 0) > (player1.played_hours || 0) }">
+                            <span x-text="player2.played_hours ? player2.played_hours.toFixed(1) + 'h' : '0h'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center">
+                            <span x-text="getWinner(player1.played_hours, player2.played_hours, 'higher')"
+                                  :class="getWinnerColor(player1.played_hours, player2.played_hours)"></span>
+                        </td>
+                    </tr>
+
+                    <!-- Faction -->
+                    <tr class="hover:bg-gray-700/50">
+                        <td class="py-4 px-6 text-gray-400">
+                            <i class="fas fa-users mr-2 text-purple-400"></i> Faction
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="player1.faction || 'None'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="player2.faction || 'None'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-gray-500">—</td>
+                    </tr>
+
+                    <!-- Faction Rank -->
+                    <tr class="hover:bg-gray-700/50">
+                        <td class="py-4 px-6 text-gray-400">
+                            <i class="fas fa-medal mr-2 text-yellow-400"></i> Rank
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="player1.faction_rank || '-'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="player2.faction_rank || '-'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-gray-500">—</td>
+                    </tr>
+
+                    <!-- Job -->
+                    <tr class="hover:bg-gray-700/50">
+                        <td class="py-4 px-6 text-gray-400">
+                            <i class="fas fa-briefcase mr-2 text-cyan-400"></i> Job
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="player1.job || 'None'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="player2.job || 'None'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-gray-500">—</td>
+                    </tr>
+
+                    <!-- Warnings -->
+                    <tr class="hover:bg-gray-700/50">
+                        <td class="py-4 px-6 text-gray-400">
+                            <i class="fas fa-exclamation-triangle mr-2 text-orange-400"></i> Warnings
+                        </td>
+                        <td class="py-4 px-6 text-center"
+                            :class="{ 'bg-green-600/10': (player1.warnings || 0) < (player2.warnings || 0) }">
+                            <span :class="getWarningColor(player1.warnings)" x-text="(player1.warnings || 0) + '/3'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center"
+                            :class="{ 'bg-green-600/10': (player2.warnings || 0) < (player1.warnings || 0) }">
+                            <span :class="getWarningColor(player2.warnings)" x-text="(player2.warnings || 0) + '/3'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center">
+                            <span x-text="getWinner(player1.warnings, player2.warnings, 'lower')"
+                                  :class="getWinnerColor(player2.warnings, player1.warnings)"></span>
+                        </td>
+                    </tr>
+
+                    <!-- Age IC -->
+                    <tr class="hover:bg-gray-700/50">
+                        <td class="py-4 px-6 text-gray-400">
+                            <i class="fas fa-birthday-cake mr-2 text-pink-400"></i> Age (IC)
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="player1.age_ic || '-'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="player2.age_ic || '-'"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-gray-500">—</td>
+                    </tr>
+
+                    <!-- Total Actions -->
+                    <tr class="hover:bg-gray-700/50">
+                        <td class="py-4 px-6 text-gray-400">
+                            <i class="fas fa-list mr-2 text-indigo-400"></i> Total Actions
+                        </td>
+                        <td class="py-4 px-6 text-center text-white"
+                            :class="{ 'bg-green-600/10': (player1.total_actions || 0) > (player2.total_actions || 0) }">
+                            <span x-text="(player1.total_actions || 0).toLocaleString()"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-white"
+                            :class="{ 'bg-green-600/10': (player2.total_actions || 0) > (player1.total_actions || 0) }">
+                            <span x-text="(player2.total_actions || 0).toLocaleString()"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center">
+                            <span x-text="getWinner(player1.total_actions, player2.total_actions, 'higher')"
+                                  :class="getWinnerColor(player1.total_actions, player2.total_actions)"></span>
+                        </td>
+                    </tr>
+
+                    <!-- First Detected -->
+                    <tr class="hover:bg-gray-700/50">
+                        <td class="py-4 px-6 text-gray-400">
+                            <i class="fas fa-calendar mr-2 text-green-400"></i> First Detected
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="formatDate(player1.first_detected)"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="formatDate(player2.first_detected)"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-gray-500">—</td>
+                    </tr>
+
+                    <!-- Last Seen -->
+                    <tr class="hover:bg-gray-700/50">
+                        <td class="py-4 px-6 text-gray-400">
+                            <i class="fas fa-eye mr-2 text-gray-400"></i> Last Seen
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="formatDate(player1.last_seen)"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-white">
+                            <span x-text="formatDate(player2.last_seen)"></span>
+                        </td>
+                        <td class="py-4 px-6 text-center text-gray-500">—</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Quick Links -->
+        <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="flex gap-4">
+                <a :href="`/player/${player1.player_id}`" 
+                   class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center py-3 rounded-lg transition">
+                    <i class="fas fa-user mr-2"></i> View <span x-text="player1.username"></span>'s Profile
+                </a>
+                <a :href="`/actions/${player1.player_id}`" 
+                   class="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-center py-3 rounded-lg transition">
+                    <i class="fas fa-list mr-2"></i> Actions
+                </a>
+            </div>
+            <div class="flex gap-4">
+                <a :href="`/player/${player2.player_id}`" 
+                   class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center py-3 rounded-lg transition">
+                    <i class="fas fa-user mr-2"></i> View <span x-text="player2.username"></span>'s Profile
+                </a>
+                <a :href="`/actions/${player2.player_id}`" 
+                   class="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-center py-3 rounded-lg transition">
+                    <i class="fas fa-list mr-2"></i> Actions
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Initial State -->
+    <div x-show="!player1 && !player2 && !loading" class="text-center py-16 bg-gray-800 rounded-xl">
+        <i class="fas fa-balance-scale text-6xl text-gray-600 mb-4"></i>
+        <h3 class="text-xl text-gray-400 mb-2">Enter two player IDs to compare</h3>
+        <p class="text-gray-500">See how they stack up against each other</p>
+    </div>
+</div>
+
+<script>
+function comparePage() {
+    return {
+        player1Id: '',
+        player2Id: '',
+        player1: null,
+        player2: null,
+        loading: false,
+        error: '',
+        
+        init() {
+            // Check URL params
+            const params = new URLSearchParams(window.location.search);
+            const p1 = params.get('p1');
+            const p2 = params.get('p2');
+            
+            if (p1 && p2) {
+                this.player1Id = p1;
+                this.player2Id = p2;
+                this.compare();
+            }
+        },
+        
+        async compare() {
+            if (!this.player1Id || !this.player2Id) return;
+            
+            if (this.player1Id === this.player2Id) {
+                this.error = 'Cannot compare a player to themselves';
+                return;
+            }
+            
+            this.loading = true;
+            this.error = '';
+            this.player1 = null;
+            this.player2 = null;
+            
+            try {
+                const res = await fetch(`/api/compare-players?id1=${this.player1Id}&id2=${this.player2Id}`);
+                if (!res.ok) {
+                    const data = await res.json();
+                    this.error = data.error || 'Failed to load players';
+                    return;
+                }
+                
+                const data = await res.json();
+                this.player1 = data.player1;
+                this.player2 = data.player2;
+                
+                // Update URL
+                const url = new URL(window.location);
+                url.searchParams.set('p1', this.player1Id);
+                url.searchParams.set('p2', this.player2Id);
+                history.pushState({}, '', url);
+                
+            } catch (e) {
+                this.error = 'Failed to compare players';
+                console.error(e);
+            } finally {
+                this.loading = false;
+            }
+        },
+        
+        swapPlayers() {
+            const tempId = this.player1Id;
+            this.player1Id = this.player2Id;
+            this.player2Id = tempId;
+            
+            const tempPlayer = this.player1;
+            this.player1 = this.player2;
+            this.player2 = tempPlayer;
+            
+            // Update URL
+            const url = new URL(window.location);
+            url.searchParams.set('p1', this.player1Id);
+            url.searchParams.set('p2', this.player2Id);
+            history.pushState({}, '', url);
+        },
+        
+        getWinner(val1, val2, mode) {
+            const v1 = val1 || 0;
+            const v2 = val2 || 0;
+            
+            if (v1 === v2) return 'Tie';
+            
+            if (mode === 'higher') {
+                return v1 > v2 ? 'P1' : 'P2';
+            } else {
+                return v1 < v2 ? 'P1' : 'P2';
+            }
+        },
+        
+        getWinnerColor(val1, val2) {
+            const v1 = val1 || 0;
+            const v2 = val2 || 0;
+            
+            if (v1 === v2) return 'text-gray-400';
+            if (v1 > v2) return 'text-green-400';
+            return 'text-blue-400';
+        },
+        
+        getWarningColor(warnings) {
+            const w = warnings || 0;
+            if (w >= 3) return 'text-red-400';
+            if (w > 0) return 'text-yellow-400';
+            return 'text-green-400';
+        },
+        
+        formatDate(dateStr) {
+            if (!dateStr) return 'Unknown';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+    }
+}
+</script>
+{% endblock %}
