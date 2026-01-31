@@ -2536,7 +2536,7 @@ def setup_commands(bot, db, scraper_getter):
     async def sessions_command(
         interaction: discord.Interaction, identifier: str, days: int = 7
     ):
-        """View player's gaming sessions"""
+        """View player's gaming sessions with first detected login info"""
         await interaction.response.defer()
 
         try:
@@ -2553,15 +2553,11 @@ def setup_commands(bot, db, scraper_getter):
                 )
                 return
 
+            # 🆕 Get first/last session info
+            first_last = await db.get_player_first_last_session(player["player_id"])
             sessions = await db.get_player_sessions(player["player_id"], days)
 
-            if not sessions:
-                await interaction.followup.send(
-                    f"📊 **No Sessions**\n\n{player['username']} has no recorded sessions in the last {days} days."
-                )
-                return
-
-            # Calculate total playtime
+            # Calculate total playtime from sessions
             total_seconds = sum(
                 s.get("session_duration_seconds", 0)
                 for s in sessions
@@ -2571,10 +2567,36 @@ def setup_commands(bot, db, scraper_getter):
 
             embed = discord.Embed(
                 title=f"📊 Sessions for {player['username']}",
-                description=f"Last {days} days • {len(sessions)} sessions • {total_hours:.1f}h total",
+                description=f"Last {days} days • {len(sessions)} session(s) • {total_hours:.1f}h total",
                 color=discord.Color.blue(),
                 timestamp=datetime.now(),
             )
+
+            # 🆕 Show first ever detected login (important for tracking)
+            first_login = first_last.get("first_login")
+            total_logins = first_last.get("total_sessions", 0)
+            
+            if first_login:
+                if isinstance(first_login, str):
+                    first_login = datetime.fromisoformat(first_login)
+                first_login_str = first_login.strftime("%Y-%m-%d %H:%M") if first_login else "Never"
+            else:
+                first_login_str = "Never (no logins recorded)"
+            
+            embed.add_field(
+                name="📅 First Detected Login",
+                value=f"**{first_login_str}**\nTotal logins: {total_logins:,}",
+                inline=False,
+            )
+
+            if not sessions:
+                embed.add_field(
+                    name="⚠️ No Recent Sessions",
+                    value=f"No sessions found in the last {days} days.\nTry `/sessions {identifier} 30` for more history.",
+                    inline=False,
+                )
+                await interaction.followup.send(embed=embed)
+                return
 
             # Show up to 10 most recent sessions
             for session in sessions[:10]:

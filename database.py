@@ -844,7 +844,9 @@ class Database:
         Now includes actions where:
         1. player_id = identifier (actions BY the player)
         2. target_player_id = identifier (actions TO the player - migrated)
-        3. action_detail contains the player's ID/name (actions TO the player - non-migrated)
+        
+        🔥 REMOVED: action_detail LIKE pattern - caused false positives
+        (e.g. "100.280$" matched player ID 280)
         """
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -852,34 +854,33 @@ class Database:
 
             if identifier.isdigit():
                 # Query for actions where player is SENDER or RECEIVER
-                # 🆕 ENHANCED: Include actions mentioning player in detail (for old non-migrated actions)
+                # 🔥 FIX: Only match exact player_id or target_player_id (no fuzzy text matching)
                 cursor.execute(
                     """
                     SELECT * FROM actions
                     WHERE (
                         player_id = ? 
                         OR target_player_id = ?
-                        OR action_detail LIKE ?
                     )
                     AND timestamp >= ?
                     ORDER BY timestamp DESC
                 """,
-                    (identifier, identifier, f"%({identifier})%", cutoff),
+                    (identifier, identifier, cutoff),
                 )
                 results = cursor.fetchall()
 
                 if results:
                     return [dict(row) for row in results]
 
-            # Search by name (sender or receiver)
+            # Search by name (sender or receiver) - still fuzzy for names
             cursor.execute(
                 """
                 SELECT * FROM actions
-                WHERE (player_name LIKE ? OR target_player_name LIKE ? OR action_detail LIKE ?) 
+                WHERE (player_name LIKE ? OR target_player_name LIKE ?) 
                 AND timestamp >= ?
                 ORDER BY timestamp DESC
             """,
-                (f"%{identifier}%", f"%{identifier}%", f"%{identifier}%", cutoff),
+                (f"%{identifier}%", f"%{identifier}%", cutoff),
             )
 
             return [dict(row) for row in cursor.fetchall()]
@@ -1174,63 +1175,134 @@ class Database:
         return await asyncio.to_thread(_get_count_sync)
 
     async def get_player_sessions(self, player_id: str, days: int = 7) -> List[Dict]:
-        """Get player sessions"""
+        """Get player sessions - properly pairs logins with their corresponding logouts"""
 
         def _get_sessions_sync():
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cutoff = datetime.now() - timedelta(days=days)
 
+                # 🔥 FIXED: Match logins with their NEXT logout properly
+                # Uses window functions to pair each login with the next logout
                 cursor.execute(
                     """
-                    WITH logins AS (
-                        SELECT
-                            player_id,
-                            timestamp AS login_time,
-                            LEAD(timestamp) OVER (
-                                PARTITION BY player_id
-                                ORDER BY timestamp
-                            ) AS next_login
+                    WITH events AS (
+                        SELECT 
+                            event_type,
+                            timestamp,
+                            session_duration_seconds,
+                            ROW_NUMBER() OVER (ORDER BY timestamp) as rn
                         FROM login_events
                         WHERE player_id = ?
-                        AND event_type = 'login'
                         AND timestamp >= ?
                     ),
+                    logins AS (
+                        SELECT timestamp AS login_time, rn
+                        FROM events
+                        WHERE event_type = 'login'
+                    ),
                     logouts AS (
-                        SELECT player_id, timestamp AS logout_time, session_duration_seconds
-                        FROM login_events
-                        WHERE player_id = ?
-                        AND event_type = 'logout'
+                        SELECT timestamp AS logout_time, session_duration_seconds, rn
+                        FROM events
+                        WHERE event_type = 'logout'
                     )
-                    SELECT
+                    SELECT 
                         l.login_time,
                         (
                             SELECT lo.logout_time
                             FROM logouts lo
-                            WHERE lo.player_id = l.player_id
+                            WHERE lo.rn > l.rn
                             AND lo.logout_time > l.login_time
-                            AND (l.next_login IS NULL OR lo.logout_time < l.next_login)
-                            ORDER BY lo.logout_time ASC
+                            ORDER BY lo.rn ASC
                             LIMIT 1
                         ) AS logout_time,
                         (
                             SELECT lo.session_duration_seconds
                             FROM logouts lo
-                            WHERE lo.player_id = l.player_id
+                            WHERE lo.rn > l.rn
                             AND lo.logout_time > l.login_time
-                            AND (l.next_login IS NULL OR lo.logout_time < l.next_login)
-                            ORDER BY lo.logout_time ASC
+                            ORDER BY lo.rn ASC
                             LIMIT 1
                         ) AS session_duration_seconds
                     FROM logins l
                     ORDER BY l.login_time DESC
                 """,
-                    (player_id, cutoff, player_id),
+                    (player_id, cutoff),
                 )
 
                 return [dict(row) for row in cursor.fetchall()]
 
         return await asyncio.to_thread(_get_sessions_sync)
+
+    async def get_player_first_last_session(self, player_id: str) -> Dict:
+        """🆕 Get player's first ever detected login and last session info"""
+
+        def _get_first_last_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                result = {
+                    "first_login": None,
+                    "last_login": None,
+                    "last_logout": None,
+                    "total_sessions": 0,
+                }
+
+                # Get first ever login
+                cursor.execute(
+                    """
+                    SELECT timestamp FROM login_events
+                    WHERE player_id = ? AND event_type = 'login'
+                    ORDER BY timestamp ASC
+                    LIMIT 1
+                """,
+                    (player_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    result["first_login"] = row[0]
+
+                # Get last login
+                cursor.execute(
+                    """
+                    SELECT timestamp FROM login_events
+                    WHERE player_id = ? AND event_type = 'login'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """,
+                    (player_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    result["last_login"] = row[0]
+
+                # Get last logout
+                cursor.execute(
+                    """
+                    SELECT timestamp FROM login_events
+                    WHERE player_id = ? AND event_type = 'logout'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """,
+                    (player_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    result["last_logout"] = row[0]
+
+                # Count total logins
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) FROM login_events
+                    WHERE player_id = ? AND event_type = 'login'
+                """,
+                    (player_id,),
+                )
+                result["total_sessions"] = cursor.fetchone()[0]
+
+                return result
+
+        return await asyncio.to_thread(_get_first_last_sync)
 
     async def get_player_rank_history(self, player_id: str) -> List[Dict]:
         """Get player rank history"""
