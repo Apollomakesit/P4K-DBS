@@ -580,10 +580,36 @@ class Database:
 
     def _save_login_sync(
         self, player_id: str, player_name: str, timestamp: datetime
-    ) -> None:
-        """SYNC: Save login event"""
+    ) -> bool:
+        """🔥 FIXED SYNC: Save login event - PREVENTS DUPLICATES
+        
+        Only saves a login if:
+        1. Player has no login events at all, OR
+        2. Player's most recent event is a LOGOUT (meaning they're not already "logged in")
+        
+        Returns True if login was saved, False if skipped (duplicate)
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            
+            # Check the most recent event for this player
+            cursor.execute(
+                """
+                SELECT event_type FROM login_events 
+                WHERE player_id = ? 
+                ORDER BY timestamp DESC 
+                LIMIT 1
+            """,
+                (player_id,),
+            )
+            last_event = cursor.fetchone()
+            
+            # Skip if already logged in (last event was login)
+            if last_event and last_event[0] == 'login':
+                logger.debug(f"Skipping duplicate login for player {player_id} - already logged in")
+                return False
+            
+            # Save the login event
             cursor.execute(
                 """
                 INSERT INTO login_events (player_id, player_name, event_type, timestamp)
@@ -592,12 +618,13 @@ class Database:
                 (player_id, player_name, timestamp),
             )
             conn.commit()
+            return True
 
     async def save_login(
         self, player_id: str, player_name: str, timestamp: datetime
-    ) -> None:
-        """ASYNC: Save login event"""
-        await asyncio.to_thread(
+    ) -> bool:
+        """ASYNC: Save login event - returns True if saved, False if skipped"""
+        return await asyncio.to_thread(
             self._save_login_sync, player_id, player_name, timestamp
         )
 
@@ -732,6 +759,71 @@ class Database:
     async def remove_from_online_players(self, player_id: str) -> bool:
         """🔥 ASYNC: Remove a specific player from online_players table (on logout)"""
         return await asyncio.to_thread(self._remove_from_online_players_sync, player_id)
+
+    def _cleanup_duplicate_logins_sync(self, dry_run: bool = True) -> Dict:
+        """🆕 SYNC: Remove duplicate consecutive login events without matching logouts
+        
+        Keeps the FIRST login in each consecutive series, deletes the rest.
+        For each player:
+        1. Find all login events
+        2. For each login, check if previous event was also a login
+        3. If so, it's a duplicate - delete it
+        
+        Returns dict with stats about what was/would be deleted
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Find duplicate logins to delete (logins preceded by another login)
+                cursor.execute("""
+                    WITH ordered_events AS (
+                        SELECT 
+                            id,
+                            player_id,
+                            event_type,
+                            timestamp,
+                            LAG(event_type) OVER (PARTITION BY player_id ORDER BY timestamp) as prev_event
+                        FROM login_events
+                    )
+                    SELECT id, player_id, timestamp
+                    FROM ordered_events
+                    WHERE event_type = 'login' AND prev_event = 'login'
+                """)
+                
+                duplicates = cursor.fetchall()
+                duplicate_count = len(duplicates)
+                
+                # Count by player for stats
+                player_counts = {}
+                for dup in duplicates:
+                    pid = dup[1]
+                    player_counts[pid] = player_counts.get(pid, 0) + 1
+                
+                if not dry_run and duplicate_count > 0:
+                    # Actually delete the duplicates
+                    duplicate_ids = [dup[0] for dup in duplicates]
+                    placeholders = ",".join("?" * len(duplicate_ids))
+                    cursor.execute(
+                        f"DELETE FROM login_events WHERE id IN ({placeholders})",
+                        duplicate_ids
+                    )
+                    conn.commit()
+                    logger.info(f"🧹 Deleted {duplicate_count} duplicate login events")
+                
+                return {
+                    "total_duplicates": duplicate_count,
+                    "players_affected": len(player_counts),
+                    "top_players": dict(sorted(player_counts.items(), key=lambda x: x[1], reverse=True)[:10])
+                }
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up duplicate logins: {e}", exc_info=True)
+            return {"error": str(e)}
+
+    async def cleanup_duplicate_logins(self, dry_run: bool = True) -> Dict:
+        """🆕 ASYNC: Remove duplicate consecutive login events"""
+        return await asyncio.to_thread(self._cleanup_duplicate_logins_sync, dry_run)
 
     def _mark_player_for_update_sync(self, player_id: str, player_name: str) -> None:
         """Mark player for priority update - allows duplicate usernames"""
@@ -1175,62 +1267,90 @@ class Database:
         return await asyncio.to_thread(_get_count_sync)
 
     async def get_player_sessions(self, player_id: str, days: int = 7) -> List[Dict]:
-        """Get player sessions - properly pairs logins with their corresponding logouts"""
+        """🔥 REWRITTEN: Get player sessions with proper deduplication.
+        
+        The problem: Multiple consecutive logins without logouts exist due to:
+        1. Bot restarts clearing online_players table
+        2. Cleanup task marking all players as "new logins"
+        
+        Solution: Find the FIRST login before each logout (the real session start)
+        """
 
         def _get_sessions_sync():
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cutoff = datetime.now() - timedelta(days=days)
 
-                # 🔥 FIXED: Match logins with their NEXT logout properly
-                # Uses window functions to pair each login with the next logout
+                # 🔥 NEW APPROACH: For each logout, find the FIRST login that doesn't have
+                # another logout between it and this logout. This gives us accurate sessions.
                 cursor.execute(
                     """
-                    WITH events AS (
+                    WITH ordered_events AS (
                         SELECT 
+                            id,
                             event_type,
                             timestamp,
                             session_duration_seconds,
-                            ROW_NUMBER() OVER (ORDER BY timestamp) as rn
+                            ROW_NUMBER() OVER (ORDER BY timestamp ASC) as rn
                         FROM login_events
                         WHERE player_id = ?
                         AND timestamp >= ?
                     ),
-                    logins AS (
-                        SELECT timestamp AS login_time, rn
-                        FROM events
-                        WHERE event_type = 'login'
-                    ),
-                    logouts AS (
-                        SELECT timestamp AS logout_time, session_duration_seconds, rn
-                        FROM events
-                        WHERE event_type = 'logout'
+                    logouts_with_prev AS (
+                        SELECT 
+                            o.rn as logout_rn,
+                            o.timestamp as logout_time,
+                            o.session_duration_seconds,
+                            -- Find the previous logout's row number (or 0 if none)
+                            COALESCE(
+                                (SELECT MAX(p.rn) FROM ordered_events p 
+                                 WHERE p.event_type = 'logout' AND p.rn < o.rn),
+                                0
+                            ) as prev_logout_rn
+                        FROM ordered_events o
+                        WHERE o.event_type = 'logout'
                     )
                     SELECT 
-                        l.login_time,
-                        (
-                            SELECT lo.logout_time
-                            FROM logouts lo
-                            WHERE lo.rn > l.rn
-                            AND lo.logout_time > l.login_time
-                            ORDER BY lo.rn ASC
-                            LIMIT 1
-                        ) AS logout_time,
-                        (
-                            SELECT lo.session_duration_seconds
-                            FROM logouts lo
-                            WHERE lo.rn > l.rn
-                            AND lo.logout_time > l.login_time
-                            ORDER BY lo.rn ASC
-                            LIMIT 1
-                        ) AS session_duration_seconds
-                    FROM logins l
-                    ORDER BY l.login_time DESC
+                        -- Get the FIRST login after the previous logout (real session start)
+                        (SELECT MIN(e.timestamp) 
+                         FROM ordered_events e 
+                         WHERE e.event_type = 'login' 
+                         AND e.rn > lwp.prev_logout_rn 
+                         AND e.rn < lwp.logout_rn) as login_time,
+                        lwp.logout_time,
+                        lwp.session_duration_seconds
+                    FROM logouts_with_prev lwp
+                    WHERE (SELECT MIN(e.timestamp) 
+                           FROM ordered_events e 
+                           WHERE e.event_type = 'login' 
+                           AND e.rn > lwp.prev_logout_rn 
+                           AND e.rn < lwp.logout_rn) IS NOT NULL
+                    ORDER BY lwp.logout_time DESC
                 """,
                     (player_id, cutoff),
                 )
 
-                return [dict(row) for row in cursor.fetchall()]
+                results = [dict(row) for row in cursor.fetchall()]
+                
+                # Calculate actual duration from timestamps if session_duration_seconds is NULL
+                for session in results:
+                    if session.get('login_time') and session.get('logout_time'):
+                        login_dt = session['login_time']
+                        logout_dt = session['logout_time']
+                        
+                        # Parse if strings
+                        if isinstance(login_dt, str):
+                            login_dt = datetime.fromisoformat(login_dt)
+                        if isinstance(logout_dt, str):
+                            logout_dt = datetime.fromisoformat(logout_dt)
+                        
+                        # Calculate actual duration
+                        actual_duration = int((logout_dt - login_dt).total_seconds())
+                        
+                        # Use calculated duration (more accurate than stored)
+                        session['session_duration_seconds'] = actual_duration
+                
+                return results
 
         return await asyncio.to_thread(_get_sessions_sync)
 
