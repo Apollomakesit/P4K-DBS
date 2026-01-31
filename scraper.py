@@ -1559,9 +1559,107 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 31: Any "Jucatorul" action not matched above - mark as "other" but still extract player info
+        # ============================================================================
+        # NEW PATTERNS: Handle edge cases from /unknownactions report
+        # ============================================================================
+        
+        # 🔥 NEW PATTERN A: Bank heist with SIMPLE bank name (no nested parens)
+        # Example: "Jucatorul iBuyPower Aleksey(152166) a livrat bani de la banca(Blaine County Savings) jefuita si a primit 14.728.305 bani murdari si 1x Moneda sindicat."
+        heist_simple_match = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\(([^)]+)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)\s*bani\s+murdari",
+            text, re.IGNORECASE
+        )
+        if heist_simple_match:
+            return PlayerAction(
+                player_id=heist_simple_match.group(2),
+                player_name=heist_simple_match.group(1).strip(),
+                action_type="bank_heist_delivery",
+                action_detail=f"Livrat bani de la {heist_simple_match.group(3)}: {heist_simple_match.group(4)} bani murdari",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN B: Money withdrawal with nested parentheses in name
+        # Example: "Jucatorul King pt voi ! (fotomodelu)(218539) a retras suma de 422.779$ (taxa 4.227$)."
+        # The key is to match the LAST (ID) before " a retras"
+        withdraw_nested_name = re.search(
+            r"Jucatorul\s+(.+)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\$\s*\(taxa\s+([\d.,]+)\$\)",
+            text, re.IGNORECASE
+        )
+        if withdraw_nested_name:
+            return PlayerAction(
+                player_id=withdraw_nested_name.group(2),
+                player_name=withdraw_nested_name.group(1).strip(),
+                action_type="money_withdraw",
+                action_detail=f"Retras {withdraw_nested_name.group(3)}$ (taxa {withdraw_nested_name.group(4)}$)",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN C: ID-only ban - "Jucatorul (ID) a fost banat..."
+        # Example: "Jucatorul (224833) a fost banat de catre adminul Fane(300), durata 1 (de) zi(le), motiv 'Blacklist'."
+        ban_id_only_match = re.search(
+            r"Jucatorul\s+\((\d+)\)\s+a\s+fost\s+banat\s+de\s+catre\s+admin(?:ul)?\s+(.+?)\((\d+)\)\s*,\s*durata\s+(.+?)\s*,\s*motiv\s+['\"]?(.+?)['\"]?(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if ban_id_only_match:
+            return PlayerAction(
+                player_id=ban_id_only_match.group(1),
+                player_name=None,
+                action_type="ban_received",
+                action_detail=f"Ban de la {ban_id_only_match.group(2).strip()}: {ban_id_only_match.group(5).strip()} ({ban_id_only_match.group(4)})",
+                admin_id=ban_id_only_match.group(3),
+                admin_name=ban_id_only_match.group(2).strip(),
+                reason=ban_id_only_match.group(5).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN D: Money transfer with NO "Jucatorul" prefix and nested parens in sender name
+        # Example: "King pt voi ! (fotomodelu) (218539) ia transferat suma de 500.000 (de) $ lui Alina (126059) [IN MANA]"
+        # Note: The sender has "(tag) (ID)" format - need to find last "(ID)" for sender
+        transfer_fancy_name = re.search(
+            r"^(.+?)\s+\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s+(.+?)\s*\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if transfer_fancy_name:
+            return PlayerAction(
+                player_id=transfer_fancy_name.group(2),
+                player_name=transfer_fancy_name.group(1).strip(),
+                action_type="money_transfer",
+                action_detail=f"Transferat {transfer_fancy_name.group(3)}$ lui {transfer_fancy_name.group(4).strip()}",
+                target_player_id=transfer_fancy_name.group(5),
+                target_player_name=transfer_fancy_name.group(4).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN E: Money transfer with ID-ONLY sender - "(ID) ia transferat..."
+        # Example: "(76985) ia transferat suma de 94.226 (de) $ lui VARZARU (223077) [IN MANA]"
+        transfer_id_only_sender = re.search(
+            r"^\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s+(.+?)\s*\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if transfer_id_only_sender:
+            return PlayerAction(
+                player_id=transfer_id_only_sender.group(1),
+                player_name=None,
+                action_type="money_transfer",
+                action_detail=f"Transferat {transfer_id_only_sender.group(2)}$ lui {transfer_id_only_sender.group(3).strip()}",
+                target_player_id=transfer_id_only_sender.group(4),
+                target_player_name=transfer_id_only_sender.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # ============================================================================
+        # FALLBACK PATTERNS
+        # ============================================================================
+        
+        # 🔥 PATTERN 31: Any "Jucatorul" action not matched above - use GREEDY name match
+        # Changed from [^(]+ to .+ to handle names with parentheses like "King pt voi ! (tag)"
         generic_match = re.search(
-            r"Jucatorul\s+([^(]+)\((\d+)\)\s+(.+?)(?:\.|$)",
+            r"Jucatorul\s+(.+)\((\d+)\)\s+(.+?)(?:\.|$)",
             text, re.IGNORECASE
         )
         if generic_match:
