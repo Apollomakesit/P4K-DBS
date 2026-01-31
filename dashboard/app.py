@@ -129,12 +129,14 @@ PROFILE_REFRESH_ENABLED = SCRAPER_AVAILABLE and os.getenv("ENABLE_PROFILE_REFRES
 # 🔥 CHANGED: Stale threshold increased - we now prioritize ONLINE players instead
 PROFILE_STALE_HOURS = int(os.getenv("PROFILE_STALE_HOURS", "24"))  # Only refresh if profile older than 24h
 PROFILE_STALE_MINUTES = PROFILE_STALE_HOURS * 60  # Convert to minutes for compatibility
+PROFILE_STALE_THRESHOLD_HOURS = PROFILE_STALE_HOURS  # Alias for API compatibility
+MAX_CONCURRENT_REFRESHES = 3  # Maximum number of concurrent refresh operations
 REFRESH_QUEUE = set()  # Thread-safe queue of player IDs to refresh
 REFRESH_LOCK = threading.Lock()
 REFRESH_IN_PROGRESS = set()  # Track IDs being refreshed to avoid duplicates
 
 # Thread pool for async refresh operations
-refresh_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="profile_refresh")
+refresh_executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_REFRESHES, thread_name_prefix="profile_refresh")
 
 def is_profile_stale(last_update) -> bool:
     """Check if a profile is stale and needs refresh (24h threshold by default)"""
@@ -151,29 +153,34 @@ def is_profile_stale(last_update) -> bool:
     stale_threshold = datetime.now() - timedelta(hours=PROFILE_STALE_HOURS)
     return last_update < stale_threshold
 
-def queue_profile_refresh(player_id: str, priority: bool = False):
+def queue_profile_refresh(player_id: str, priority: bool = False) -> bool:
     """
     Queue a player profile for background refresh.
     
     Args:
         player_id: Player ID to refresh
         priority: If True, refresh immediately (for direct page access)
+    
+    Returns:
+        True if profile was queued, False if already in progress or disabled
     """
     if not PROFILE_REFRESH_ENABLED:
-        return
+        return False
     
     player_id = str(player_id)
     
     with REFRESH_LOCK:
         if player_id in REFRESH_IN_PROGRESS:
-            return  # Already being refreshed
+            return False  # Already being refreshed
         
         if priority:
             # For priority refreshes (page access), trigger immediately
             REFRESH_IN_PROGRESS.add(player_id)
             refresh_executor.submit(_do_profile_refresh, player_id)
+            return True
         else:
             REFRESH_QUEUE.add(player_id)
+            return True
 
 def queue_multiple_profile_refresh(player_ids: list):
     """Queue multiple player profiles for background refresh"""
@@ -824,10 +831,15 @@ def api_refresh_profile(player_id):
 def api_refresh_status():
     """🔥 Get status of the profile refresh system"""
     try:
+        with REFRESH_LOCK:
+            queue_size = len(REFRESH_QUEUE)
+            in_progress = len(REFRESH_IN_PROGRESS)
+        
         return jsonify({
             'enabled': PROFILE_REFRESH_ENABLED,
             'scraper_available': SCRAPER_AVAILABLE,
-            'queue_size': profile_refresh_queue.qsize() if PROFILE_REFRESH_ENABLED else 0,
+            'queue_size': queue_size,
+            'in_progress': in_progress,
             'stale_threshold_hours': PROFILE_STALE_THRESHOLD_HOURS,
             'max_concurrent_refreshes': MAX_CONCURRENT_REFRESHES
         })
@@ -933,10 +945,20 @@ def api_bans():
             """)
         
         bans = [dict(row) for row in cursor.fetchall()]
+        
+        # Get active and expired counts for the template
+        cursor.execute("SELECT COUNT(*) FROM banned_players WHERE is_active = TRUE")
+        active_count = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM banned_players WHERE is_active = FALSE")
+        expired_count = cursor.fetchone()[0]
+        
         conn.close()
         
         return jsonify({
             'count': len(bans),
+            'active_count': active_count,
+            'expired_count': expired_count,
             'bans': bans
         })
     except Exception as e:
@@ -966,7 +988,8 @@ def api_activity_chart():
             
             data.append({
                 'hour': hour_start.strftime('%H:%M'),
-                'actions': count
+                'count': count,
+                'actions': count  # Alias for backwards compatibility
             })
         
         conn.close()
