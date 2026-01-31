@@ -3095,22 +3095,38 @@ def setup_commands(bot, db, scraper_getter):
         interaction: discord.Interaction,
         current: str,
     ) -> List[app_commands.Choice[str]]:
-        """Autocomplete for faction names from database"""
+        """Autocomplete for faction names from database
+        
+        Handles 37+ factions with Discord's 25-choice limit by:
+        1. Prioritizing exact prefix matches first
+        2. Then showing partial matches
+        3. Sorting alphabetically for consistency
+        """
         try:
             # Get all faction names from database
             all_factions = await db.get_all_faction_names()
             
-            # Filter based on current input
             if current:
-                filtered = [f for f in all_factions if current.lower() in f.lower()]
+                current_lower = current.lower()
+                # Prioritize factions that START with the search term
+                prefix_matches = [f for f in all_factions if f.lower().startswith(current_lower)]
+                # Then factions that CONTAIN the search term (but don't start with it)
+                contains_matches = [f for f in all_factions if current_lower in f.lower() and not f.lower().startswith(current_lower)]
+                # Combine: prefix matches first, then contains matches
+                filtered = prefix_matches + contains_matches
             else:
-                filtered = all_factions
+                # No input yet - sort alphabetically so user can scroll A-Z
+                filtered = sorted(all_factions)
             
-            # Return up to 25 choices (Discord limit)
-            return [
-                app_commands.Choice(name=faction, value=faction)
-                for faction in filtered[:25]
-            ]
+            # Build choices (max 25 due to Discord limit)
+            choices = []
+            for faction in filtered[:25]:
+                choices.append(app_commands.Choice(name=faction, value=faction))
+            
+            # If there are more factions than shown, user needs to type to filter
+            # The sorted alphabetical list helps them know what to type
+            return choices
+            
         except Exception as e:
             logger.error(f"Error in faction autocomplete: {e}")
             return []
