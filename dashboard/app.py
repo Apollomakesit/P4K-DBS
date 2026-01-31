@@ -114,6 +114,11 @@ def index():
 def players_page():
     return render_template('players.html')
 
+@app.route('/player/<player_id>')
+def player_page(player_id):
+    """Individual player profile page"""
+    return render_template('player.html', player_id=player_id)
+
 @app.route('/actions')
 def actions_page():
     return render_template('actions.html')

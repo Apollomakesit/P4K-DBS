@@ -18,7 +18,7 @@
             <select x-model="actionType" @change="fetchActions()" class="px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
                 <option value="">All Types</option>
                 <template x-for="type in actionTypes" :key="type.action_type">
-                    <option :value="type.action_type" x-text="type.action_type.replace(/_/g, ' ') + ' (' + type.count + ')'"></option>
+                    <option :value="type.action_type" x-text="formatActionType(type.action_type) + ' (' + type.count + ')'"></option>
                 </template>
             </select>
             
@@ -55,9 +55,13 @@
                                    x-text="(action.player_name || 'Unknown') + ' (' + action.player_id + ')'"></a>
                             </td>
                             <td class="py-3">
-                                <span class="px-2 py-1 text-xs rounded-full"
-                                      :class="getTypeClass(action.action_type)"
-                                      x-text="action.action_type.replace(/_/g, ' ')"></span>
+                                <div class="flex items-center gap-2">
+                                    <span class="w-8 h-8 rounded-lg flex items-center justify-center text-sm"
+                                          :class="getActionColor(action.action_type)">
+                                        <i :class="getActionIcon(action.action_type)"></i>
+                                    </span>
+                                    <span class="text-sm font-medium" x-text="formatActionType(action.action_type)"></span>
+                                </div>
                             </td>
                             <td class="py-3 text-sm text-gray-400 max-w-md" x-html="parseActionDetail(action.action_detail)"></td>
                             <td class="py-3">
@@ -171,6 +175,123 @@ function actionsPage() {
             if (type.includes('ban') || type.includes('jail') || type.includes('kick')) return 'bg-red-500/20 text-red-400';
             if (type.includes('heist')) return 'bg-purple-500/20 text-purple-400';
             return 'bg-gray-500/20 text-gray-400';
+        },
+        
+        // Get icon for action type
+        getActionIcon(type) {
+            if (!type) return 'fas fa-circle';
+            const icons = {
+                'item_given': 'fas fa-gift',
+                'item_received': 'fas fa-box',
+                'item_sold': 'fas fa-tags',
+                'money_transfer': 'fas fa-money-bill-transfer',
+                'money_deposit': 'fas fa-piggy-bank',
+                'money_withdraw': 'fas fa-money-bill',
+                'warning_received': 'fas fa-exclamation-triangle',
+                'ban_received': 'fas fa-ban',
+                'admin_jail': 'fas fa-lock',
+                'admin_unjail': 'fas fa-lock-open',
+                'admin_unban': 'fas fa-user-check',
+                'mute_received': 'fas fa-volume-mute',
+                'vehicle_contract': 'fas fa-car',
+                'vehicle_bought': 'fas fa-car-side',
+                'vehicle_sold': 'fas fa-car',
+                'vehicle_scrapped': 'fas fa-car-crash',
+                'chest_deposit': 'fas fa-box-archive',
+                'chest_withdraw': 'fas fa-box-open',
+                'bank_heist_delivery': 'fas fa-sack-dollar',
+                'house_safe_deposit': 'fas fa-house-lock',
+                'house_safe_withdraw': 'fas fa-house',
+                'property_bought': 'fas fa-building',
+                'property_sold': 'fas fa-building-circle-arrow-right',
+                'trade': 'fas fa-handshake',
+                'gambling_win': 'fas fa-dice',
+                'license_plate_sale': 'fas fa-id-card',
+                'faction_kicked': 'fas fa-user-slash',
+                'kill_character': 'fas fa-skull',
+                'other': 'fas fa-clipboard-list',
+                'unknown': 'fas fa-question-circle',
+                'legacy_multi_action': 'fas fa-layer-group'
+            };
+            return icons[type] || 'fas fa-circle';
+        },
+        
+        // Get color class for action type
+        getActionColor(type) {
+            if (!type) return 'bg-gray-500/20 text-gray-400';
+            const colors = {
+                'item_given': 'bg-blue-500/20 text-blue-400',
+                'item_received': 'bg-green-500/20 text-green-400',
+                'item_sold': 'bg-emerald-500/20 text-emerald-400',
+                'money_transfer': 'bg-yellow-500/20 text-yellow-400',
+                'money_deposit': 'bg-green-500/20 text-green-400',
+                'money_withdraw': 'bg-orange-500/20 text-orange-400',
+                'warning_received': 'bg-yellow-500/20 text-yellow-400',
+                'ban_received': 'bg-red-500/20 text-red-400',
+                'admin_jail': 'bg-red-500/20 text-red-400',
+                'admin_unjail': 'bg-green-500/20 text-green-400',
+                'admin_unban': 'bg-green-500/20 text-green-400',
+                'mute_received': 'bg-orange-500/20 text-orange-400',
+                'vehicle_contract': 'bg-cyan-500/20 text-cyan-400',
+                'vehicle_bought': 'bg-cyan-500/20 text-cyan-400',
+                'vehicle_sold': 'bg-teal-500/20 text-teal-400',
+                'vehicle_scrapped': 'bg-gray-500/20 text-gray-400',
+                'chest_deposit': 'bg-indigo-500/20 text-indigo-400',
+                'chest_withdraw': 'bg-violet-500/20 text-violet-400',
+                'bank_heist_delivery': 'bg-purple-500/20 text-purple-400',
+                'house_safe_deposit': 'bg-indigo-500/20 text-indigo-400',
+                'house_safe_withdraw': 'bg-violet-500/20 text-violet-400',
+                'property_bought': 'bg-teal-500/20 text-teal-400',
+                'property_sold': 'bg-pink-500/20 text-pink-400',
+                'trade': 'bg-amber-500/20 text-amber-400',
+                'gambling_win': 'bg-fuchsia-500/20 text-fuchsia-400',
+                'license_plate_sale': 'bg-sky-500/20 text-sky-400',
+                'faction_kicked': 'bg-red-500/20 text-red-400',
+                'kill_character': 'bg-red-600/20 text-red-500',
+                'other': 'bg-gray-500/20 text-gray-400',
+                'unknown': 'bg-gray-500/20 text-gray-400',
+                'legacy_multi_action': 'bg-gray-500/20 text-gray-400'
+            };
+            return colors[type] || 'bg-gray-500/20 text-gray-400';
+        },
+        
+        // Format action type to readable label
+        formatActionType(type) {
+            if (!type) return 'Unknown';
+            const labels = {
+                'item_given': 'Item Given',
+                'item_received': 'Item Received',
+                'item_sold': 'Item Sold',
+                'money_transfer': 'Money Transfer',
+                'money_deposit': 'Money Deposit',
+                'money_withdraw': 'Money Withdraw',
+                'warning_received': 'Warning',
+                'ban_received': 'Ban',
+                'admin_jail': 'Admin Jail',
+                'admin_unjail': 'Admin Unjail',
+                'admin_unban': 'Unban',
+                'mute_received': 'Mute',
+                'vehicle_contract': 'Vehicle Contract',
+                'vehicle_bought': 'Vehicle Bought',
+                'vehicle_sold': 'Vehicle Sold',
+                'vehicle_scrapped': 'Vehicle Scrapped',
+                'chest_deposit': 'Chest Deposit',
+                'chest_withdraw': 'Chest Withdraw',
+                'bank_heist_delivery': 'Bank Heist',
+                'house_safe_deposit': 'Safe Deposit',
+                'house_safe_withdraw': 'Safe Withdraw',
+                'property_bought': 'Property Bought',
+                'property_sold': 'Property Sold',
+                'trade': 'Trade',
+                'gambling_win': 'Gambling Win',
+                'license_plate_sale': 'License Plate Sale',
+                'faction_kicked': 'Server Kick',
+                'kill_character': 'Kill Character',
+                'other': 'Other',
+                'unknown': 'Unknown',
+                'legacy_multi_action': 'Legacy Data'
+            };
+            return labels[type] || type.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
         },
         
         // Parse action detail to make player names clickable
