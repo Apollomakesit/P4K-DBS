@@ -2,6 +2,9 @@
 """
 Pro4Kings Web Dashboard - Real-time monitoring interface
 Runs alongside the Discord bot on a separate port
+
+🔥 ENHANCED: Now supports auto-refresh of player profiles from the website
+when profiles are accessed, stale, or when players are seen in actions/online.
 """
 
 from flask import Flask, render_template, jsonify, request
@@ -10,6 +13,22 @@ import sqlite3
 from datetime import datetime, timedelta
 import os
 import logging
+import asyncio
+import sys
+import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+# Add parent directory to path for scraper import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from scraper import Pro4KingsScraper
+    SCRAPER_AVAILABLE = True
+except ImportError:
+    SCRAPER_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("⚠️ Scraper not available - profile refresh disabled")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -100,6 +119,210 @@ def _normalize_action(action: dict) -> dict:
         action["timestamp_display"] = ""
         action["time_ago"] = ""
     return action
+
+# ============================================================================
+# 🔥 PROFILE AUTO-REFRESH SYSTEM
+# ============================================================================
+
+# Configuration for auto-refresh
+PROFILE_REFRESH_ENABLED = SCRAPER_AVAILABLE and os.getenv("ENABLE_PROFILE_REFRESH", "true").lower() == "true"
+PROFILE_STALE_MINUTES = int(os.getenv("PROFILE_STALE_MINUTES", "30"))  # Refresh if profile older than 30 min
+REFRESH_QUEUE = set()  # Thread-safe queue of player IDs to refresh
+REFRESH_LOCK = threading.Lock()
+REFRESH_IN_PROGRESS = set()  # Track IDs being refreshed to avoid duplicates
+
+# Thread pool for async refresh operations
+refresh_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="profile_refresh")
+
+def is_profile_stale(last_update) -> bool:
+    """Check if a profile is stale and needs refresh"""
+    if not last_update:
+        return True  # Never updated
+    
+    if isinstance(last_update, str):
+        try:
+            last_update = datetime.fromisoformat(last_update)
+        except:
+            return True
+    
+    stale_threshold = datetime.now() - timedelta(minutes=PROFILE_STALE_MINUTES)
+    return last_update < stale_threshold
+
+def queue_profile_refresh(player_id: str, priority: bool = False):
+    """
+    Queue a player profile for background refresh.
+    
+    Args:
+        player_id: Player ID to refresh
+        priority: If True, refresh immediately (for direct page access)
+    """
+    if not PROFILE_REFRESH_ENABLED:
+        return
+    
+    player_id = str(player_id)
+    
+    with REFRESH_LOCK:
+        if player_id in REFRESH_IN_PROGRESS:
+            return  # Already being refreshed
+        
+        if priority:
+            # For priority refreshes (page access), trigger immediately
+            REFRESH_IN_PROGRESS.add(player_id)
+            refresh_executor.submit(_do_profile_refresh, player_id)
+        else:
+            REFRESH_QUEUE.add(player_id)
+
+def queue_multiple_profile_refresh(player_ids: list):
+    """Queue multiple player profiles for background refresh"""
+    if not PROFILE_REFRESH_ENABLED:
+        return
+    
+    with REFRESH_LOCK:
+        for pid in player_ids:
+            pid = str(pid)
+            if pid and pid not in REFRESH_IN_PROGRESS:
+                REFRESH_QUEUE.add(pid)
+
+def _do_profile_refresh(player_id: str):
+    """
+    Actually perform the profile refresh (runs in background thread).
+    Uses asyncio to run the scraper.
+    """
+    try:
+        logger.info(f"🔄 Auto-refreshing profile for player {player_id}...")
+        
+        # Create new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            # Run the async scraper
+            profile = loop.run_until_complete(_fetch_and_save_profile(player_id))
+            
+            if profile:
+                logger.info(f"✅ Profile refreshed: {profile.get('username', player_id)} ({player_id})")
+            else:
+                logger.warning(f"⚠️ Profile not found for player {player_id}")
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        logger.error(f"❌ Error refreshing profile {player_id}: {e}")
+    finally:
+        with REFRESH_LOCK:
+            REFRESH_IN_PROGRESS.discard(player_id)
+
+async def _fetch_and_save_profile(player_id: str) -> dict:
+    """Fetch profile from website and save to database"""
+    async with Pro4KingsScraper(max_concurrent=1) as scraper:
+        profile_obj = await scraper.get_player_profile(player_id)
+        
+        if not profile_obj:
+            return None
+        
+        # Convert to dict and save to database
+        profile_dict = {
+            "player_id": profile_obj.player_id,
+            "player_name": profile_obj.username,
+            "is_online": profile_obj.is_online,
+            "last_connection": profile_obj.last_seen,
+            "faction": profile_obj.faction,
+            "faction_rank": profile_obj.faction_rank,
+            "job": profile_obj.job,
+            "warns": profile_obj.warnings,
+            "played_hours": profile_obj.played_hours,
+            "age_ic": profile_obj.age_ic,
+        }
+        
+        # Save to database synchronously
+        _save_profile_to_db(profile_dict)
+        
+        return profile_dict
+
+def _save_profile_to_db(profile: dict):
+    """Save profile to database"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        username = profile.get("player_name") or profile.get("username", f"Player_{profile['player_id']}")
+        last_seen = profile.get("last_connection") or profile.get("last_seen")
+        
+        cursor.execute("""
+            INSERT INTO player_profiles (
+                player_id, username, is_online, last_seen,
+                faction, faction_rank, job, warnings,
+                played_hours, age_ic,
+                last_profile_update
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(player_id) DO UPDATE SET
+                username = excluded.username,
+                is_online = excluded.is_online,
+                last_seen = excluded.last_seen,
+                faction = excluded.faction,
+                faction_rank = excluded.faction_rank,
+                job = excluded.job,
+                warnings = excluded.warnings,
+                played_hours = excluded.played_hours,
+                age_ic = excluded.age_ic,
+                last_profile_update = CURRENT_TIMESTAMP
+        """, (
+            profile["player_id"],
+            username,
+            profile.get("is_online", False),
+            last_seen,
+            profile.get("faction"),
+            profile.get("faction_rank"),
+            profile.get("job"),
+            profile.get("warns") or profile.get("warnings"),
+            profile.get("played_hours"),
+            profile.get("age_ic"),
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+    except Exception as e:
+        logger.error(f"Error saving profile to DB: {e}")
+
+def process_refresh_queue():
+    """Process queued profile refreshes (called periodically)"""
+    if not PROFILE_REFRESH_ENABLED:
+        return
+    
+    with REFRESH_LOCK:
+        if not REFRESH_QUEUE:
+            return
+        
+        # Process up to 10 profiles at a time
+        to_refresh = list(REFRESH_QUEUE)[:10]
+        for pid in to_refresh:
+            REFRESH_QUEUE.discard(pid)
+            if pid not in REFRESH_IN_PROGRESS:
+                REFRESH_IN_PROGRESS.add(pid)
+                refresh_executor.submit(_do_profile_refresh, pid)
+
+# Start background queue processor (simple timer)
+def start_refresh_queue_processor():
+    """Start the background queue processor"""
+    if not PROFILE_REFRESH_ENABLED:
+        logger.info("📴 Profile refresh disabled (ENABLE_PROFILE_REFRESH=false or scraper not available)")
+        return
+    
+    import time
+    
+    def processor_loop():
+        while True:
+            try:
+                process_refresh_queue()
+            except Exception as e:
+                logger.error(f"Queue processor error: {e}")
+            time.sleep(5)  # Process queue every 5 seconds
+    
+    thread = threading.Thread(target=processor_loop, daemon=True, name="refresh_queue_processor")
+    thread.start()
+    logger.info("✅ Profile refresh queue processor started")
 
 # ============================================================================
 # API ENDPOINTS
@@ -262,7 +485,8 @@ def api_online():
                 o.detected_online_at,
                 p.faction,
                 p.faction_rank,
-                p.played_hours
+                p.played_hours,
+                p.last_profile_update
             FROM online_players o
             LEFT JOIN player_profiles p ON o.player_id = p.player_id
             WHERE o.detected_online_at >= ?
@@ -272,9 +496,18 @@ def api_online():
         players = [dict(row) for row in cursor.fetchall()]
         conn.close()
         
+        # 🔥 AUTO-REFRESH: Queue stale online player profiles for refresh
+        stale_player_ids = []
+        for player in players:
+            if is_profile_stale(player.get('last_profile_update')):
+                stale_player_ids.append(str(player['player_id']))
+        if stale_player_ids:
+            queue_multiple_profile_refresh(stale_player_ids[:30])  # Online players are higher priority
+        
         return jsonify({
             'count': len(players),
-            'players': players
+            'players': players,
+            'stale_profiles_queued': len(stale_player_ids)
         })
     except Exception as e:
         logger.error(f"Error getting online players: {e}")
@@ -367,6 +600,38 @@ def api_actions():
         
         cursor.execute(query, params)
         actions = [_normalize_action(dict(row)) for row in cursor.fetchall()]
+        
+        # 🔥 AUTO-REFRESH: Queue stale profiles for players seen in actions
+        stale_profiles_queued = 0
+        if PROFILE_REFRESH_ENABLED and actions:
+            # Collect unique player IDs from actions (both actors and targets)
+            action_player_ids = set()
+            for action in actions:
+                if action.get('player_id'):
+                    action_player_ids.add(str(action['player_id']))
+                if action.get('target_player_id'):
+                    action_player_ids.add(str(action['target_player_id']))
+            
+            # Check which ones are stale (limit to first 50 to avoid overload)
+            action_player_ids_list = list(action_player_ids)[:50]
+            if action_player_ids_list:
+                placeholders = ','.join(['?' for _ in action_player_ids_list])
+                cursor.execute(f"""
+                    SELECT player_id, last_profile_update FROM player_profiles 
+                    WHERE player_id IN ({placeholders})
+                """, action_player_ids_list)
+                
+                stale_player_ids = []
+                for row in cursor.fetchall():
+                    if is_profile_stale(row['last_profile_update']):
+                        stale_player_ids.append(str(row['player_id']))
+                
+                # Queue stale profiles for refresh (max 20 at a time)
+                if stale_player_ids:
+                    queue_multiple_profile_refresh(stale_player_ids[:20])
+                    stale_profiles_queued = len(stale_player_ids[:20])
+                    logger.info(f"📋 Actions view: Queued {stale_profiles_queued} stale player profiles for refresh")
+        
         conn.close()
         
         return jsonify({
@@ -375,7 +640,8 @@ def api_actions():
             'total_pages': max(1, (total_count + per_page - 1) // per_page),
             'page': page,
             'per_page': per_page,
-            'actions': actions
+            'actions': actions,
+            'stale_profiles_queued': stale_profiles_queued
         })
     except Exception as e:
         logger.error(f"Error getting actions: {e}")
@@ -416,9 +682,17 @@ def api_player(player_id):
         
         if not profile:
             conn.close()
-            return jsonify({'error': 'Player not found'}), 404
+            # 🔥 AUTO-REFRESH: Player not in DB - queue high priority fetch
+            queue_profile_refresh(player_id, priority=True)
+            return jsonify({'error': 'Player not found', 'refresh_queued': True}), 404
         
         profile_dict = dict(profile)
+        
+        # 🔥 AUTO-REFRESH: Check if profile is stale and queue refresh
+        last_update = profile_dict.get('last_profile_update')
+        if is_profile_stale(last_update):
+            queue_profile_refresh(player_id, priority=True)
+            profile_dict['refresh_queued'] = True
         
         # Check if currently online
         cutoff = datetime.now() - timedelta(minutes=5)
@@ -504,6 +778,53 @@ def api_search():
         logger.error(f"Error searching: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/refresh-profile/<player_id>', methods=['POST', 'GET'])
+def api_refresh_profile(player_id):
+    """🔥 Manually trigger a profile refresh for a specific player"""
+    try:
+        if not PROFILE_REFRESH_ENABLED:
+            return jsonify({
+                'success': False,
+                'error': 'Profile refresh system is disabled (scraper not available)'
+            }), 503
+        
+        # Queue the profile for priority refresh
+        was_queued = queue_profile_refresh(player_id, priority=True)
+        
+        if was_queued:
+            logger.info(f"🔄 Manual refresh requested for player {player_id}")
+            return jsonify({
+                'success': True,
+                'message': f'Profile refresh queued for player {player_id}',
+                'player_id': player_id,
+                'queued': True
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'message': f'Profile {player_id} already in refresh queue or recently refreshed',
+                'player_id': player_id,
+                'queued': False
+            })
+    except Exception as e:
+        logger.error(f"Error queuing profile refresh for {player_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/refresh-status')
+def api_refresh_status():
+    """🔥 Get status of the profile refresh system"""
+    try:
+        return jsonify({
+            'enabled': PROFILE_REFRESH_ENABLED,
+            'scraper_available': SCRAPER_AVAILABLE,
+            'queue_size': profile_refresh_queue.qsize() if PROFILE_REFRESH_ENABLED else 0,
+            'stale_threshold_hours': PROFILE_STALE_THRESHOLD_HOURS,
+            'max_concurrent_refreshes': MAX_CONCURRENT_REFRESHES
+        })
+    except Exception as e:
+        logger.error(f"Error getting refresh status: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/factions')
 def api_factions():
     """Get all factions with member counts"""
@@ -557,10 +878,19 @@ def api_faction(faction_name):
         members = [dict(row) for row in cursor.fetchall()]
         conn.close()
         
+        # 🔥 AUTO-REFRESH: Queue stale faction member profiles for refresh
+        stale_member_ids = []
+        for member in members:
+            if is_profile_stale(member.get('last_profile_update')):
+                stale_member_ids.append(str(member['player_id']))
+        if stale_member_ids:
+            queue_multiple_profile_refresh(stale_member_ids[:20])  # Limit to 20 at a time
+        
         return jsonify({
             'faction': faction_name,
             'count': len(members),
-            'members': members
+            'members': members,
+            'stale_profiles_queued': len(stale_member_ids)
         })
     except Exception as e:
         logger.error(f"Error getting faction {faction_name}: {e}")
@@ -1474,5 +1804,12 @@ if __name__ == '__main__':
     
     logger.info(f"🌐 Starting Pro4Kings Web Dashboard on port {port}")
     logger.info(f"📁 Database: {get_db_path()}")
+    
+    # 🔥 Start background profile refresh queue processor
+    if PROFILE_REFRESH_ENABLED:
+        start_refresh_queue_processor()
+        logger.info(f"🔄 Profile Auto-Refresh System enabled (stale threshold: {PROFILE_STALE_THRESHOLD_HOURS}h)")
+    else:
+        logger.warning("⚠️ Profile Auto-Refresh System disabled (scraper not available)")
     
     app.run(host='0.0.0.0', port=port, debug=debug)
