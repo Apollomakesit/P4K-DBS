@@ -1694,26 +1694,48 @@ def api_bot_status():
         cursor = conn.cursor()
         
         # 🔥 FIXED: Detect bot connectivity from RECENT database activity
-        # Bot is connected if there are actions/logins in last 5 minutes
-        cutoff = datetime.now() - timedelta(minutes=5)
+        # Use SQL datetime functions to avoid timezone issues between Python and SQLite
+        # Check for activity in last 10 minutes to account for timezone differences
         
-        # Check for recent actions (bot scrapes every 5s)
-        cursor.execute("SELECT COUNT(*) FROM actions WHERE timestamp >= ?", (cutoff,))
-        recent_actions = cursor.fetchone()[0]
+        recent_actions = 0
+        recent_logins = 0
+        recent_online = 0
         
-        # Check for recent login events (bot tracks every 60s)
-        cursor.execute("SELECT COUNT(*) FROM login_events WHERE timestamp >= ?", (cutoff,))
-        recent_logins = cursor.fetchone()[0]
+        try:
+            # Check for recent actions using SQLite datetime (more reliable)
+            cursor.execute("""
+                SELECT COUNT(*) FROM actions 
+                WHERE timestamp >= datetime('now', '-10 minutes')
+            """)
+            recent_actions = cursor.fetchone()[0]
+        except Exception as e:
+            logger.warning(f"Error checking recent actions: {e}")
         
-        # Check for recently detected online players
-        cursor.execute("SELECT COUNT(*) FROM online_players WHERE detected_online_at >= ?", (cutoff,))
-        recent_online = cursor.fetchone()[0]
+        try:
+            # Check for recent login events
+            cursor.execute("""
+                SELECT COUNT(*) FROM login_events 
+                WHERE timestamp >= datetime('now', '-10 minutes')
+            """)
+            recent_logins = cursor.fetchone()[0]
+        except Exception as e:
+            logger.warning(f"Error checking recent logins: {e}")
+        
+        try:
+            # Check for recently detected online players
+            cursor.execute("""
+                SELECT COUNT(*) FROM online_players 
+                WHERE detected_online_at >= datetime('now', '-10 minutes')
+            """)
+            recent_online = cursor.fetchone()[0]
+        except Exception as e:
+            logger.warning(f"Error checking online players: {e}")
         
         # Bot is connected if there's recent activity OR players are being tracked
         status['bot_connected'] = (recent_actions > 0 or recent_logins > 0 or recent_online > 0)
         status['recent_activity'] = {
-            'actions_5min': recent_actions,
-            'logins_5min': recent_logins,
+            'actions_10min': recent_actions,
+            'logins_10min': recent_logins,
             'online_tracked': recent_online
         }
         
