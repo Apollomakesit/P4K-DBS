@@ -4,7 +4,7 @@ Diagnostic script to inspect HTML structure from Pro4Kings profile page
 Run this to debug scraper issues with username and age_ic extraction
 
 Usage:
-    python diagnose_profile.py              # Uses default player ID 155733
+    python diagnose_profile.py              # Uses default player ID 1
     python diagnose_profile.py 123456       # Diagnose specific player
 """
 import asyncio
@@ -14,7 +14,7 @@ import re
 import sys
 
 
-async def diagnose_profile(player_id: str = "155733"):
+async def diagnose_profile(player_id: str = "1"):
     """Fetch and analyze profile HTML structure"""
     url = f"https://panel.pro4kings.ro/profile/{player_id}"
 
@@ -133,5 +133,5 @@ async def diagnose_profile(player_id: str = "155733"):
 
 if __name__ == "__main__":
     # Get player ID from command line or use default
-    player_id = sys.argv[1] if len(sys.argv) > 1 else "155733"
+    player_id = sys.argv[1] if len(sys.argv) > 1 else "1"
     asyncio.run(diagnose_profile(player_id))

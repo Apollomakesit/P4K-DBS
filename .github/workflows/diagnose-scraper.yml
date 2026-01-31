@@ -7,7 +7,7 @@ on:
       player_id:
         description: 'Player ID to diagnose'
         required: false
-        default: '155733'
+        default: '1'
   push:
     branches:
       - diagnose
@@ -33,7 +33,7 @@ jobs:
       run: |
         python diagnose_profile.py
       env:
-        PLAYER_ID: ${{ github.event.inputs.player_id || '155733' }}
+        PLAYER_ID: ${{ github.event.inputs.player_id || '1' }}
 
     - name: Upload HTML sample
       uses: actions/upload-artifact@v3
