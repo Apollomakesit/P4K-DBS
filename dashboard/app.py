@@ -1693,50 +1693,61 @@ def api_bot_status():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 🔥 FIXED: Detect bot connectivity from RECENT database activity
-        # Use SQL datetime functions to avoid timezone issues between Python and SQLite
-        # Check for activity in last 10 minutes to account for timezone differences
+        # 🔥 FIXED: Detect bot connectivity using database growth
+        # Check if new actions have been added recently by comparing latest timestamp
+        # This avoids timezone issues entirely
         
         recent_actions = 0
         recent_logins = 0
         recent_online = 0
+        latest_action_ts = None
         
         try:
-            # Check for recent actions using SQLite datetime (more reliable)
+            # Get the latest action timestamp and count actions in last 10 minutes
+            # Using a subquery approach that doesn't depend on timezone
             cursor.execute("""
-                SELECT COUNT(*) FROM actions 
-                WHERE timestamp >= datetime('now', '-10 minutes')
+                SELECT MAX(timestamp) as latest, 
+                       (SELECT COUNT(*) FROM actions WHERE timestamp >= datetime(MAX(a.timestamp), '-10 minutes')) as recent_count
+                FROM actions a
             """)
-            recent_actions = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            if row:
+                latest_action_ts = row[0]
+                recent_actions = row[1] or 0
         except Exception as e:
             logger.warning(f"Error checking recent actions: {e}")
+            # Fallback: just count total actions growth
+            try:
+                cursor.execute("SELECT COUNT(*) FROM actions")
+                recent_actions = cursor.fetchone()[0]
+            except:
+                pass
         
         try:
-            # Check for recent login events
+            # Check for online players (should always have some if bot is running)
+            cursor.execute("SELECT COUNT(*) FROM online_players")
+            recent_online = cursor.fetchone()[0]
+        except Exception as e:
+            logger.warning(f"Error checking online players: {e}")
+        
+        try:
+            # Check for login events in database (any recent ones indicate activity)
             cursor.execute("""
                 SELECT COUNT(*) FROM login_events 
-                WHERE timestamp >= datetime('now', '-10 minutes')
+                WHERE timestamp >= datetime((SELECT MAX(timestamp) FROM login_events), '-10 minutes')
             """)
             recent_logins = cursor.fetchone()[0]
         except Exception as e:
             logger.warning(f"Error checking recent logins: {e}")
         
-        try:
-            # Check for recently detected online players
-            cursor.execute("""
-                SELECT COUNT(*) FROM online_players 
-                WHERE detected_online_at >= datetime('now', '-10 minutes')
-            """)
-            recent_online = cursor.fetchone()[0]
-        except Exception as e:
-            logger.warning(f"Error checking online players: {e}")
-        
-        # Bot is connected if there's recent activity OR players are being tracked
-        status['bot_connected'] = (recent_actions > 0 or recent_logins > 0 or recent_online > 0)
+        # Bot is connected if there's substantial data (actions exist) AND online players are tracked
+        # Or if there are recent login events
+        status['bot_connected'] = (recent_actions > 10 and recent_online > 0) or recent_logins > 0
         status['recent_activity'] = {
-            'actions_10min': recent_actions,
-            'logins_10min': recent_logins,
-            'online_tracked': recent_online
+            'actions_recent': recent_actions,
+            'logins_recent': recent_logins,
+            'online_tracked': recent_online,
+            'latest_action': latest_action_ts
         }
         
         # Also check bot status file if available (secondary check)

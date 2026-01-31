@@ -51,11 +51,11 @@
             <div x-show="status.recent_activity && status.bot_connected" class="flex items-center gap-4 text-sm text-gray-300 ml-auto">
                 <span class="bg-gray-700 px-3 py-1 rounded-full">
                     <i class="fas fa-bolt text-yellow-400 mr-1"></i>
-                    <span x-text="status.recent_activity?.actions_10min || 0"></span> actions (10m)
+                    <span x-text="status.recent_activity?.actions_recent || 0"></span> recent actions
                 </span>
                 <span class="bg-gray-700 px-3 py-1 rounded-full">
                     <i class="fas fa-sign-in-alt text-green-400 mr-1"></i>
-                    <span x-text="status.recent_activity?.logins_10min || 0"></span> logins (10m)
+                    <span x-text="status.recent_activity?.logins_recent || 0"></span> logins
                 </span>
                 <span class="bg-gray-700 px-3 py-1 rounded-full">
                     <i class="fas fa-users text-blue-400 mr-1"></i>
