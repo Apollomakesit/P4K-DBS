@@ -110,9 +110,9 @@ def extract_target_from_text(text: str) -> tuple:
     if match:
         return (match.group(2), match.group(1).strip())
     
-    # Pattern 7: Warning from admin "administratorul PlayerName(ID)"
+    # Pattern 7: Warning/ban from admin "administratorul/adminul PlayerName(ID)"
     match = re.search(
-        r"administratorul\s+([^(]+)\((\d+)\)", text, re.IGNORECASE
+        r"(?:administratorul|adminul)\s+([^(]+)\((\d+)\)", text, re.IGNORECASE
     )
     if match:
         return (match.group(2), match.group(1).strip())
@@ -138,6 +138,13 @@ def extract_target_from_text(text: str) -> tuple:
     )
     if match:
         return (match.group(1), None)
+    
+    # Pattern 11: Kicked from faction "dat afara de catre PlayerName(ID)"
+    match = re.search(
+        r"dat\s+afara\s+de\s+catre\s+([^(]+)\((\d+)\)", text, re.IGNORECASE
+    )
+    if match:
+        return (match.group(2), match.group(1).strip())
     
     return (None, None)
 
