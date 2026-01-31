@@ -18,6 +18,7 @@ import sys
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 # Add parent directory to path for scraper import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -222,7 +223,7 @@ def _do_profile_refresh(player_id: str):
         with REFRESH_LOCK:
             REFRESH_IN_PROGRESS.discard(player_id)
 
-async def _fetch_and_save_profile(player_id: str) -> dict:
+async def _fetch_and_save_profile(player_id: str) -> Optional[dict]:
     """Fetch profile from website and save to database"""
     async with Pro4KingsScraper(max_concurrent=1) as scraper:
         profile_obj = await scraper.get_player_profile(player_id)
@@ -1267,10 +1268,10 @@ def api_sessions(player_id):
             'player_name': player_name,
             'first_login': first_login,
             'last_login': last_login,
-            'first_login_display': _format_timestamp(_parse_timestamp(first_login)) if first_login else None,
-            'last_login_display': _format_timestamp(_parse_timestamp(last_login)) if last_login else None,
-            'first_login_ago': _time_ago(_parse_timestamp(first_login)) if first_login else None,
-            'last_login_ago': _time_ago(_parse_timestamp(last_login)) if last_login else None,
+            'first_login_display': _format_timestamp(parsed) if (parsed := _parse_timestamp(first_login)) else None,
+            'last_login_display': _format_timestamp(parsed) if (parsed := _parse_timestamp(last_login)) else None,
+            'first_login_ago': _time_ago(parsed) if (parsed := _parse_timestamp(first_login)) else None,
+            'last_login_ago': _time_ago(parsed) if (parsed := _parse_timestamp(last_login)) else None,
             'total_logins': total_logins,
             'days': days,
             'session_count': len(sessions),
