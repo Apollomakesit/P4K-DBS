@@ -119,6 +119,13 @@ function actionsPage() {
         totalPages: 1,
         
         async init() {
+            // 🔥 Read player filter from URL query params (e.g., /actions?player=12345)
+            const urlParams = new URLSearchParams(window.location.search);
+            const playerParam = urlParams.get('player');
+            if (playerParam) {
+                this.searchPlayer = playerParam;
+            }
+            
             await this.fetchActionTypes();
             await this.fetchActions();
             setInterval(() => this.fetchActions(), 30000);
