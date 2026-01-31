@@ -973,6 +973,7 @@ async def scrape_online_players():
         logouts = previous_ids - current_ids
         for player_id in logouts:
             await db.save_logout(player_id, current_time)
+            await db.remove_from_online_players(player_id)  # 🔥 Remove from online_players table immediately
             logger.info(f"🔴 Logout detected: Player {player_id}")
 
         await db.update_online_players(online_players)

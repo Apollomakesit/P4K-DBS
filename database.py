@@ -713,6 +713,26 @@ class Database:
         """🆕 ASYNC: Remove stale entries from online_players table"""
         return await asyncio.to_thread(self._cleanup_stale_online_players_sync, minutes)
 
+    def _remove_from_online_players_sync(self, player_id: str) -> bool:
+        """🔥 SYNC: Remove a specific player from online_players table (on logout)"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM online_players WHERE player_id = ?",
+                    (player_id,),
+                )
+                removed = cursor.rowcount > 0
+                conn.commit()
+                return removed
+        except Exception as e:
+            logger.error(f"Error removing player {player_id} from online_players: {e}")
+            return False
+
+    async def remove_from_online_players(self, player_id: str) -> bool:
+        """🔥 ASYNC: Remove a specific player from online_players table (on logout)"""
+        return await asyncio.to_thread(self._remove_from_online_players_sync, player_id)
+
     def _mark_player_for_update_sync(self, player_id: str, player_name: str) -> None:
         """Mark player for priority update - allows duplicate usernames"""
         try:
@@ -1231,12 +1251,12 @@ class Database:
         return await asyncio.to_thread(_get_history_sync)
 
     async def get_faction_members(self, faction_name: str) -> List[Dict]:
-        """Get faction members with accurate online status (last 2 minutes only)"""
+        """Get faction members with accurate online status (last 5 minutes)"""
 
         def _get_members_sync():
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                cutoff = datetime.now() - timedelta(minutes=2)
+                cutoff = datetime.now() - timedelta(minutes=5)
                 cursor.execute(
                     """
                     SELECT 
@@ -1257,12 +1277,12 @@ class Database:
         return await asyncio.to_thread(_get_members_sync)
 
     async def get_all_factions_with_counts(self) -> List[Dict]:
-        """Get all factions with member and CURRENTLY ONLINE counts (last 2 minutes)"""
+        """Get all factions with member and CURRENTLY ONLINE counts (last 5 minutes)"""
 
         def _get_factions_sync():
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                cutoff = datetime.now() - timedelta(minutes=2)
+                cutoff = datetime.now() - timedelta(minutes=5)
                 cursor.execute(
                     """
                     SELECT 
