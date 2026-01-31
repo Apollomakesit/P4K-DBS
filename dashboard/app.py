@@ -18,6 +18,15 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, template_folder='templates', static_folder='static')
 CORS(app)
 
+@app.after_request
+def add_no_cache_headers(response):
+    """Disable caching for API responses to keep dashboard fresh."""
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 # Database path - same as bot (shared database)
 def get_db_path():
     """Get database path - works both on Railway and locally"""
@@ -44,6 +53,41 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
+def _parse_timestamp(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+def _format_timestamp(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+def _time_ago(dt: datetime) -> str:
+    if not dt:
+        return ""
+    diff = (datetime.now() - dt).total_seconds()
+    if diff < 60:
+        return "Just now"
+    if diff < 3600:
+        return f"{int(diff // 60)}m ago"
+    if diff < 86400:
+        return f"{int(diff // 3600)}h ago"
+    return f"{int(diff // 86400)}d ago"
+
+def _normalize_action(action: dict) -> dict:
+    ts = _parse_timestamp(action.get("timestamp"))
+    if ts:
+        action["timestamp_display"] = _format_timestamp(ts)
+        action["time_ago"] = _time_ago(ts)
+    else:
+        action["timestamp_display"] = ""
+        action["time_ago"] = ""
+    return action
 
 # ============================================================================
 # API ENDPOINTS
@@ -148,6 +192,9 @@ def api_actions():
         limit = min(int(request.args.get('limit', 50)), 200)
         action_type = request.args.get('type', None)
         player_id = request.args.get('player_id', None)
+        player_query = request.args.get('player', None)
+        per_page = min(int(request.args.get('per_page', limit)), 100)
+        page = max(int(request.args.get('page', 1)), 1)
         
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -162,16 +209,30 @@ def api_actions():
         if player_id:
             query += " AND (player_id = ? OR target_player_id = ?)"
             params.extend([player_id, player_id])
+
+        if player_query:
+            query += " AND (player_name LIKE ? OR target_player_name LIKE ? OR player_id = ? OR target_player_id = ?)"
+            like_query = f"%{player_query}%"
+            params.extend([like_query, like_query, player_query, player_query])
         
-        query += " ORDER BY timestamp DESC LIMIT ?"
-        params.append(limit)
+        count_query = f"SELECT COUNT(*) FROM ({query}) AS filtered"
+        cursor.execute(count_query, params)
+        total_count = cursor.fetchone()[0]
+
+        offset = (page - 1) * per_page
+        query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        params.extend([per_page, offset])
         
         cursor.execute(query, params)
-        actions = [dict(row) for row in cursor.fetchall()]
+        actions = [_normalize_action(dict(row)) for row in cursor.fetchall()]
         conn.close()
         
         return jsonify({
             'count': len(actions),
+            'total_count': total_count,
+            'total_pages': max(1, (total_count + per_page - 1) // per_page),
+            'page': page,
+            'per_page': per_page,
             'actions': actions
         })
     except Exception as e:
@@ -231,7 +292,7 @@ def api_player(player_id):
             ORDER BY timestamp DESC
             LIMIT 50
         """, (player_id, player_id, cutoff_7d))
-        actions = [dict(row) for row in cursor.fetchall()]
+        actions = [_normalize_action(dict(row)) for row in cursor.fetchall()]
         
         # Get recent sessions
         cursor.execute("""
@@ -263,16 +324,27 @@ def api_search():
         
         conn = get_db_connection()
         cursor = conn.cursor()
+        cutoff = datetime.now() - timedelta(minutes=5)
         
         cursor.execute("""
-            SELECT player_id, username, faction, faction_rank, played_hours, is_online, last_seen
-            FROM player_profiles
-            WHERE username LIKE ?
-            ORDER BY is_online DESC, last_seen DESC
+            SELECT 
+                p.player_id,
+                p.username,
+                p.faction,
+                p.faction_rank,
+                p.played_hours,
+                p.last_seen,
+                CASE WHEN o.detected_online_at >= ? THEN 1 ELSE 0 END as is_currently_online
+            FROM player_profiles p
+            LEFT JOIN online_players o ON p.player_id = o.player_id
+            WHERE p.username LIKE ?
+            ORDER BY is_currently_online DESC, p.last_seen DESC
             LIMIT 25
-        """, (f"%{query}%",))
+        """, (cutoff, f"%{query}%",))
         
         players = [dict(row) for row in cursor.fetchall()]
+        for player in players:
+            player["is_online"] = bool(player.get("is_currently_online"))
         conn.close()
         
         return jsonify({

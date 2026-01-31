@@ -183,7 +183,7 @@
                                             <p class="text-xs text-gray-500 truncate max-w-md" x-text="action.action_detail"></p>
                                         </div>
                                     </div>
-                                    <span class="text-xs text-gray-500 whitespace-nowrap" x-text="formatTime(action.timestamp)"></span>
+                                    <span class="text-xs text-gray-500 whitespace-nowrap" x-text="formatActionTime(action)"></span>
                                 </div>
                             </div>
                         </template>
@@ -298,7 +298,7 @@
                                         </template>
                                     </div>
                                 </div>
-                                <span class="text-sm text-gray-500" x-text="formatTime(action.timestamp)"></span>
+                                <span class="text-sm text-gray-500" x-text="formatActionTime(action)"></span>
                             </div>
                         </div>
                     </template>
@@ -499,7 +499,7 @@
                             <div class="bg-p4k-dark rounded-lg p-3 text-sm">
                                 <div class="flex items-center justify-between">
                                     <span class="text-blue-400" x-text="formatActionType(action.action_type)"></span>
-                                    <span class="text-gray-500 text-xs" x-text="formatTime(action.timestamp)"></span>
+                                    <span class="text-gray-500 text-xs" x-text="formatActionTime(action)"></span>
                                 </div>
                                 <p class="text-gray-400 truncate" x-text="action.action_detail"></p>
                             </div>
@@ -644,7 +644,15 @@
                     return type.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
                 },
 
-                formatTime(timestamp) {
+                formatTimestamp(timestamp) {
+                    if (!timestamp) return '';
+                    const date = new Date(timestamp);
+                    const pad = (n) => String(n).padStart(2, '0');
+                    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+                           `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+                },
+
+                formatRelative(timestamp) {
                     if (!timestamp) return '';
                     const date = new Date(timestamp);
                     const now = new Date();
@@ -653,7 +661,22 @@
                     if (diff < 60) return 'Just now';
                     if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
                     if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-                    return date.toLocaleDateString();
+                    return Math.floor(diff / 86400) + 'd ago';
+                },
+
+                formatTimestampWithAgo(timestamp) {
+                    const absolute = this.formatTimestamp(timestamp);
+                    const relative = this.formatRelative(timestamp);
+                    if (!absolute) return relative;
+                    return `${absolute} • ${relative}`;
+                },
+
+                formatActionTime(action) {
+                    if (!action) return '';
+                    if (action.timestamp_display && action.time_ago) {
+                        return `${action.timestamp_display} • ${action.time_ago}`;
+                    }
+                    return this.formatTimestampWithAgo(action.timestamp);
                 },
 
                 getActionColor(type) {
