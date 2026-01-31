@@ -687,6 +687,12 @@ async def scrape_actions():
                 await db.save_action(action_dict)
                 new_count += 1
 
+                # 🔥 Server kick (faction_kicked) = kicked from FiveM server by admin
+                # This should trigger a logout for the affected player
+                if action.action_type == "faction_kicked" and action.player_id:
+                    await db.save_logout(action.player_id, action.timestamp or datetime.now())
+                    logger.info(f"🚫 Server kick detected: {action.player_name}({action.player_id}) - triggering logout")
+
                 if action.player_id:
                     player_name = action.player_name or f"Player_{action.player_id}"
                     new_player_ids.add((action.player_id, player_name))
@@ -787,6 +793,11 @@ async def scrape_vip_actions():
                 if not await db.action_exists(action.timestamp, action.raw_text):
                     await db.save_action(action_dict)
                     new_count += 1
+
+                    # 🔥 Server kick detection for VIP players
+                    if action.action_type == "faction_kicked" and action.player_id:
+                        await db.save_logout(action.player_id, action.timestamp or datetime.now())
+                        logger.info(f"🚫 VIP Server kick: {action.player_name}({action.player_id}) - triggering logout")
 
                     if action.player_id:
                         player_name = action.player_name or f"Player_{action.player_id}"

@@ -525,8 +525,8 @@ class ActionsPaginationView(discord.ui.View):
 
         if action_type == "faction_kicked":
             return {
-                "emoji": "👢",
-                "type_label": "FACTION KICKED",
+                "emoji": "�",
+                "type_label": "SERVER KICK",
                 "detail_lines": [f"{sender_ref}: {detail}"],
             }
 
@@ -876,6 +876,7 @@ class AdminHistoryPaginationView(discord.ui.View):
     """🆕 Pagination view for admin actions (warnings, bans, jails) across ALL players"""
 
     # Action type emojis and labels
+    # NOTE: faction_kicked is actually SERVER kick by admin (dat afara = kicked out)
     TYPE_EMOJIS = {
         "warning_received": "⚠️",
         "ban_received": "🔨",
@@ -883,8 +884,15 @@ class AdminHistoryPaginationView(discord.ui.View):
         "admin_unjail": "🔓",
         "admin_unban": "✅",
         "mute_received": "🔇",
-        "faction_kicked": "👢",
+        "faction_kicked": "🚫",  # Server kick (not faction kick)
         "kill_character": "💀",
+    }
+
+    # Custom display labels (override default transformation)
+    TYPE_LABELS = {
+        "faction_kicked": "Server Kick",  # "dat afara" = kicked from server by admin
+        "admin_jail": "Admin Jail",
+        "admin_unjail": "Admin Unjail",
     }
 
     def __init__(
@@ -916,15 +924,18 @@ class AdminHistoryPaginationView(discord.ui.View):
         self.next_button.disabled = self.current_page >= self.total_pages - 1
 
     def build_embed(self) -> discord.Embed:
-        """Build embed for current page"""
+        """Build embed for current page with detailed action info"""
         start_idx = self.current_page * self.items_per_page
         end_idx = min(start_idx + self.items_per_page, len(self.actions))
         page_actions = self.actions[start_idx:end_idx]
 
-        filter_text = f" ({self.action_type_filter.replace('_', ' ').title()})" if self.action_type_filter else ""
+        # Use custom label if exists
+        filter_label = ""
+        if self.action_type_filter:
+            filter_label = f" ({self.TYPE_LABELS.get(self.action_type_filter, self.action_type_filter.replace('_', ' ').title())})"
         
         embed = discord.Embed(
-            title=f"👮 Admin Actions Log{filter_text}",
+            title=f"👮 Admin Actions Log{filter_label}",
             description=f"**Total:** {len(self.actions):,} admin actions in last {self.days} days",
             color=discord.Color.orange(),
             timestamp=datetime.now(),
@@ -933,7 +944,8 @@ class AdminHistoryPaginationView(discord.ui.View):
         for action in page_actions:
             action_type = action.get("action_type", "unknown")
             emoji = self.TYPE_EMOJIS.get(action_type, "📋")
-            type_label = action_type.replace("_", " ").title()
+            # Use custom label if exists, otherwise format from action_type
+            type_label = self.TYPE_LABELS.get(action_type, action_type.replace("_", " ").title())
             
             # Get player info (the one who RECEIVED the action)
             player_name = action.get("player_name") or f"ID:{action.get('player_id', '?')}"
@@ -941,6 +953,8 @@ class AdminHistoryPaginationView(discord.ui.View):
             
             # Get admin info
             admin_name = action.get("admin_name") or "Unknown Admin"
+            admin_id = action.get("admin_id", "")
+            admin_display = f"{admin_name}({admin_id})" if admin_id else admin_name
             
             # Get timestamp
             timestamp = action.get("timestamp")
@@ -951,17 +965,28 @@ class AdminHistoryPaginationView(discord.ui.View):
                     timestamp = None
             time_str = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else "?"
             
-            # Get reason
-            reason = action.get("reason") or action.get("action_detail", "No reason specified")
-            if len(reason) > 80:
-                reason = reason[:77] + "..."
+            # 🔥 ENHANCED: Use action_detail for full info (contains CP for jails)
+            action_detail = action.get("action_detail", "")
+            reason = action.get("reason", "")
+            
+            # Build detail string - prefer action_detail as it has more context (CP, etc)
+            if action_detail:
+                detail_str = action_detail
+            elif reason:
+                detail_str = reason
+            else:
+                detail_str = "No details"
+            
+            # Truncate if too long
+            if len(detail_str) > 100:
+                detail_str = detail_str[:97] + "..."
 
             embed.add_field(
                 name=f"{emoji} {type_label} - {time_str}",
                 value=(
                     f"**Player:** {player_name} ({player_id})\n"
-                    f"**Admin:** {admin_name}\n"
-                    f"**Reason:** {reason}"
+                    f"**Admin:** {admin_display}\n"
+                    f"**Detail:** {detail_str}"
                 ),
                 inline=False,
             )
@@ -3520,7 +3545,7 @@ def setup_commands(bot, db, scraper_getter):
         app_commands.Choice(name="🔓 Admin Unjail", value="admin_unjail"),
         app_commands.Choice(name="✅ Unbans", value="admin_unban"),
         app_commands.Choice(name="🔇 Mutes", value="mute_received"),
-        app_commands.Choice(name="👢 Faction Kicks", value="faction_kicked"),
+        app_commands.Choice(name="� Server Kicks", value="faction_kicked"),
         app_commands.Choice(name="💀 Kill Character", value="kill_character"),
     ])
     @app_commands.checks.cooldown(1, 10)
