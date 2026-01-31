@@ -18,10 +18,11 @@ if __name__ == "__main__":
     port = int(os.getenv("DASHBOARD_PORT", "8080"))
     host = os.getenv("DASHBOARD_HOST", "0.0.0.0")
     debug = os.getenv("DASHBOARD_DEBUG", "false").lower() == "true"
-    
+
     db_path = get_db_path()
-    
-    print(f"""
+
+    print(
+        f"""
 ╔══════════════════════════════════════════════════════════════╗
 ║             🎮 Pro4Kings Web Dashboard                       ║
 ╠══════════════════════════════════════════════════════════════╣
@@ -29,12 +30,8 @@ if __name__ == "__main__":
 ║  📊 Database: {db_path}
 ║  🔧 Debug: {debug}
 ╚══════════════════════════════════════════════════════════════╝
-""")
-    
-    # Use Flask's built-in server (for production, use gunicorn)
-    app.run(
-        host=host,
-        port=port,
-        debug=debug,
-        threaded=True
+"""
     )
+
+    # Use Flask's built-in server (for production, use gunicorn)
+    app.run(host=host, port=port, debug=debug, threaded=True)
