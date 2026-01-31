@@ -128,7 +128,7 @@
                        class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center py-2 rounded-lg text-sm transition">
                         <i class="fas fa-user mr-1"></i> Profile
                     </a>
-                    <a :href="`/actions/${player.id}`" 
+                    <a :href="`/actions?player=${player.id}`" 
                        class="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-center py-2 rounded-lg text-sm transition">
                         <i class="fas fa-list mr-1"></i> Actions
                     </a>
@@ -209,7 +209,8 @@ function favoritesPage() {
                     return;
                 }
                 
-                const player = await res.json();
+                const data = await res.json();
+                const player = data.profile;  // 🔥 FIX: API returns {profile: {...}, actions: [...], sessions: [...]}
                 
                 this.favorites.push(id);
                 this.saveFavorites();
@@ -217,7 +218,7 @@ function favoritesPage() {
                 this.favoritesData.push({
                     id: id,
                     username: player.username,
-                    is_online: player.is_online,
+                    is_online: player.is_currently_online,  // 🔥 FIX: Use is_currently_online field
                     faction: player.faction,
                     faction_rank: player.faction_rank,
                     played_hours: player.played_hours,
@@ -261,11 +262,12 @@ function favoritesPage() {
                 try {
                     const res = await fetch(`/api/player/${id}`);
                     if (res.ok) {
-                        const player = await res.json();
+                        const data = await res.json();
+                        const player = data.profile;  // 🔥 FIX: API returns {profile: {...}, actions: [...], sessions: [...]}
                         this.favoritesData.push({
                             id: id,
                             username: player.username,
-                            is_online: player.is_online,
+                            is_online: player.is_currently_online,  // 🔥 FIX: Use is_currently_online field
                             faction: player.faction,
                             faction_rank: player.faction_rank,
                             played_hours: player.played_hours,

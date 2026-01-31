@@ -837,24 +837,25 @@ def api_refresh_status():
 
 @app.route('/api/factions')
 def api_factions():
-    """Get all factions with member counts"""
+    """Get all factions with member counts - online count from online_players table"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cutoff = datetime.now() - timedelta(minutes=5)
         
+        # 🔥 FIXED: Count online members directly from online_players table (no time filter)
+        # The bot keeps this table up-to-date by removing players when they log out
         cursor.execute("""
             SELECT 
                 p.faction as name,
                 COUNT(DISTINCT p.player_id) as member_count,
-                COUNT(DISTINCT CASE WHEN o.detected_online_at >= ? THEN o.player_id ELSE NULL END) as online_count
+                COUNT(DISTINCT o.player_id) as online_count
             FROM player_profiles p
             LEFT JOIN online_players o ON p.player_id = o.player_id
             WHERE p.faction IS NOT NULL AND p.faction != '' 
             AND p.faction NOT IN ('Civil', 'Fără', 'None', '-', 'N/A')
             GROUP BY p.faction
             ORDER BY member_count DESC
-        """, (cutoff,))
+        """)
         
         factions = [dict(row) for row in cursor.fetchall()]
         conn.close()
@@ -869,21 +870,21 @@ def api_factions():
 
 @app.route('/api/faction/<faction_name>')
 def api_faction(faction_name):
-    """Get faction members"""
+    """Get faction members - online status from online_players table"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cutoff = datetime.now() - timedelta(minutes=5)
         
+        # 🔥 FIXED: Check online status by existence in online_players table (no time filter)
         cursor.execute("""
             SELECT 
                 p.*,
-                CASE WHEN o.detected_online_at >= ? THEN 1 ELSE 0 END as is_currently_online
+                CASE WHEN o.player_id IS NOT NULL THEN 1 ELSE 0 END as is_currently_online
             FROM player_profiles p
             LEFT JOIN online_players o ON p.player_id = o.player_id
             WHERE p.faction = ?
             ORDER BY is_currently_online DESC, p.faction_rank, p.last_seen DESC
-        """, (cutoff, faction_name))
+        """, (faction_name,))
         
         members = [dict(row) for row in cursor.fetchall()]
         conn.close()
