@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Player {{ player_id }} - Pro4Kings{% endblock %}
+
+{% block content %}
+<div x-data="playerPage()" x-init="init()">
+    <!-- Loading -->
+    <div x-show="loading" class="text-center py-16">
+        <div class="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto"></div>
+        <p class="text-gray-500 mt-4">Loading player data...</p>
+    </div>
+    
+    <!-- Not Found -->
+    <div x-show="!loading && !player" class="text-center py-16">
+        <svg class="w-16 h-16 mx-auto mb-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <p class="text-gray-500">Player not found</p>
+        <a href="/search" class="text-primary hover:underline mt-2 inline-block">Search for players →</a>
+    </div>
+    
+    <!-- Player Profile -->
+    <div x-show="!loading && player" x-cloak>
+        <!-- Header -->
+        <div class="flex items-start justify-between mb-8">
+            <div class="flex items-center">
+                <div class="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold mr-4"
+                     :class="player.is_online ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'">
+                    <span x-text="player.username ? player.username.charAt(0).toUpperCase() : '?'"></span>
+                </div>
+                <div>
+                    <h1 class="text-3xl font-bold" x-text="player.username"></h1>
+                    <p class="text-gray-500" x-text="'ID: ' + player.player_id"></p>
+                </div>
+            </div>
+            <div class="flex items-center">
+                <span class="px-3 py-1 rounded-full text-sm"
+                      :class="player.is_online ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'">
+                    <span x-text="player.is_online ? '● Online' : '○ Offline'"></span>
+                </span>
+            </div>
+        </div>
+        
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="card rounded-xl p-6">
+                <p class="text-gray-500 text-sm">Faction</p>
+                <p class="text-xl font-semibold mt-1" x-text="player.faction || 'None'"></p>
+                <p class="text-sm text-gray-500" x-text="player.faction_rank || ''"></p>
+            </div>
+            
+            <div class="card rounded-xl p-6">
+                <p class="text-gray-500 text-sm">Played Hours</p>
+                <p class="text-xl font-semibold mt-1" x-text="player.played_hours ? player.played_hours.toFixed(1) + 'h' : 'N/A'"></p>
+            </div>
+            
+            <div class="card rounded-xl p-6">
+                <p class="text-gray-500 text-sm">Warnings</p>
+                <p class="text-xl font-semibold mt-1" 
+                   :class="{ 'text-red-400': player.warnings >= 3, 'text-yellow-400': player.warnings > 0 }"
+                   x-text="(player.warnings || 0) + '/3'"></p>
+            </div>
+            
+            <div class="card rounded-xl p-6">
+                <p class="text-gray-500 text-sm">Age (IC)</p>
+                <p class="text-xl font-semibold mt-1" x-text="player.age_ic || 'N/A'"></p>
+            </div>
+        </div>
+        
+        <!-- Additional Info -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <div class="card rounded-xl p-6">
+                <p class="text-gray-500 text-sm">Job</p>
+                <p class="font-semibold mt-1" x-text="player.job || 'Unemployed'"></p>
+            </div>
+            
+            <div class="card rounded-xl p-6">
+                <p class="text-gray-500 text-sm">Last Seen</p>
+                <p class="font-semibold mt-1" x-text="player.last_seen_formatted"></p>
+            </div>
+            
+            <div class="card rounded-xl p-6">
+                <p class="text-gray-500 text-sm">First Detected</p>
+                <p class="font-semibold mt-1" x-text="player.first_detected_formatted || 'Unknown'"></p>
+            </div>
+        </div>
+        
+        <!-- Recent Actions -->
+        <div class="card rounded-xl p-6">
+            <h3 class="text-lg font-semibold mb-4">Recent Actions</h3>
+            
+            <div x-show="player.recent_actions && player.recent_actions.length > 0">
+                <table class="w-full">
+                    <thead>
+                        <tr class="text-left text-gray-500 text-sm border-b border-gray-800">
+                            <th class="pb-3 font-medium">Type</th>
+                            <th class="pb-3 font-medium">Detail</th>
+                            <th class="pb-3 font-medium">Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="action in player.recent_actions" :key="action.id">
+                            <tr class="border-b border-gray-800/50 hover:bg-dark-100">
+                                <td class="py-3">
+                                    <span class="px-2 py-1 text-xs rounded-full bg-gray-500/20" x-text="action.action_type.replace(/_/g, ' ')"></span>
+                                </td>
+                                <td class="py-3 text-sm text-gray-400" x-text="action.action_detail"></td>
+                                <td class="py-3 text-sm text-gray-500" x-text="action.time_ago"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+            
+            <div x-show="!player.recent_actions || player.recent_actions.length === 0" class="text-center py-8 text-gray-500">
+                No recent actions recorded
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function playerPage() {
+    return {
+        player: null,
+        loading: true,
+        
+        async init() {
+            const playerId = '{{ player_id }}';
+            try {
+                const res = await fetch('/api/player/' + playerId);
+                if (res.ok) {
+                    this.player = await res.json();
+                }
+            } catch (error) {
+                console.error('Error fetching player:', error);
+            }
+            this.loading = false;
+        }
+    }
+}
+</script>
+{% endblock %}

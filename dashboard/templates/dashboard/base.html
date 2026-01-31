@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Pro4Kings Dashboard{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'p4k-dark': '#0f0f0f',
+                        'p4k-darker': '#0a0a0a',
+                        'p4k-card': '#1a1a1a',
+                        'p4k-border': '#2a2a2a',
+                        'p4k-accent': '#3b82f6',
+                        'p4k-green': '#22c55e',
+                        'p4k-red': '#ef4444',
+                        'p4k-orange': '#f97316',
+                        'p4k-purple': '#a855f7',
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #0f0f0f 0%, #1a1a2e 100%);
+        }
+        .card-glow:hover {
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.1);
+        }
+        .stat-card {
+            transition: all 0.3s ease;
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+        }
+        .scrollbar-thin::-webkit-scrollbar {
+            width: 6px;
+        }
+        .scrollbar-thin::-webkit-scrollbar-track {
+            background: #1a1a1a;
+        }
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background: #3a3a3a;
+            border-radius: 3px;
+        }
+        .pulse-online {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="bg-p4k-dark text-gray-100 min-h-screen">
+    <!-- Navigation -->
+    <nav class="bg-p4k-darker border-b border-p4k-border sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <!-- Logo -->
+                <div class="flex items-center">
+                    <a href="/" class="flex items-center space-x-3">
+                        <div class="w-10 h-10 bg-gradient-to-br from-p4k-accent to-p4k-purple rounded-lg flex items-center justify-center">
+                            <i class="fas fa-database text-white"></i>
+                        </div>
+                        <span class="text-xl font-bold bg-gradient-to-r from-p4k-accent to-p4k-purple bg-clip-text text-transparent">
+                            P4K Dashboard
+                        </span>
+                    </a>
+                </div>
+                
+                <!-- Navigation Links -->
+                <div class="hidden md:flex items-center space-x-1">
+                    <a href="/" class="nav-link px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card transition-all {% if request.endpoint == 'index' %}bg-p4k-card text-white{% endif %}">
+                        <i class="fas fa-home mr-2"></i>Dashboard
+                    </a>
+                    <a href="/online" class="nav-link px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card transition-all {% if request.endpoint == 'online' %}bg-p4k-card text-white{% endif %}">
+                        <i class="fas fa-circle text-p4k-green mr-2"></i>Online
+                    </a>
+                    <a href="/players" class="nav-link px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card transition-all {% if request.endpoint == 'players' %}bg-p4k-card text-white{% endif %}">
+                        <i class="fas fa-users mr-2"></i>Players
+                    </a>
+                    <a href="/actions" class="nav-link px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card transition-all {% if request.endpoint == 'actions' %}bg-p4k-card text-white{% endif %}">
+                        <i class="fas fa-list mr-2"></i>Actions
+                    </a>
+                    <a href="/factions" class="nav-link px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card transition-all {% if request.endpoint == 'factions' %}bg-p4k-card text-white{% endif %}">
+                        <i class="fas fa-shield-alt mr-2"></i>Factions
+                    </a>
+                    <a href="/bans" class="nav-link px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card transition-all {% if request.endpoint == 'bans' %}bg-p4k-card text-white{% endif %}">
+                        <i class="fas fa-ban text-p4k-red mr-2"></i>Bans
+                    </a>
+                </div>
+                
+                <!-- Mobile menu button -->
+                <div class="md:hidden">
+                    <button id="mobile-menu-btn" class="text-gray-300 hover:text-white p-2">
+                        <i class="fas fa-bars text-xl"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Mobile menu -->
+        <div id="mobile-menu" class="hidden md:hidden border-t border-p4k-border">
+            <div class="px-4 py-3 space-y-2">
+                <a href="/" class="block px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card">
+                    <i class="fas fa-home mr-2"></i>Dashboard
+                </a>
+                <a href="/online" class="block px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card">
+                    <i class="fas fa-circle text-p4k-green mr-2"></i>Online
+                </a>
+                <a href="/players" class="block px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card">
+                    <i class="fas fa-users mr-2"></i>Players
+                </a>
+                <a href="/actions" class="block px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card">
+                    <i class="fas fa-list mr-2"></i>Actions
+                </a>
+                <a href="/factions" class="block px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card">
+                    <i class="fas fa-shield-alt mr-2"></i>Factions
+                </a>
+                <a href="/bans" class="block px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-p4k-card">
+                    <i class="fas fa-ban text-p4k-red mr-2"></i>Bans
+                </a>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {% block content %}{% endblock %}
+    </main>
+    
+    <!-- Footer -->
+    <footer class="bg-p4k-darker border-t border-p4k-border mt-auto py-6">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-gray-500 text-sm">
+            <p>Pro4Kings Database Monitor &copy; 2026</p>
+            <p class="mt-1">
+                <i class="fas fa-sync-alt mr-1"></i>Data refreshes automatically
+            </p>
+        </div>
+    </footer>
+    
+    <script>
+        // Mobile menu toggle
+        document.getElementById('mobile-menu-btn').addEventListener('click', function() {
+            document.getElementById('mobile-menu').classList.toggle('hidden');
+        });
+        
+        // Auto-refresh stats every 30 seconds
+        {% block extra_js %}{% endblock %}
+    </script>
+</body>
+</html>

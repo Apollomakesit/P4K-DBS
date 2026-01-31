@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}Online Players - Pro4Kings{% endblock %}
+
+{% block content %}
+<div x-data="playersPage()" x-init="init()">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold">Online Players</h1>
+            <p class="text-gray-500">Currently active on the server</p>
+        </div>
+        <div class="flex items-center space-x-4">
+            <span class="text-sm text-gray-500" x-text="players.length + ' online'"></span>
+            <button @click="refresh()" class="px-4 py-2 bg-primary hover:bg-primary/80 rounded-lg transition-colors">
+                Refresh
+            </button>
+        </div>
+    </div>
+    
+    <!-- Search/Filter -->
+    <div class="card rounded-xl p-4 mb-6">
+        <div class="flex gap-4">
+            <input type="text" 
+                   x-model="search" 
+                   @input="filterPlayers()"
+                   placeholder="Search players..." 
+                   class="flex-1 px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+            <select x-model="sortBy" @change="filterPlayers()" class="px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+                <option value="name">Sort by Name</option>
+                <option value="hours">Sort by Hours</option>
+                <option value="faction">Sort by Faction</option>
+            </select>
+        </div>
+    </div>
+    
+    <!-- Players Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <template x-for="player in filteredPlayers" :key="player.player_id">
+            <a :href="'/player/' + player.player_id" class="card rounded-xl p-4 hover:border-primary/50 transition-colors">
+                <div class="flex items-start justify-between">
+                    <div class="flex items-center">
+                        <span class="w-3 h-3 bg-green-500 rounded-full mr-3 pulse-dot"></span>
+                        <div>
+                            <p class="font-semibold" x-text="player.player_name"></p>
+                            <p class="text-xs text-gray-500" x-text="'ID: ' + player.player_id"></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-4 space-y-2">
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">Faction</span>
+                        <span x-text="player.faction || 'None'"></span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">Rank</span>
+                        <span x-text="player.faction_rank || '-'"></span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500">Hours</span>
+                        <span x-text="player.played_hours ? player.played_hours.toFixed(1) + 'h' : '-'"></span>
+                    </div>
+                </div>
+            </a>
+        </template>
+    </div>
+    
+    <!-- Empty State -->
+    <div x-show="filteredPlayers.length === 0" class="text-center py-16 text-gray-500">
+        <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+        </svg>
+        <p x-text="search ? 'No players match your search' : 'No players online'"></p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function playersPage() {
+    return {
+        players: [],
+        filteredPlayers: [],
+        search: '',
+        sortBy: 'name',
+        
+        async init() {
+            await this.refresh();
+            setInterval(() => this.refresh(), 30000);
+        },
+        
+        async refresh() {
+            try {
+                const res = await fetch('/api/online');
+                const data = await res.json();
+                this.players = data.players || [];
+                this.filterPlayers();
+            } catch (error) {
+                console.error('Error fetching players:', error);
+            }
+        },
+        
+        filterPlayers() {
+            let result = [...this.players];
+            
+            // Filter by search
+            if (this.search) {
+                const searchLower = this.search.toLowerCase();
+                result = result.filter(p => 
+                    p.player_name.toLowerCase().includes(searchLower) ||
+                    p.player_id.toString().includes(searchLower) ||
+                    (p.faction && p.faction.toLowerCase().includes(searchLower))
+                );
+            }
+            
+            // Sort
+            result.sort((a, b) => {
+                switch (this.sortBy) {
+                    case 'hours':
+                        return (b.played_hours || 0) - (a.played_hours || 0);
+                    case 'faction':
+                        return (a.faction || 'ZZZ').localeCompare(b.faction || 'ZZZ');
+                    default:
+                        return a.player_name.localeCompare(b.player_name);
+                }
+            });
+            
+            this.filteredPlayers = result;
+        }
+    }
+}
+</script>
+{% endblock %}

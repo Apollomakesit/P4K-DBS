@@ -14,4 +14,9 @@ psutil>=5.9.0
 # Utilities
 python-dotenv>=1.0.0
 
+# Web Dashboard
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# Code Formatting
 black>=24.0.0

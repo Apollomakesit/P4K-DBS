@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}Actions Log - Pro4Kings{% endblock %}
+
+{% block content %}
+<div x-data="actionsPage()" x-init="init()">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold">Actions Log</h1>
+            <p class="text-gray-500">Server activity history</p>
+        </div>
+    </div>
+    
+    <!-- Filters -->
+    <div class="card rounded-xl p-4 mb-6">
+        <div class="flex flex-wrap gap-4">
+            <select x-model="actionType" @change="fetchActions()" class="px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+                <option value="">All Types</option>
+                <template x-for="type in actionTypes" :key="type.action_type">
+                    <option :value="type.action_type" x-text="type.action_type.replace(/_/g, ' ') + ' (' + type.count + ')'"></option>
+                </template>
+            </select>
+            
+            <input type="text" 
+                   x-model="searchPlayer" 
+                   @input.debounce.300ms="fetchActions()"
+                   placeholder="Search by player..." 
+                   class="px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+            
+            <button @click="refresh()" class="px-4 py-2 bg-primary hover:bg-primary/80 rounded-lg transition-colors">
+                Refresh
+            </button>
+        </div>
+    </div>
+    
+    <!-- Actions Table -->
+    <div class="card rounded-xl p-6">
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="text-left text-gray-500 text-sm border-b border-gray-800">
+                        <th class="pb-3 font-medium">Player</th>
+                        <th class="pb-3 font-medium">Type</th>
+                        <th class="pb-3 font-medium">Detail</th>
+                        <th class="pb-3 font-medium">Target</th>
+                        <th class="pb-3 font-medium">Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="action in actions" :key="action.id">
+                        <tr class="border-b border-gray-800/50 hover:bg-dark-100">
+                            <td class="py-3">
+                                <a :href="'/player/' + action.player_id" class="text-primary hover:underline" x-text="action.player_name || 'Unknown'"></a>
+                                <p class="text-xs text-gray-500" x-text="'ID: ' + action.player_id"></p>
+                            </td>
+                            <td class="py-3">
+                                <span class="px-2 py-1 text-xs rounded-full"
+                                      :class="getTypeClass(action.action_type)"
+                                      x-text="action.action_type.replace(/_/g, ' ')"></span>
+                            </td>
+                            <td class="py-3 text-sm text-gray-400 max-w-xs truncate" x-text="action.action_detail"></td>
+                            <td class="py-3">
+                                <template x-if="action.target_player_id">
+                                    <a :href="'/player/' + action.target_player_id" class="text-primary hover:underline" x-text="action.target_player_name || action.target_player_id"></a>
+                                </template>
+                                <span x-show="!action.target_player_id" class="text-gray-600">-</span>
+                            </td>
+                            <td class="py-3 text-sm text-gray-500" x-text="action.time_ago"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Empty State -->
+        <div x-show="actions.length === 0" class="text-center py-8 text-gray-500">
+            No actions found
+        </div>
+        
+        <!-- Pagination -->
+        <div class="flex justify-between items-center mt-6" x-show="totalPages > 1">
+            <p class="text-sm text-gray-500" x-text="'Page ' + page + ' of ' + totalPages"></p>
+            <div class="flex gap-2">
+                <button @click="prevPage()" 
+                        :disabled="page <= 1"
+                        class="px-3 py-1 bg-dark-300 rounded hover:bg-dark-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                    ← Prev
+                </button>
+                <button @click="nextPage()" 
+                        :disabled="page >= totalPages"
+                        class="px-3 py-1 bg-dark-300 rounded hover:bg-dark-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                    Next →
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function actionsPage() {
+    return {
+        actions: [],
+        actionTypes: [],
+        actionType: '',
+        searchPlayer: '',
+        page: 1,
+        totalPages: 1,
+        
+        async init() {
+            await this.fetchActionTypes();
+            await this.fetchActions();
+        },
+        
+        async fetchActionTypes() {
+            try {
+                const res = await fetch('/api/action-types');
+                const data = await res.json();
+                this.actionTypes = data.types || [];
+            } catch (error) {
+                console.error('Error fetching action types:', error);
+            }
+        },
+        
+        async fetchActions() {
+            try {
+                let url = `/api/actions?page=${this.page}&per_page=25`;
+                if (this.actionType) url += `&type=${this.actionType}`;
+                if (this.searchPlayer) url += `&player=${encodeURIComponent(this.searchPlayer)}`;
+                
+                const res = await fetch(url);
+                const data = await res.json();
+                this.actions = data.actions || [];
+                this.totalPages = data.total_pages || 1;
+            } catch (error) {
+                console.error('Error fetching actions:', error);
+            }
+        },
+        
+        async refresh() {
+            this.page = 1;
+            await this.fetchActions();
+        },
+        
+        async prevPage() {
+            if (this.page > 1) {
+                this.page--;
+                await this.fetchActions();
+            }
+        },
+        
+        async nextPage() {
+            if (this.page < this.totalPages) {
+                this.page++;
+                await this.fetchActions();
+            }
+        },
+        
+        getTypeClass(type) {
+            if (type.includes('received') || type.includes('deposit')) return 'bg-green-500/20 text-green-400';
+            if (type.includes('given') || type.includes('transfer')) return 'bg-blue-500/20 text-blue-400';
+            if (type.includes('warning') || type.includes('mute')) return 'bg-yellow-500/20 text-yellow-400';
+            if (type.includes('ban') || type.includes('jail') || type.includes('kick')) return 'bg-red-500/20 text-red-400';
+            if (type.includes('heist')) return 'bg-purple-500/20 text-purple-400';
+            return 'bg-gray-500/20 text-gray-400';
+        }
+    }
+}
+</script>
+{% endblock %}

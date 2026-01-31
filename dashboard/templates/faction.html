@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% block title %}{{ faction_name }} - Pro4Kings{% endblock %}
+
+{% block content %}
+<div x-data="factionPage()" x-init="init()">
+    <!-- Loading -->
+    <div x-show="loading" class="text-center py-16">
+        <div class="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto"></div>
+        <p class="text-gray-500 mt-4">Loading faction data...</p>
+    </div>
+    
+    <!-- Faction Details -->
+    <div x-show="!loading" x-cloak>
+        <!-- Header -->
+        <div class="flex items-start justify-between mb-8">
+            <div>
+                <a href="/factions" class="text-gray-500 hover:text-white text-sm mb-2 inline-block">← Back to Factions</a>
+                <h1 class="text-3xl font-bold">{{ faction_name }}</h1>
+                <p class="text-gray-500" x-text="members.length + ' member(s)'"></p>
+            </div>
+            <div class="text-right">
+                <span class="text-3xl font-bold text-green-400" x-text="onlineCount"></span>
+                <p class="text-sm text-gray-500">online now</p>
+            </div>
+        </div>
+        
+        <!-- Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="card rounded-xl p-6">
+                <p class="text-gray-500 text-sm">Total Members</p>
+                <p class="text-3xl font-bold mt-1" x-text="members.length"></p>
+            </div>
+            
+            <div class="card rounded-xl p-6">
+                <p class="text-gray-500 text-sm">Online Now</p>
+                <p class="text-3xl font-bold mt-1 text-green-400" x-text="onlineCount"></p>
+            </div>
+            
+            <div class="card rounded-xl p-6">
+                <p class="text-gray-500 text-sm">Activity Rate</p>
+                <p class="text-3xl font-bold mt-1" x-text="members.length > 0 ? ((onlineCount / members.length) * 100).toFixed(0) + '%' : '0%'"></p>
+            </div>
+        </div>
+        
+        <!-- Search/Filter -->
+        <div class="card rounded-xl p-4 mb-6">
+            <div class="flex gap-4">
+                <input type="text" 
+                       x-model="search" 
+                       @input="filterMembers()"
+                       placeholder="Search members..." 
+                       class="flex-1 px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+                <select x-model="filterStatus" @change="filterMembers()" class="px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+                    <option value="all">All Members</option>
+                    <option value="online">Online Only</option>
+                    <option value="offline">Offline Only</option>
+                </select>
+            </div>
+        </div>
+        
+        <!-- Members Table -->
+        <div class="card rounded-xl p-6">
+            <h3 class="text-lg font-semibold mb-4">Members</h3>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead>
+                        <tr class="text-left text-gray-500 text-sm border-b border-gray-800">
+                            <th class="pb-3 font-medium">Status</th>
+                            <th class="pb-3 font-medium">Name</th>
+                            <th class="pb-3 font-medium">Rank</th>
+                            <th class="pb-3 font-medium">Hours</th>
+                            <th class="pb-3 font-medium">Warnings</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="member in filteredMembers" :key="member.player_id">
+                            <tr class="border-b border-gray-800/50 hover:bg-dark-100">
+                                <td class="py-3">
+                                    <span class="w-3 h-3 rounded-full inline-block"
+                                          :class="member.is_currently_online ? 'bg-green-500 pulse-dot' : 'bg-gray-600'"></span>
+                                </td>
+                                <td class="py-3">
+                                    <a :href="'/player/' + member.player_id" class="text-primary hover:underline" x-text="member.username"></a>
+                                    <p class="text-xs text-gray-500" x-text="'ID: ' + member.player_id"></p>
+                                </td>
+                                <td class="py-3" x-text="member.faction_rank || 'Membru'"></td>
+                                <td class="py-3 text-gray-400" x-text="member.played_hours ? member.played_hours.toFixed(1) + 'h' : '-'"></td>
+                                <td class="py-3">
+                                    <span :class="member.warnings >= 3 ? 'text-red-400' : member.warnings > 0 ? 'text-yellow-400' : 'text-gray-400'"
+                                          x-text="(member.warnings || 0) + '/3'"></span>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Empty State -->
+            <div x-show="filteredMembers.length === 0" class="text-center py-8 text-gray-500">
+                <span x-text="search ? 'No members match your search' : 'No members found'"></span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function factionPage() {
+    return {
+        members: [],
+        filteredMembers: [],
+        loading: true,
+        search: '',
+        filterStatus: 'all',
+        
+        get onlineCount() {
+            return this.members.filter(m => m.is_currently_online).length;
+        },
+        
+        async init() {
+            const factionName = '{{ faction_name | safe }}';
+            try {
+                const res = await fetch('/api/faction/' + encodeURIComponent(factionName));
+                if (res.ok) {
+                    const data = await res.json();
+                    this.members = data.members || [];
+                    this.filterMembers();
+                }
+            } catch (error) {
+                console.error('Error fetching faction:', error);
+            }
+            this.loading = false;
+        },
+        
+        filterMembers() {
+            let result = [...this.members];
+            
+            // Filter by search
+            if (this.search) {
+                const searchLower = this.search.toLowerCase();
+                result = result.filter(m => 
+                    m.username.toLowerCase().includes(searchLower) ||
+                    m.player_id.toString().includes(searchLower) ||
+                    (m.faction_rank && m.faction_rank.toLowerCase().includes(searchLower))
+                );
+            }
+            
+            // Filter by status
+            if (this.filterStatus === 'online') {
+                result = result.filter(m => m.is_currently_online);
+            } else if (this.filterStatus === 'offline') {
+                result = result.filter(m => !m.is_currently_online);
+            }
+            
+            // Sort: online first, then by name
+            result.sort((a, b) => {
+                if (a.is_currently_online !== b.is_currently_online) {
+                    return b.is_currently_online - a.is_currently_online;
+                }
+                return a.username.localeCompare(b.username);
+            });
+            
+            this.filteredMembers = result;
+        }
+    }
+}
+</script>
+{% endblock %}

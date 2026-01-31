@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Pro4Kings Dashboard{% endblock %}</title>
+    
+    <!-- TailwindCSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#6366f1',
+                        secondary: '#8b5cf6',
+                        dark: {
+                            100: '#1e1e2e',
+                            200: '#181825',
+                            300: '#11111b',
+                            400: '#0a0a0f'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Custom styles -->
+    <style>
+        [x-cloak] { display: none !important; }
+        
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .card {
+            background: rgba(30, 30, 46, 0.8);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar-track {
+            background: #181825;
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background: #45475a;
+            border-radius: 3px;
+        }
+        
+        .pulse-dot {
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+    
+    {% block head %}{% endblock %}
+</head>
+<body class="bg-dark-300 text-gray-100 min-h-screen">
+    <div class="flex">
+        <!-- Sidebar -->
+        <aside class="w-64 bg-dark-200 min-h-screen fixed left-0 top-0 border-r border-gray-800">
+            <div class="p-6">
+                <h1 class="text-2xl font-bold gradient-bg bg-clip-text text-transparent">
+                    Pro4Kings
+                </h1>
+                <p class="text-gray-500 text-sm">Database Monitor</p>
+            </div>
+            
+            <nav class="mt-6">
+                <a href="/" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if request.path == '/' %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                    </svg>
+                    Dashboard
+                </a>
+                
+                <a href="/players" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/players' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                    </svg>
+                    Online Players
+                </a>
+                
+                <a href="/actions" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/actions' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                    </svg>
+                    Actions Log
+                </a>
+                
+                <a href="/factions" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/faction' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                    </svg>
+                    Factions
+                </a>
+                
+                <a href="/bans" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/bans' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"></path>
+                    </svg>
+                    Bans
+                </a>
+                
+                <a href="/search" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/search' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    Search
+                </a>
+            </nav>
+            
+            <!-- Status -->
+            <div class="absolute bottom-0 left-0 right-0 p-6 border-t border-gray-800">
+                <div class="flex items-center text-sm text-gray-500">
+                    <span class="w-2 h-2 bg-green-500 rounded-full mr-2 pulse-dot"></span>
+                    Bot Connected
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main content -->
+        <main class="flex-1 ml-64 p-8">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    
+    {% block scripts %}{% endblock %}
+</body>
+</html>

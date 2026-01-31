@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Factions - Pro4Kings{% endblock %}
+
+{% block content %}
+<div x-data="factionsPage()" x-init="init()">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold">Factions</h1>
+            <p class="text-gray-500">All registered factions</p>
+        </div>
+        <div class="flex items-center space-x-4">
+            <span class="text-sm text-gray-500" x-text="factions.length + ' factions'"></span>
+        </div>
+    </div>
+    
+    <!-- Search -->
+    <div class="card rounded-xl p-4 mb-6">
+        <input type="text" 
+               x-model="search" 
+               @input="filterFactions()"
+               placeholder="Search factions..." 
+               class="w-full px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+    </div>
+    
+    <!-- Factions Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <template x-for="faction in filteredFactions" :key="faction.faction_name">
+            <a :href="'/faction/' + encodeURIComponent(faction.faction_name)" class="card rounded-xl p-6 hover:border-primary/50 transition-colors">
+                <div class="flex items-start justify-between">
+                    <h3 class="text-lg font-semibold" x-text="faction.faction_name"></h3>
+                    <span class="flex items-center text-sm text-green-400" x-show="faction.online_count > 0">
+                        <span class="w-2 h-2 bg-green-500 rounded-full mr-2 pulse-dot"></span>
+                        <span x-text="faction.online_count"></span>
+                    </span>
+                </div>
+                <div class="mt-4 flex items-center justify-between">
+                    <div>
+                        <p class="text-3xl font-bold" x-text="faction.member_count"></p>
+                        <p class="text-sm text-gray-500">members</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-lg font-semibold text-green-400" x-text="faction.online_count"></p>
+                        <p class="text-sm text-gray-500">online</p>
+                    </div>
+                </div>
+                <div class="mt-4 w-full bg-dark-300 rounded-full h-2">
+                    <div class="bg-green-500 h-2 rounded-full transition-all duration-500"
+                         :style="'width: ' + (faction.member_count > 0 ? (faction.online_count / faction.member_count * 100) : 0) + '%'"></div>
+                </div>
+            </a>
+        </template>
+    </div>
+    
+    <!-- Empty State -->
+    <div x-show="filteredFactions.length === 0" class="text-center py-16 text-gray-500">
+        <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+        </svg>
+        <p x-text="search ? 'No factions match your search' : 'No factions found'"></p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function factionsPage() {
+    return {
+        factions: [],
+        filteredFactions: [],
+        search: '',
+        
+        async init() {
+            await this.fetchFactions();
+        },
+        
+        async fetchFactions() {
+            try {
+                const res = await fetch('/api/factions');
+                const data = await res.json();
+                this.factions = data.factions || [];
+                this.filterFactions();
+            } catch (error) {
+                console.error('Error fetching factions:', error);
+            }
+        },
+        
+        filterFactions() {
+            if (!this.search) {
+                this.filteredFactions = [...this.factions];
+            } else {
+                const searchLower = this.search.toLowerCase();
+                this.filteredFactions = this.factions.filter(f => 
+                    f.faction_name.toLowerCase().includes(searchLower)
+                );
+            }
+            
+            // Sort by member count descending
+            this.filteredFactions.sort((a, b) => b.member_count - a.member_count);
+        }
+    }
+}
+</script>
+{% endblock %}

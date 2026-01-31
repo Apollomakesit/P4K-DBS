@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Banned Players - Pro4Kings{% endblock %}
+
+{% block content %}
+<div x-data="bansPage()" x-init="init()">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold">Banned Players</h1>
+            <p class="text-gray-500">Current ban list</p>
+        </div>
+        <div class="flex items-center space-x-4">
+            <label class="flex items-center">
+                <input type="checkbox" x-model="showExpired" @change="fetchBans()" class="mr-2 rounded border-gray-600 bg-dark-300">
+                <span class="text-sm">Show Expired</span>
+            </label>
+        </div>
+    </div>
+    
+    <!-- Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div class="card rounded-xl p-6">
+            <p class="text-gray-500 text-sm">Active Bans</p>
+            <p class="text-3xl font-bold mt-1 text-red-400" x-text="activeBans"></p>
+        </div>
+        <div class="card rounded-xl p-6">
+            <p class="text-gray-500 text-sm">Expired Bans</p>
+            <p class="text-3xl font-bold mt-1 text-gray-400" x-text="expiredBans"></p>
+        </div>
+    </div>
+    
+    <!-- Bans Table -->
+    <div class="card rounded-xl p-6">
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="text-left text-gray-500 text-sm border-b border-gray-800">
+                        <th class="pb-3 font-medium">Status</th>
+                        <th class="pb-3 font-medium">Player</th>
+                        <th class="pb-3 font-medium">Admin</th>
+                        <th class="pb-3 font-medium">Reason</th>
+                        <th class="pb-3 font-medium">Duration</th>
+                        <th class="pb-3 font-medium">Ban Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="ban in bans" :key="ban.id">
+                        <tr class="border-b border-gray-800/50 hover:bg-dark-100">
+                            <td class="py-3">
+                                <span class="px-2 py-1 text-xs rounded-full"
+                                      :class="ban.is_active ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'"
+                                      x-text="ban.is_active ? 'Active' : 'Expired'"></span>
+                            </td>
+                            <td class="py-3">
+                                <a :href="'/player/' + ban.player_id" class="text-primary hover:underline" x-text="ban.player_name"></a>
+                                <p class="text-xs text-gray-500" x-text="'ID: ' + ban.player_id"></p>
+                            </td>
+                            <td class="py-3 text-gray-400" x-text="ban.admin || 'Unknown'"></td>
+                            <td class="py-3 text-sm text-gray-400 max-w-xs truncate" :title="ban.reason" x-text="ban.reason || 'No reason'"></td>
+                            <td class="py-3 text-gray-400" x-text="ban.duration || 'Unknown'"></td>
+                            <td class="py-3 text-sm text-gray-500" x-text="ban.ban_date || 'Unknown'"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Empty State -->
+        <div x-show="bans.length === 0" class="text-center py-8 text-gray-500">
+            <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <p>No bans found</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function bansPage() {
+    return {
+        bans: [],
+        showExpired: false,
+        activeBans: 0,
+        expiredBans: 0,
+        
+        async init() {
+            await this.fetchBans();
+        },
+        
+        async fetchBans() {
+            try {
+                const res = await fetch('/api/bans?include_expired=' + this.showExpired);
+                const data = await res.json();
+                this.bans = data.bans || [];
+                this.activeBans = data.active_count || 0;
+                this.expiredBans = data.expired_count || 0;
+            } catch (error) {
+                console.error('Error fetching bans:', error);
+            }
+        }
+    }
+}
+</script>
+{% endblock %}

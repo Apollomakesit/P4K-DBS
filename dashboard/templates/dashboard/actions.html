@@ -1,0 +1,144 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Actions - Pro4Kings{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-white">Actions Log</h1>
+            <p class="text-gray-400 mt-1">{{ "{:,}".format(total) }} actions in last {{ days }} days</p>
+        </div>
+    </div>
+    
+    <!-- Filters -->
+    <div class="bg-p4k-card border border-p4k-border rounded-xl p-4">
+        <form method="GET" class="flex flex-col md:flex-row gap-4">
+            <div class="flex-1">
+                <label class="block text-gray-400 text-sm mb-1">Player ID</label>
+                <input type="text" name="player" value="{{ player_id }}" 
+                    placeholder="Filter by player ID..."
+                    class="w-full bg-p4k-darker border border-p4k-border rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-p4k-accent transition-colors">
+            </div>
+            <div class="w-full md:w-48">
+                <label class="block text-gray-400 text-sm mb-1">Action Type</label>
+                <select name="type" class="w-full bg-p4k-darker border border-p4k-border rounded-lg px-4 py-2 text-white focus:outline-none focus:border-p4k-accent transition-colors">
+                    <option value="">All Types</option>
+                    {% for type in action_types %}
+                    <option value="{{ type.action_type }}" {% if selected_type == type.action_type %}selected{% endif %}>
+                        {{ type.action_type | replace("_", " ") | title }} ({{ type.count }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="w-full md:w-32">
+                <label class="block text-gray-400 text-sm mb-1">Days</label>
+                <select name="days" class="w-full bg-p4k-darker border border-p4k-border rounded-lg px-4 py-2 text-white focus:outline-none focus:border-p4k-accent transition-colors">
+                    <option value="1" {% if days == 1 %}selected{% endif %}>1 day</option>
+                    <option value="7" {% if days == 7 %}selected{% endif %}>7 days</option>
+                    <option value="14" {% if days == 14 %}selected{% endif %}>14 days</option>
+                    <option value="30" {% if days == 30 %}selected{% endif %}>30 days</option>
+                </select>
+            </div>
+            <div class="flex items-end space-x-2">
+                <button type="submit" class="bg-p4k-accent hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition-colors">
+                    <i class="fas fa-filter mr-2"></i>Filter
+                </button>
+                <a href="/actions" class="bg-p4k-border hover:bg-p4k-border/70 text-gray-300 px-4 py-2 rounded-lg transition-colors">
+                    <i class="fas fa-times"></i>
+                </a>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Actions Table -->
+    <div class="bg-p4k-card border border-p4k-border rounded-xl overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-p4k-darker">
+                    <tr>
+                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Time</th>
+                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Type</th>
+                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Player</th>
+                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Target</th>
+                        <th class="px-6 py-4 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Details</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-p4k-border">
+                    {% for action in actions %}
+                    <tr class="hover:bg-p4k-border/30 transition-colors">
+                        <td class="px-6 py-4 whitespace-nowrap text-gray-400 text-sm">
+                            {{ action.timestamp | time_ago }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="px-2 py-1 text-xs font-medium rounded-full 
+                                {% if action.action_type == 'item_given' or action.action_type == 'item_received' %}bg-green-500/20 text-green-400
+                                {% elif action.action_type == 'money_transfer' or action.action_type == 'money_deposit' %}bg-yellow-500/20 text-yellow-400
+                                {% elif action.action_type == 'warning_received' %}bg-orange-500/20 text-orange-400
+                                {% elif action.action_type == 'ban_received' %}bg-red-600/20 text-red-500
+                                {% elif action.action_type == 'chest_deposit' or action.action_type == 'chest_withdraw' %}bg-blue-500/20 text-blue-400
+                                {% elif action.action_type == 'trade' %}bg-purple-500/20 text-purple-400
+                                {% else %}bg-gray-500/20 text-gray-400{% endif %}">
+                                {{ action.action_type | replace("_", " ") | title }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            {% if action.player_id %}
+                            <a href="/player/{{ action.player_id }}" class="text-p4k-accent hover:underline">
+                                {{ action.player_name or 'ID:' + action.player_id }}
+                            </a>
+                            {% else %}
+                            <span class="text-gray-500">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            {% if action.target_player_id %}
+                            <a href="/player/{{ action.target_player_id }}" class="text-p4k-purple hover:underline">
+                                {{ action.target_player_name or 'ID:' + action.target_player_id }}
+                            </a>
+                            {% else %}
+                            <span class="text-gray-500">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-6 py-4 text-gray-300 text-sm max-w-md truncate">
+                            {{ action.action_detail or action.raw_text or '-' }}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="px-6 py-12 text-center text-gray-500">
+                            <i class="fas fa-inbox text-4xl mb-3"></i>
+                            <p>No actions found</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        {% if total_pages > 1 %}
+        <div class="px-6 py-4 border-t border-p4k-border flex items-center justify-between">
+            <p class="text-gray-400 text-sm">
+                Page {{ page }} of {{ total_pages }}
+            </p>
+            <div class="flex space-x-2">
+                {% if page > 1 %}
+                <a href="?page={{ page - 1 }}&type={{ selected_type }}&player={{ player_id }}&days={{ days }}" 
+                    class="px-4 py-2 bg-p4k-border hover:bg-p4k-border/70 rounded-lg text-gray-300 transition-colors">
+                    <i class="fas fa-chevron-left mr-1"></i>Previous
+                </a>
+                {% endif %}
+                {% if page < total_pages %}
+                <a href="?page={{ page + 1 }}&type={{ selected_type }}&player={{ player_id }}&days={{ days }}" 
+                    class="px-4 py-2 bg-p4k-accent hover:bg-blue-600 rounded-lg text-white transition-colors">
+                    Next<i class="fas fa-chevron-right ml-1"></i>
+                </a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

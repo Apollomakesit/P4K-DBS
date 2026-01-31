@@ -1,0 +1,57 @@
+{% extends "dashboard/base.html" %}
+
+{% block title %}Factions - Pro4Kings{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-white">Factions</h1>
+            <p class="text-gray-400 mt-1">{{ factions | length }} factions active</p>
+        </div>
+    </div>
+    
+    <!-- Factions Grid -->
+    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {% for faction in factions %}
+        <a href="/faction/{{ faction.faction }}" class="bg-p4k-card border border-p4k-border rounded-xl p-6 hover:border-p4k-accent transition-all card-glow group">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="w-12 h-12 bg-gradient-to-br from-p4k-purple to-p4k-accent rounded-lg flex items-center justify-center">
+                        <i class="fas fa-shield-alt text-white text-xl"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-white font-semibold group-hover:text-p4k-accent transition-colors">{{ faction.faction }}</h3>
+                        <p class="text-gray-500 text-sm">{{ faction.member_count }} members</p>
+                    </div>
+                </div>
+                {% if faction.online_count > 0 %}
+                <div class="text-right">
+                    <div class="inline-flex items-center px-2 py-1 rounded-full bg-p4k-green/20">
+                        <span class="w-2 h-2 bg-p4k-green rounded-full mr-2 pulse-online"></span>
+                        <span class="text-p4k-green text-sm font-medium">{{ faction.online_count }}</span>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            
+            <!-- Progress bar showing member count relative to largest faction -->
+            {% set max_members = factions[0].member_count if factions else 1 %}
+            {% set percentage = (faction.member_count / max_members * 100) | int %}
+            <div class="mt-4">
+                <div class="h-1.5 bg-p4k-border rounded-full overflow-hidden">
+                    <div class="h-full bg-gradient-to-r from-p4k-purple to-p4k-accent rounded-full transition-all duration-500" 
+                        style="width: {{ percentage }}%"></div>
+                </div>
+            </div>
+        </a>
+        {% else %}
+        <div class="col-span-full text-center py-12 text-gray-500">
+            <i class="fas fa-shield-alt text-4xl mb-3"></i>
+            <p>No factions found</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

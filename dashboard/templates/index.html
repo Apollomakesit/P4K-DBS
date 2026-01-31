@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Pro4Kings{% endblock %}
+
+{% block content %}
+<div x-data="dashboard()" x-init="init()">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold">Dashboard</h1>
+            <p class="text-gray-500">Real-time server monitoring</p>
+        </div>
+        <div class="flex items-center space-x-4">
+            <span class="text-sm text-gray-500" x-text="lastUpdate"></span>
+            <button @click="refresh()" class="px-4 py-2 bg-primary hover:bg-primary/80 rounded-lg transition-colors">
+                Refresh
+            </button>
+        </div>
+    </div>
+    
+    <!-- Stats Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <!-- Online Now -->
+        <div class="card rounded-xl p-6 fade-in">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-500 text-sm">Online Now</p>
+                    <p class="text-3xl font-bold mt-1" x-text="stats.online_now">-</p>
+                </div>
+                <div class="w-12 h-12 bg-green-500/20 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728m-9.9-2.829a5 5 0 010-7.07m7.072 0a5 5 0 010 7.07M13 12a1 1 0 11-2 0 1 1 0 012 0z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Total Players -->
+        <div class="card rounded-xl p-6 fade-in" style="animation-delay: 0.1s">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-500 text-sm">Total Players</p>
+                    <p class="text-3xl font-bold mt-1" x-text="formatNumber(stats.total_players)">-</p>
+                </div>
+                <div class="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Actions 24h -->
+        <div class="card rounded-xl p-6 fade-in" style="animation-delay: 0.2s">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-500 text-sm">Actions (24h)</p>
+                    <p class="text-3xl font-bold mt-1" x-text="formatNumber(stats.actions_24h)">-</p>
+                </div>
+                <div class="w-12 h-12 bg-purple-500/20 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Active Bans -->
+        <div class="card rounded-xl p-6 fade-in" style="animation-delay: 0.3s">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-gray-500 text-sm">Active Bans</p>
+                    <p class="text-3xl font-bold mt-1" x-text="stats.active_bans">-</p>
+                </div>
+                <div class="w-12 h-12 bg-red-500/20 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Secondary Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div class="card rounded-xl p-4">
+            <p class="text-gray-500 text-xs">Logins Today</p>
+            <p class="text-xl font-semibold" x-text="formatNumber(stats.logins_today)">-</p>
+        </div>
+        <div class="card rounded-xl p-4">
+            <p class="text-gray-500 text-xs">Unique Players (24h)</p>
+            <p class="text-xl font-semibold" x-text="formatNumber(stats.unique_24h)">-</p>
+        </div>
+        <div class="card rounded-xl p-4">
+            <p class="text-gray-500 text-xs">Total Actions</p>
+            <p class="text-xl font-semibold" x-text="formatNumber(stats.total_actions)">-</p>
+        </div>
+        <div class="card rounded-xl p-4">
+            <p class="text-gray-500 text-xs">Factions</p>
+            <p class="text-xl font-semibold" x-text="stats.factions_count">-</p>
+        </div>
+    </div>
+    
+    <!-- Charts & Lists -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Activity Chart -->
+        <div class="card rounded-xl p-6">
+            <h3 class="text-lg font-semibold mb-4">Activity (Last 7 Days)</h3>
+            <canvas id="activityChart" height="200"></canvas>
+        </div>
+        
+        <!-- Online Players -->
+        <div class="card rounded-xl p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold">Online Players</h3>
+                <a href="/players" class="text-primary text-sm hover:underline">View all →</a>
+            </div>
+            <div class="space-y-3 max-h-[300px] overflow-y-auto scrollbar-thin">
+                <template x-for="player in onlinePlayers.slice(0, 10)" :key="player.player_id">
+                    <a :href="'/player/' + player.player_id" class="flex items-center justify-between p-3 bg-dark-300 rounded-lg hover:bg-dark-100 transition-colors">
+                        <div class="flex items-center">
+                            <span class="w-2 h-2 bg-green-500 rounded-full mr-3"></span>
+                            <div>
+                                <p class="font-medium" x-text="player.player_name"></p>
+                                <p class="text-xs text-gray-500" x-text="player.faction"></p>
+                            </div>
+                        </div>
+                        <span class="text-xs text-gray-500" x-text="player.played_hours + 'h'"></span>
+                    </a>
+                </template>
+                <div x-show="onlinePlayers.length === 0" class="text-center text-gray-500 py-8">
+                    No players online
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Recent Actions -->
+    <div class="card rounded-xl p-6 mt-8">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-semibold">Recent Actions</h3>
+            <a href="/actions" class="text-primary text-sm hover:underline">View all →</a>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="text-left text-gray-500 text-sm border-b border-gray-800">
+                        <th class="pb-3 font-medium">Player</th>
+                        <th class="pb-3 font-medium">Type</th>
+                        <th class="pb-3 font-medium">Detail</th>
+                        <th class="pb-3 font-medium">Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="action in recentActions" :key="action.id">
+                        <tr class="border-b border-gray-800/50 hover:bg-dark-100">
+                            <td class="py-3">
+                                <a :href="'/player/' + action.player_id" class="text-primary hover:underline" x-text="action.player_name || 'Unknown'"></a>
+                            </td>
+                            <td class="py-3">
+                                <span class="px-2 py-1 text-xs rounded-full" 
+                                      :class="{
+                                          'bg-green-500/20 text-green-400': action.action_type.includes('received'),
+                                          'bg-blue-500/20 text-blue-400': action.action_type.includes('given') || action.action_type.includes('transfer'),
+                                          'bg-yellow-500/20 text-yellow-400': action.action_type.includes('warning'),
+                                          'bg-red-500/20 text-red-400': action.action_type.includes('ban') || action.action_type.includes('jail'),
+                                          'bg-gray-500/20 text-gray-400': !action.action_type.includes('received') && !action.action_type.includes('given')
+                                      }"
+                                      x-text="action.action_type.replace(/_/g, ' ')"></span>
+                            </td>
+                            <td class="py-3 text-sm text-gray-400 max-w-xs truncate" x-text="action.action_detail"></td>
+                            <td class="py-3 text-sm text-gray-500" x-text="action.time_ago"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function dashboard() {
+    return {
+        stats: {},
+        onlinePlayers: [],
+        recentActions: [],
+        lastUpdate: '',
+        activityChart: null,
+        
+        async init() {
+            await this.refresh();
+            // Auto-refresh every 30 seconds
+            setInterval(() => this.refresh(), 30000);
+        },
+        
+        async refresh() {
+            try {
+                // Fetch stats
+                const statsRes = await fetch('/api/stats');
+                this.stats = await statsRes.json();
+                
+                // Fetch online players
+                const onlineRes = await fetch('/api/online');
+                const onlineData = await onlineRes.json();
+                this.onlinePlayers = onlineData.players || [];
+                
+                // Fetch recent actions
+                const actionsRes = await fetch('/api/actions?per_page=10');
+                const actionsData = await actionsRes.json();
+                this.recentActions = actionsData.actions || [];
+                
+                // Fetch activity chart data
+                const chartRes = await fetch('/api/activity-chart');
+                const chartData = await chartRes.json();
+                this.updateChart(chartData.data);
+                
+                this.lastUpdate = 'Updated ' + new Date().toLocaleTimeString();
+            } catch (error) {
+                console.error('Error refreshing dashboard:', error);
+            }
+        },
+        
+        formatNumber(num) {
+            if (num === undefined || num === null) return '-';
+            return num.toLocaleString();
+        },
+        
+        updateChart(data) {
+            const ctx = document.getElementById('activityChart');
+            if (!ctx) return;
+            
+            const labels = data.map(d => d.hour.split(' ')[1] || d.hour);
+            const values = data.map(d => d.count);
+            
+            if (this.activityChart) {
+                this.activityChart.data.labels = labels;
+                this.activityChart.data.datasets[0].data = values;
+                this.activityChart.update();
+            } else {
+                this.activityChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Actions',
+                            data: values,
+                            borderColor: '#6366f1',
+                            backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                            fill: true,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            x: {
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.05)'
+                                },
+                                ticks: {
+                                    color: '#666',
+                                    maxRotation: 45
+                                }
+                            },
+                            y: {
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.05)'
+                                },
+                                ticks: {
+                                    color: '#666'
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+}
+</script>
+{% endblock %}

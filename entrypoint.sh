@@ -134,11 +134,36 @@ else
 fi
 
 echo "================================================"
+echo "🌐 Starting Web Dashboard (background)..."
+echo "================================================"
+
+# Start dashboard on PORT (Railway provides this) or default 8080
+DASHBOARD_PORT=${PORT:-8080}
+export DASHBOARD_PORT
+export DASHBOARD_HOST="0.0.0.0"
+
+# Start dashboard in background
+cd /app/dashboard
+python run.py &
+DASHBOARD_PID=$!
+cd /app
+
+echo "   🌐 Dashboard started on port $DASHBOARD_PORT (PID: $DASHBOARD_PID)"
+echo "   📊 Dashboard URL: https://your-app.railway.app/"
+
+echo "================================================"
 echo "🤖 Starting Discord bot..."
 echo "================================================"
 
 # Enable strict error handling ONLY for the bot startup
 set -e
 
-# Execute the bot
+# Function to cleanup background processes on exit
+cleanup() {
+    echo "🛑 Stopping dashboard..."
+    kill $DASHBOARD_PID 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# Execute the bot (keeps running in foreground)
 exec python /app/bot.py
