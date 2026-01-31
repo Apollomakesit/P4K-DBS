@@ -142,14 +142,28 @@ DASHBOARD_PORT=${PORT:-8080}
 export DASHBOARD_PORT
 export DASHBOARD_HOST="0.0.0.0"
 
+# Construct and export dashboard URL for bot to use in /dashboard command
+if [ -n "$RAILWAY_PUBLIC_DOMAIN" ]; then
+    # Railway environment - use public domain
+    export DASHBOARD_URL="https://${RAILWAY_PUBLIC_DOMAIN}"
+    echo "   🌐 Railway detected - Dashboard URL: $DASHBOARD_URL"
+elif [ -n "$DASHBOARD_URL" ]; then
+    # Custom URL already set - use it
+    echo "   🌐 Custom Dashboard URL: $DASHBOARD_URL"
+else
+    # Fallback
+    DASHBOARD_URL="http://localhost:${DASHBOARD_PORT}"
+    export DASHBOARD_URL
+    echo "   🌐 Using default Dashboard URL: $DASHBOARD_URL"
+fi
+
 # Start dashboard in background
 cd /app/dashboard
 python run.py &
 DASHBOARD_PID=$!
 cd /app
 
-echo "   🌐 Dashboard started on port $DASHBOARD_PORT (PID: $DASHBOARD_PID)"
-echo "   📊 Dashboard URL: https://your-app.railway.app/"
+echo "   ✅ Dashboard started on port $DASHBOARD_PORT (PID: $DASHBOARD_PID)"
 
 echo "================================================"
 echo "🤖 Starting Discord bot..."
