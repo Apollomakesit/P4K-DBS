@@ -12,8 +12,23 @@
         </div>
     </div>
     
+    <!-- Loading State -->
+    <div x-show="loading" class="flex items-center justify-center py-16">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+        <p class="ml-4 text-gray-400">Loading actions...</p>
+    </div>
+
+    <!-- Error State -->
+    <div x-show="error && !loading" class="bg-red-900/20 border border-red-500 rounded-xl p-6 text-center mb-6">
+        <i class="fas fa-exclamation-triangle text-red-500 text-3xl mb-3"></i>
+        <p class="text-red-400" x-text="error"></p>
+        <button @click="retry()" class="mt-4 bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg transition">
+            Retry
+        </button>
+    </div>
+
     <!-- Filters -->
-    <div class="card rounded-xl p-4 mb-6">
+    <div x-show="!loading" class="card rounded-xl p-4 mb-6">
         <div class="flex flex-wrap gap-4">
             <select x-model="actionType" @change="fetchActions()" class="px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
                 <option value="">All Types</option>
@@ -35,7 +50,7 @@
     </div>
     
     <!-- Actions Table -->
-    <div class="card rounded-xl p-6">
+    <div x-show="!loading && !error" class="card rounded-xl p-6">
         <div class="overflow-x-auto">
             <table class="w-full">
                 <thead>
@@ -117,6 +132,8 @@ function actionsPage() {
         searchPlayer: '',
         page: 1,
         totalPages: 1,
+        loading: false,
+        error: null,
         
         async init() {
             // 🔥 Read player filter from URL query params (e.g., /actions?player=12345)
@@ -134,6 +151,7 @@ function actionsPage() {
         async fetchActionTypes() {
             try {
                 const res = await fetch('/api/action-types');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 this.actionTypes = data.types || [];
             } catch (error) {
@@ -142,18 +160,29 @@ function actionsPage() {
         },
         
         async fetchActions() {
+            this.loading = true;
+            this.error = null;
             try {
                 let url = `/api/actions?page=${this.page}&per_page=25`;
                 if (this.actionType) url += `&type=${this.actionType}`;
                 if (this.searchPlayer) url += `&player=${encodeURIComponent(this.searchPlayer)}`;
                 
                 const res = await fetch(url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
                 const data = await res.json();
                 this.actions = data.actions || [];
                 this.totalPages = data.total_pages || 1;
             } catch (error) {
                 console.error('Error fetching actions:', error);
+                this.error = 'Failed to load actions. Please try again.';
+                this.actions = [];
+            } finally {
+                this.loading = false;
             }
+        },
+        
+        retry() {
+            this.fetchActions();
         },
         
         async refresh() {

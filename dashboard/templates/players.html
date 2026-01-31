@@ -18,8 +18,23 @@
         </div>
     </div>
     
+    <!-- Loading State -->
+    <div x-show="loading" class="flex items-center justify-center py-16">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+        <p class="ml-4 text-gray-400">Loading data...</p>
+    </div>
+
+    <!-- Error State -->
+    <div x-show="error && !loading" class="bg-red-900/20 border border-red-500 rounded-xl p-6 text-center mb-6">
+        <i class="fas fa-exclamation-triangle text-red-500 text-3xl mb-3"></i>
+        <p class="text-red-400" x-text="error"></p>
+        <button @click="retry()" class="mt-4 bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg transition">
+            Retry
+        </button>
+    </div>
+
     <!-- Search/Filter -->
-    <div class="card rounded-xl p-4 mb-6">
+    <div x-show="!loading && !error" class="card rounded-xl p-4 mb-6">
         <div class="flex gap-4">
             <input type="text" 
                    x-model="search" 
@@ -35,7 +50,7 @@
     </div>
     
     <!-- Players Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+    <div x-show="!loading && !error" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <template x-for="player in filteredPlayers" :key="player.player_id">
             <a :href="'/player/' + player.player_id" class="card rounded-xl p-4 hover:border-primary/50 transition-colors">
                 <div class="flex items-start justify-between">
@@ -83,6 +98,8 @@ function playersPage() {
         filteredPlayers: [],
         search: '',
         sortBy: 'name',
+        loading: false,
+        error: null,
         
         async init() {
             await this.refresh();
@@ -90,14 +107,25 @@ function playersPage() {
         },
         
         async refresh() {
+            this.loading = true;
+            this.error = null;
             try {
                 const res = await fetch('/api/online');
+                if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
                 const data = await res.json();
                 this.players = data.players || [];
                 this.filterPlayers();
             } catch (error) {
                 console.error('Error fetching players:', error);
+                this.error = 'Failed to load players. Please try again.';
+                this.players = [];
+            } finally {
+                this.loading = false;
             }
+        },
+        
+        retry() {
+            this.refresh();
         },
         
         filterPlayers() {
