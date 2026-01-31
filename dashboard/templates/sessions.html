@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}Sessions - Pro4Kings{% endblock %}
+
+{% block content %}
+<div x-data="sessionsPage()" x-init="init()">
+    <div class="flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold">Player Sessions</h1>
+            <p class="text-gray-500">Login/logout history and playtime</p>
+        </div>
+        <div class="text-sm text-gray-500" x-text="'Last update: ' + lastUpdate"></div>
+    </div>
+
+    <div class="card rounded-xl p-4 mb-6">
+        <div class="flex flex-wrap gap-4">
+            <input type="text" x-model="playerId" placeholder="Player ID" class="px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+            <select x-model="days" class="px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="60">Last 60 days</option>
+                <option value="90">Last 90 days</option>
+            </select>
+            <button @click="fetchSessions()" class="px-4 py-2 bg-primary hover:bg-primary/80 rounded-lg transition-colors">
+                Load Sessions
+            </button>
+        </div>
+    </div>
+
+    <div x-show="summary" class="card rounded-xl p-4 mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="bg-dark-200 rounded-lg p-3 text-center">
+                <p class="text-xs text-gray-400">Player</p>
+                <p class="font-semibold" x-text="summary.player_name"></p>
+            </div>
+            <div class="bg-dark-200 rounded-lg p-3 text-center">
+                <p class="text-xs text-gray-400">Total Logins</p>
+                <p class="font-semibold" x-text="summary.total_logins"></p>
+            </div>
+            <div class="bg-dark-200 rounded-lg p-3 text-center">
+                <p class="text-xs text-gray-400">Total Hours</p>
+                <p class="font-semibold" x-text="summary.total_hours + 'h'"></p>
+            </div>
+            <div class="bg-dark-200 rounded-lg p-3 text-center">
+                <p class="text-xs text-gray-400">First Login</p>
+                <p class="font-semibold" x-text="summary.first_login_display || '—'"></p>
+                <p class="text-xs text-gray-500" x-text="summary.first_login_ago || ''"></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="card rounded-xl p-6">
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="text-left text-gray-500 text-sm border-b border-gray-800">
+                        <th class="pb-3 font-medium">Login</th>
+                        <th class="pb-3 font-medium">Logout</th>
+                        <th class="pb-3 font-medium">Duration</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="session in sessions" :key="session.login_time + '-' + session.logout_time">
+                        <tr class="border-b border-gray-800/50 hover:bg-dark-100">
+                            <td class="py-3 text-sm text-gray-400" x-text="formatSessionTime(session.login_time_display, session.login_time_ago)"></td>
+                            <td class="py-3 text-sm text-gray-400" x-text="formatSessionTime(session.logout_time_display, session.logout_time_ago)"></td>
+                            <td class="py-3 text-sm text-gray-400" x-text="formatDuration(session.session_duration_seconds)"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <div x-show="sessions.length === 0" class="text-center py-8 text-gray-500">
+            No sessions found
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function sessionsPage() {
+    return {
+        playerId: '',
+        days: 7,
+        sessions: [],
+        summary: null,
+        lastUpdate: '',
+
+        async init() {
+            this.lastUpdate = new Date().toLocaleTimeString();
+        },
+
+        async fetchSessions() {
+            if (!this.playerId) return;
+            try {
+                const res = await fetch(`/api/sessions/${this.playerId}?days=${this.days}`);
+                const data = await res.json();
+                this.sessions = data.sessions || [];
+                this.summary = {
+                    player_name: data.player_name,
+                    total_logins: data.total_logins,
+                    total_hours: data.total_hours,
+                    first_login_display: data.first_login_display,
+                    first_login_ago: data.first_login_ago
+                };
+                this.lastUpdate = new Date().toLocaleTimeString();
+            } catch (error) {
+                console.error('Error fetching sessions:', error);
+            }
+        },
+
+        formatDuration(seconds) {
+            if (!seconds || seconds <= 0) return '—';
+            const mins = Math.floor(seconds / 60);
+            const hrs = Math.floor(mins / 60);
+            const remMins = mins % 60;
+            if (hrs > 0) return `${hrs}h ${remMins}m`;
+            return `${mins}m`;
+        },
+
+        formatSessionTime(absolute, relative) {
+            if (!absolute && !relative) return '—';
+            if (!absolute) return relative;
+            if (!relative) return absolute;
+            return `${absolute} • ${relative}`;
+        }
+    }
+}
+</script>
+{% endblock %}

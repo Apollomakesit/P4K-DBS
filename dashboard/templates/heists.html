@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Heists - Pro4Kings{% endblock %}
+
+{% block content %}
+<div x-data="heistsPage()" x-init="init()">
+    <div class="flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold">Bank Heists</h1>
+            <p class="text-gray-500">Deliveries and rewards</p>
+        </div>
+        <div class="text-sm text-gray-500" x-text="'Last update: ' + lastUpdate"></div>
+    </div>
+
+    <div class="card rounded-xl p-4 mb-6">
+        <div class="flex flex-wrap gap-4">
+            <select x-model="days" @change="refresh()" class="px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="60">Last 60 days</option>
+                <option value="90">Last 90 days</option>
+            </select>
+            <button @click="refresh()" class="px-4 py-2 bg-primary hover:bg-primary/80 rounded-lg transition-colors">
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <div class="card rounded-xl p-6">
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="text-left text-gray-500 text-sm border-b border-gray-800">
+                        <th class="pb-3 font-medium">Time</th>
+                        <th class="pb-3 font-medium">Player</th>
+                        <th class="pb-3 font-medium">Faction</th>
+                        <th class="pb-3 font-medium">Detail</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="heist in heists" :key="heist.player_id + heist.timestamp">
+                        <tr class="border-b border-gray-800/50 hover:bg-dark-100">
+                            <td class="py-3 text-sm text-gray-500" x-text="formatActionTime(heist)"></td>
+                            <td class="py-3">
+                                <a :href="'/player/' + heist.player_id" class="text-primary hover:underline" x-text="heist.player_name || heist.player_id"></a>
+                            </td>
+                            <td class="py-3 text-sm text-gray-400" x-text="(heist.faction || 'No Faction') + (heist.faction_rank ? ' • ' + heist.faction_rank : '')"></td>
+                            <td class="py-3 text-sm text-gray-400" x-text="heist.action_detail || '—'"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <div x-show="heists.length === 0" class="text-center py-8 text-gray-500">
+            No heists found
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function heistsPage() {
+    return {
+        heists: [],
+        days: 30,
+        lastUpdate: '',
+
+        async init() {
+            await this.refresh();
+            setInterval(() => this.refresh(), 30000);
+        },
+
+        async refresh() {
+            try {
+                const res = await fetch(`/api/heists?days=${this.days}`);
+                const data = await res.json();
+                this.heists = data.heists || [];
+                this.lastUpdate = new Date().toLocaleTimeString();
+            } catch (error) {
+                console.error('Error fetching heists:', error);
+            }
+        },
+
+        formatTimestamp(timestamp) {
+            if (!timestamp) return '';
+            const date = new Date(timestamp);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+                   `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+        },
+
+        formatRelative(timestamp) {
+            if (!timestamp) return '';
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = (now - date) / 1000;
+
+            if (diff < 60) return 'Just now';
+            if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+            if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+            return Math.floor(diff / 86400) + 'd ago';
+        },
+
+        formatActionTime(item) {
+            if (!item) return '';
+            if (item.timestamp_display && item.time_ago) {
+                return `${item.timestamp_display} • ${item.time_ago}`;
+            }
+            const abs = this.formatTimestamp(item.timestamp);
+            const rel = this.formatRelative(item.timestamp);
+            if (!abs) return rel;
+            return `${abs} • ${rel}`;
+        }
+    }
+}
+</script>
+{% endblock %}

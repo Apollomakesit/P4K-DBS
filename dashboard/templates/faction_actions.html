@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}Faction Actions - Pro4Kings{% endblock %}
+
+{% block content %}
+<div x-data="factionActionsPage()" x-init="init()">
+    <div class="flex justify-between items-center mb-8">
+        <div>
+            <h1 class="text-3xl font-bold">Faction Actions</h1>
+            <p class="text-gray-500">Actions performed by faction members</p>
+        </div>
+        <div class="text-sm text-gray-500" x-text="'Last update: ' + lastUpdate"></div>
+    </div>
+
+    <div class="card rounded-xl p-4 mb-6">
+        <div class="flex flex-wrap gap-4">
+            <select x-model="selectedFaction" @change="fetchActions()" class="px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+                <option value="">Select faction</option>
+                <template x-for="faction in factions" :key="faction.name">
+                    <option :value="faction.name" x-text="faction.name"></option>
+                </template>
+            </select>
+            <select x-model="days" @change="fetchActions()" class="px-4 py-2 bg-dark-300 border border-gray-700 rounded-lg focus:outline-none focus:border-primary">
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+            </select>
+            <button @click="fetchActions()" class="px-4 py-2 bg-primary hover:bg-primary/80 rounded-lg transition-colors">
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <div class="card rounded-xl p-6">
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="text-left text-gray-500 text-sm border-b border-gray-800">
+                        <th class="pb-3 font-medium">Time</th>
+                        <th class="pb-3 font-medium">Player</th>
+                        <th class="pb-3 font-medium">Type</th>
+                        <th class="pb-3 font-medium">Detail</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="action in actions" :key="action.id">
+                        <tr class="border-b border-gray-800/50 hover:bg-dark-100">
+                            <td class="py-3 text-sm text-gray-500" x-text="formatActionTime(action)"></td>
+                            <td class="py-3">
+                                <a :href="'/player/' + action.player_id" class="text-primary hover:underline" x-text="action.player_name || action.player_id"></a>
+                            </td>
+                            <td class="py-3">
+                                <span class="px-2 py-1 text-xs rounded-full bg-gray-500/20 text-gray-300" x-text="formatType(action.action_type)"></span>
+                            </td>
+                            <td class="py-3 text-sm text-gray-400 max-w-xs truncate" x-text="action.action_detail || '—'"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <div x-show="actions.length === 0" class="text-center py-8 text-gray-500">
+            No actions found for selected faction
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function factionActionsPage() {
+    return {
+        factions: [],
+        selectedFaction: '',
+        days: 7,
+        actions: [],
+        lastUpdate: '',
+
+        async init() {
+            await this.fetchFactions();
+            this.lastUpdate = new Date().toLocaleTimeString();
+        },
+
+        async fetchFactions() {
+            try {
+                const res = await fetch('/api/factions');
+                const data = await res.json();
+                this.factions = data.factions || [];
+            } catch (error) {
+                console.error('Error fetching factions:', error);
+            }
+        },
+
+        async fetchActions() {
+            if (!this.selectedFaction) {
+                this.actions = [];
+                return;
+            }
+            try {
+                const res = await fetch(`/api/faction-actions/${encodeURIComponent(this.selectedFaction)}?days=${this.days}`);
+                const data = await res.json();
+                this.actions = data.actions || [];
+                this.lastUpdate = new Date().toLocaleTimeString();
+            } catch (error) {
+                console.error('Error fetching faction actions:', error);
+            }
+        },
+
+        formatType(type) {
+            if (!type) return 'Unknown';
+            return type.replace(/_/g, ' ');
+        },
+
+        formatTimestamp(timestamp) {
+            if (!timestamp) return '';
+            const date = new Date(timestamp);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+                   `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+        },
+
+        formatRelative(timestamp) {
+            if (!timestamp) return '';
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = (now - date) / 1000;
+
+            if (diff < 60) return 'Just now';
+            if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+            if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+            return Math.floor(diff / 86400) + 'd ago';
+        },
+
+        formatActionTime(action) {
+            if (!action) return '';
+            if (action.timestamp_display && action.time_ago) {
+                return `${action.timestamp_display} • ${action.time_ago}`;
+            }
+            const abs = this.formatTimestamp(action.timestamp);
+            const rel = this.formatRelative(action.timestamp);
+            if (!abs) return rel;
+            return `${abs} • ${rel}`;
+        }
+    }
+}
+</script>
+{% endblock %}

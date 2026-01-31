@@ -86,10 +86,17 @@
         <!-- Sidebar -->
         <aside class="w-64 bg-dark-200 min-h-screen fixed left-0 top-0 border-r border-gray-800">
             <div class="p-6">
-                <h1 class="text-2xl font-bold gradient-bg bg-clip-text text-transparent">
-                    Pro4Kings
-                </h1>
-                <p class="text-gray-500 text-sm">Database Monitor</p>
+                <div class="flex items-center gap-3">
+                    {% if logo_url %}
+                    <img src="{{ logo_url }}" alt="Pro4Kings" class="w-10 h-10 rounded-lg object-cover">
+                    {% endif %}
+                    <div>
+                        <h1 class="text-2xl font-bold gradient-bg bg-clip-text text-transparent">
+                            Pro4Kings
+                        </h1>
+                        <p class="text-gray-500 text-sm">Database Monitor</p>
+                    </div>
+                </div>
             </div>
             
             <nav class="mt-6">
@@ -113,12 +120,47 @@
                     </svg>
                     Actions Log
                 </a>
+
+                <a href="/admin-history" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/admin-history' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m1-5a9 9 0 11-7 0 9 9 0 017 0z"></path>
+                    </svg>
+                    Admin History
+                </a>
+
+                <a href="/promotions" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/promotions' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4m6-2l2 2-4 4 4 4-2 2-6-6 6-6z"></path>
+                    </svg>
+                    Promotions
+                </a>
                 
                 <a href="/factions" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/faction' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
                     <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
                     </svg>
                     Factions
+                </a>
+
+                <a href="/faction-actions" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/faction-actions' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h10"></path>
+                    </svg>
+                    Faction Actions
+                </a>
+
+                <a href="/heists" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/heists' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 1.567-3 3.5S10.343 15 12 15s3-1.567 3-3.5S13.657 8 12 8zM5 20h14a2 2 0 002-2v-2a7 7 0 10-18 0v2a2 2 0 002 2z"></path>
+                    </svg>
+                    Heists
+                </a>
+
+                <a href="/sessions" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/sessions' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10m-13 9h16a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                    </svg>
+                    Sessions
                 </a>
                 
                 <a href="/bans" class="flex items-center px-6 py-3 text-gray-300 hover:bg-dark-100 hover:text-white transition-colors {% if '/bans' in request.path %}bg-dark-100 text-white border-r-2 border-primary{% endif %}">

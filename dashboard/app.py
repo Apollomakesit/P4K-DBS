@@ -18,6 +18,13 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, template_folder='templates', static_folder='static')
 CORS(app)
 
+@app.context_processor
+def inject_branding():
+    """Inject branding variables into templates."""
+    return {
+        "logo_url": os.getenv("DASHBOARD_LOGO_URL", "/static/logo.png")
+    }
+
 @app.after_request
 def add_no_cache_headers(response):
     """Disable caching for API responses to keep dashboard fresh."""
@@ -97,6 +104,46 @@ def _normalize_action(action: dict) -> dict:
 def index():
     """Main dashboard page"""
     return render_template('dashboard.html')
+
+@app.route('/players')
+def players_page():
+    return render_template('players.html')
+
+@app.route('/actions')
+def actions_page():
+    return render_template('actions.html')
+
+@app.route('/factions')
+def factions_page():
+    return render_template('factions.html')
+
+@app.route('/bans')
+def bans_page():
+    return render_template('bans.html')
+
+@app.route('/search')
+def search_page():
+    return render_template('search.html')
+
+@app.route('/admin-history')
+def admin_history_page():
+    return render_template('admin_history.html')
+
+@app.route('/promotions')
+def promotions_page():
+    return render_template('promotions.html')
+
+@app.route('/heists')
+def heists_page():
+    return render_template('heists.html')
+
+@app.route('/sessions')
+def sessions_page():
+    return render_template('sessions.html')
+
+@app.route('/faction-actions')
+def faction_actions_page():
+    return render_template('faction_actions.html')
 
 @app.route('/api/stats')
 def api_stats():
@@ -302,6 +349,13 @@ def api_player(player_id):
             LIMIT 20
         """, (player_id,))
         sessions = [dict(row) for row in cursor.fetchall()]
+        for session in sessions:
+            login_dt = _parse_timestamp(session.get("login_time"))
+            logout_dt = _parse_timestamp(session.get("logout_time"))
+            session["login_time_display"] = _format_timestamp(login_dt) if login_dt else ""
+            session["logout_time_display"] = _format_timestamp(logout_dt) if logout_dt else ""
+            session["login_time_ago"] = _time_ago(login_dt) if login_dt else ""
+            session["logout_time_ago"] = _time_ago(logout_dt) if logout_dt else ""
         
         conn.close()
         
@@ -491,6 +545,8 @@ def api_admin_actions():
     """Get recent admin actions (warnings, bans, jails)"""
     try:
         limit = min(int(request.args.get('limit', 50)), 200)
+        days = min(int(request.args.get('days', 30)), 365)
+        action_type = request.args.get('type', None)
         
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -498,19 +554,25 @@ def api_admin_actions():
         admin_types = ('warning_received', 'ban_received', 'admin_jail', 'admin_unjail', 
                        'admin_unban', 'mute_received', 'faction_kicked', 'kill_character')
         placeholders = ','.join('?' * len(admin_types))
-        
-        cursor.execute(f"""
-            SELECT * FROM actions 
-            WHERE action_type IN ({placeholders})
-            ORDER BY timestamp DESC
-            LIMIT ?
-        """, (*admin_types, limit))
-        
-        actions = [dict(row) for row in cursor.fetchall()]
+        cutoff = datetime.now() - timedelta(days=days)
+
+        query = f"SELECT * FROM actions WHERE action_type IN ({placeholders}) AND timestamp >= ?"
+        params = [*admin_types, cutoff]
+
+        if action_type:
+            query += " AND action_type = ?"
+            params.append(action_type)
+
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+
+        cursor.execute(query, params)
+        actions = [_normalize_action(dict(row)) for row in cursor.fetchall()]
         conn.close()
         
         return jsonify({
             'count': len(actions),
+            'days': days,
             'actions': actions
         })
     except Exception as e:
@@ -545,7 +607,7 @@ def api_promotions():
             LIMIT ?
         """, (cutoff, limit))
         
-        promotions = [dict(row) for row in cursor.fetchall()]
+        promotions = [_normalize_action(dict(row)) for row in cursor.fetchall()]
         conn.close()
         
         return jsonify({
@@ -587,6 +649,7 @@ def api_heists():
         """, (cutoff, limit))
         
         heists = [dict(row) for row in cursor.fetchall()]
+        heists = [_normalize_action(h) for h in heists]
         conn.close()
         
         return jsonify({
@@ -731,6 +794,10 @@ def api_sessions(player_id):
             'player_name': player_name,
             'first_login': first_login,
             'last_login': last_login,
+            'first_login_display': _format_timestamp(_parse_timestamp(first_login)) if first_login else None,
+            'last_login_display': _format_timestamp(_parse_timestamp(last_login)) if last_login else None,
+            'first_login_ago': _time_ago(_parse_timestamp(first_login)) if first_login else None,
+            'last_login_ago': _time_ago(_parse_timestamp(last_login)) if last_login else None,
             'total_logins': total_logins,
             'days': days,
             'session_count': len(sessions),
@@ -783,6 +850,7 @@ def api_faction_actions(faction_name):
         """, (*faction_player_ids, cutoff, limit))
         
         actions = [dict(row) for row in cursor.fetchall()]
+        actions = [_normalize_action(a) for a in actions]
         conn.close()
         
         return jsonify({
