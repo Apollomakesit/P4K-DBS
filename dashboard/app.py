@@ -108,7 +108,7 @@ def _normalize_action(action: dict) -> dict:
 @app.route('/')
 def index():
     """Main dashboard page"""
-    return render_template('dashboard.html')
+    return render_template('index.html')
 
 @app.route('/players')
 def players_page():
