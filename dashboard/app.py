@@ -425,19 +425,25 @@ def api_stats():
         cursor.execute("SELECT COUNT(*) FROM actions")
         total_actions = cursor.fetchone()[0]
         
-        # Currently online (from online_players table, last 5 min)
-        cutoff = datetime.now() - timedelta(minutes=5)
-        cursor.execute("SELECT COUNT(*) FROM online_players WHERE detected_online_at >= ?", (cutoff,))
+        # 🔥 FIXED: Currently online - just count all online_players entries
+        # The bot keeps this table up-to-date by removing stale entries
+        cursor.execute("SELECT COUNT(*) FROM online_players")
         online_now = cursor.fetchone()[0]
         
-        # Actions in last 24h
-        cutoff_24h = datetime.now() - timedelta(hours=24)
-        cursor.execute("SELECT COUNT(*) FROM actions WHERE timestamp >= ?", (cutoff_24h,))
+        # 🔥 FIXED: Actions in last 24h using relative comparison within the table
+        # This avoids timezone issues by comparing within the same timestamp domain
+        cursor.execute("""
+            SELECT COUNT(*) FROM actions 
+            WHERE timestamp >= datetime((SELECT MAX(timestamp) FROM actions), '-24 hours')
+        """)
         actions_24h = cursor.fetchone()[0]
         
-        # Logins today
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        cursor.execute("SELECT COUNT(*) FROM login_events WHERE event_type = 'login' AND timestamp >= ?", (today,))
+        # 🔥 FIXED: Logins today - compare with max login timestamp
+        cursor.execute("""
+            SELECT COUNT(*) FROM login_events 
+            WHERE event_type = 'login' 
+            AND date(timestamp) = date((SELECT MAX(timestamp) FROM login_events))
+        """)
         logins_today = cursor.fetchone()[0]
         
         # Active bans
@@ -448,11 +454,12 @@ def api_stats():
         cursor.execute("SELECT COUNT(DISTINCT faction) FROM player_profiles WHERE faction IS NOT NULL AND faction != ''")
         total_factions = cursor.fetchone()[0]
         
-        # Unique players in last 24h (from login_events)
+        # 🔥 FIXED: Unique players in last 24h using relative comparison
         cursor.execute("""
             SELECT COUNT(DISTINCT player_id) FROM login_events 
-            WHERE event_type = 'login' AND timestamp >= ?
-        """, (cutoff_24h,))
+            WHERE event_type = 'login' 
+            AND timestamp >= datetime((SELECT MAX(timestamp) FROM login_events), '-24 hours')
+        """)
         unique_24h = cursor.fetchone()[0]
         
         conn.close()
@@ -479,8 +486,9 @@ def api_online():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cutoff = datetime.now() - timedelta(minutes=5)
         
+        # 🔥 FIXED: Get ALL online players (bot keeps table up-to-date by removing stale entries)
+        # No need to filter by timestamp - the bot already handles cleanup
         cursor.execute("""
             SELECT 
                 o.player_id,
@@ -492,9 +500,8 @@ def api_online():
                 p.last_profile_update
             FROM online_players o
             LEFT JOIN player_profiles p ON o.player_id = p.player_id
-            WHERE o.detected_online_at >= ?
             ORDER BY o.detected_online_at DESC
-        """, (cutoff,))
+        """)
         
         players = [dict(row) for row in cursor.fetchall()]
         conn.close()
