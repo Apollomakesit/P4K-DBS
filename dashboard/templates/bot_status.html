@@ -26,26 +26,43 @@
     <!-- Connection Status Banner -->
     <div class="mb-6 p-4 rounded-xl"
          :class="{
-            'bg-green-600/20 border border-green-500': status.connected,
-            'bg-red-600/20 border border-red-500': !status.connected && !loading,
+            'bg-green-600/20 border border-green-500': status.bot_connected,
+            'bg-red-600/20 border border-red-500': !status.bot_connected && !loading,
             'bg-gray-700': loading
          }">
-        <div class="flex items-center">
-            <div class="w-4 h-4 rounded-full mr-3"
-                 :class="{
-                    'bg-green-500 animate-pulse': status.connected,
-                    'bg-red-500': !status.connected && !loading,
-                    'bg-gray-500': loading
-                 }"></div>
-            <span class="text-lg font-medium"
-                  :class="{
-                    'text-green-400': status.connected,
-                    'text-red-400': !status.connected && !loading,
-                    'text-gray-400': loading
-                  }"
-                  x-text="loading ? 'Connecting...' : (status.connected ? '✓ Bot Online & Connected' : '✗ Bot Offline or Unreachable')">
-            </span>
-            <span x-show="status.uptime" class="ml-auto text-gray-400">
+        <div class="flex items-center flex-wrap gap-4">
+            <div class="flex items-center">
+                <div class="w-4 h-4 rounded-full mr-3"
+                     :class="{
+                        'bg-green-500 animate-pulse': status.bot_connected,
+                        'bg-red-500': !status.bot_connected && !loading,
+                        'bg-gray-500': loading
+                     }"></div>
+                <span class="text-lg font-medium"
+                      :class="{
+                        'text-green-400': status.bot_connected,
+                        'text-red-400': !status.bot_connected && !loading,
+                        'text-gray-400': loading
+                      }"
+                      x-text="loading ? 'Connecting...' : (status.bot_connected ? '✓ Bot Online & Connected' : '✗ Bot Offline or Unreachable')">
+                </span>
+            </div>
+            <!-- Recent Activity Indicators -->
+            <div x-show="status.recent_activity && status.bot_connected" class="flex items-center gap-4 text-sm text-gray-300 ml-auto">
+                <span class="bg-gray-700 px-3 py-1 rounded-full">
+                    <i class="fas fa-bolt text-yellow-400 mr-1"></i>
+                    <span x-text="status.recent_activity?.actions_5min || 0"></span> actions (5m)
+                </span>
+                <span class="bg-gray-700 px-3 py-1 rounded-full">
+                    <i class="fas fa-sign-in-alt text-green-400 mr-1"></i>
+                    <span x-text="status.recent_activity?.logins_5min || 0"></span> logins (5m)
+                </span>
+                <span class="bg-gray-700 px-3 py-1 rounded-full">
+                    <i class="fas fa-users text-blue-400 mr-1"></i>
+                    <span x-text="status.recent_activity?.online_tracked || 0"></span> online
+                </span>
+            </div>
+            <span x-show="status.uptime" class="text-gray-400">
                 Uptime: <span x-text="status.uptime"></span>
             </span>
         </div>

@@ -112,6 +112,49 @@
             -webkit-overflow-scrolling: touch;
         }
         
+        /* 🔥 GLOBAL TABLE STYLING: Borders and centered text */
+        table {
+            border-collapse: separate;
+            border-spacing: 0;
+            width: 100%;
+        }
+        
+        table thead th {
+            text-align: center !important;
+            padding: 12px 16px;
+            border-bottom: 2px solid #374151;
+            font-weight: 600;
+            color: #9ca3af;
+            background: rgba(17, 17, 27, 0.5);
+        }
+        
+        table tbody td {
+            text-align: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(55, 65, 81, 0.5);
+            vertical-align: middle;
+        }
+        
+        table tbody tr:hover {
+            background: rgba(30, 30, 46, 0.8);
+        }
+        
+        table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        
+        /* Left-align specific columns that need it */
+        table td.text-left, table th.text-left {
+            text-align: left !important;
+        }
+        
+        /* Card styling improvements */
+        .card {
+            background: rgba(30, 30, 46, 0.8);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
         /* Mobile sidebar overlay */
         .sidebar-overlay {
             transition: opacity 0.3s ease;
@@ -172,8 +215,9 @@
             </svg>
         </button>
         
-        <!-- Sidebar -->
-        <aside class="sidebar-transition bg-dark-200 min-h-screen fixed left-0 top-0 border-r border-gray-800 z-40 overflow-y-auto scrollbar-thin"
+        <!-- Sidebar - FIXED: Now scrollable with visible scrollbar -->
+        <aside class="sidebar-transition bg-dark-200 h-screen fixed left-0 top-0 border-r border-gray-800 z-40 overflow-y-auto overflow-x-hidden scrollbar-thin"
+               style="max-height: 100vh;"
                :class="{
                    'w-64': !collapsed,
                    'w-16': collapsed,
@@ -202,7 +246,7 @@
                 </button>
             </div>
             
-            <nav class="mt-2 pb-24">
+            <nav class="mt-2 pb-32">
                 <!-- Main Section -->
                 <p x-show="!collapsed" class="px-6 py-1 text-xs text-gray-500 uppercase tracking-wider">Main</p>
                 

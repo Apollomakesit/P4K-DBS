@@ -126,7 +126,9 @@ def _normalize_action(action: dict) -> dict:
 
 # Configuration for auto-refresh
 PROFILE_REFRESH_ENABLED = SCRAPER_AVAILABLE and os.getenv("ENABLE_PROFILE_REFRESH", "true").lower() == "true"
-PROFILE_STALE_MINUTES = int(os.getenv("PROFILE_STALE_MINUTES", "30"))  # Refresh if profile older than 30 min
+# 🔥 CHANGED: Stale threshold increased - we now prioritize ONLINE players instead
+PROFILE_STALE_HOURS = int(os.getenv("PROFILE_STALE_HOURS", "24"))  # Only refresh if profile older than 24h
+PROFILE_STALE_MINUTES = PROFILE_STALE_HOURS * 60  # Convert to minutes for compatibility
 REFRESH_QUEUE = set()  # Thread-safe queue of player IDs to refresh
 REFRESH_LOCK = threading.Lock()
 REFRESH_IN_PROGRESS = set()  # Track IDs being refreshed to avoid duplicates
@@ -135,7 +137,7 @@ REFRESH_IN_PROGRESS = set()  # Track IDs being refreshed to avoid duplicates
 refresh_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="profile_refresh")
 
 def is_profile_stale(last_update) -> bool:
-    """Check if a profile is stale and needs refresh"""
+    """Check if a profile is stale and needs refresh (24h threshold by default)"""
     if not last_update:
         return True  # Never updated
     
@@ -145,7 +147,8 @@ def is_profile_stale(last_update) -> bool:
         except:
             return True
     
-    stale_threshold = datetime.now() - timedelta(minutes=PROFILE_STALE_MINUTES)
+    # 🔥 CHANGED: Using hours-based threshold (default 24h)
+    stale_threshold = datetime.now() - timedelta(hours=PROFILE_STALE_HOURS)
     return last_update < stale_threshold
 
 def queue_profile_refresh(player_id: str, priority: bool = False):
@@ -1673,7 +1676,7 @@ def api_compare_players():
 
 @app.route('/api/bot-status')
 def api_bot_status():
-    """Get bot health status (reads from shared state file if available)"""
+    """Get bot health status - detects connectivity from recent database activity"""
     try:
         import json
         import psutil
@@ -1686,14 +1689,42 @@ def api_bot_status():
             'last_check': datetime.now().isoformat()
         }
         
-        # Check if bot status file exists (bot writes this periodically)
+        # Get database stats first
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 🔥 FIXED: Detect bot connectivity from RECENT database activity
+        # Bot is connected if there are actions/logins in last 5 minutes
+        cutoff = datetime.now() - timedelta(minutes=5)
+        
+        # Check for recent actions (bot scrapes every 5s)
+        cursor.execute("SELECT COUNT(*) FROM actions WHERE timestamp >= ?", (cutoff,))
+        recent_actions = cursor.fetchone()[0]
+        
+        # Check for recent login events (bot tracks every 60s)
+        cursor.execute("SELECT COUNT(*) FROM login_events WHERE timestamp >= ?", (cutoff,))
+        recent_logins = cursor.fetchone()[0]
+        
+        # Check for recently detected online players
+        cursor.execute("SELECT COUNT(*) FROM online_players WHERE detected_online_at >= ?", (cutoff,))
+        recent_online = cursor.fetchone()[0]
+        
+        # Bot is connected if there's recent activity OR players are being tracked
+        status['bot_connected'] = (recent_actions > 0 or recent_logins > 0 or recent_online > 0)
+        status['recent_activity'] = {
+            'actions_5min': recent_actions,
+            'logins_5min': recent_logins,
+            'online_tracked': recent_online
+        }
+        
+        # Also check bot status file if available (secondary check)
         status_file = os.getenv('BOT_STATUS_FILE', '/data/bot_status.json')
         if os.path.exists(status_file):
             try:
                 with open(status_file, 'r') as f:
                     bot_status = json.load(f)
                     status.update(bot_status)
-                    status['bot_connected'] = True
+                    status['bot_connected'] = True  # File exists = definitely connected
             except:
                 pass
         
@@ -1704,10 +1735,6 @@ def api_bot_status():
             status['system_memory_percent'] = psutil.virtual_memory().percent
         except:
             pass
-        
-        # Get database stats
-        conn = get_db_connection()
-        cursor = conn.cursor()
         
         cursor.execute("SELECT COUNT(*) as count FROM player_profiles")
         status['total_players'] = cursor.fetchone()['count']
