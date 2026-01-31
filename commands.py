@@ -171,10 +171,18 @@ class ActionsPaginationView(discord.ui.View):
         self.previous_button.disabled = self.current_page == 0
         self.next_button.disabled = self.current_page >= self.total_pages - 1
 
+    def _format_player_ref(self, name: Optional[str], player_id: str) -> str:
+        """Format player reference as Name(ID) or just (ID) if name missing"""
+        if name and name.strip() and not name.startswith("Player_"):
+            return f"{name.strip()}({player_id})"
+        return f"({player_id})"
+
     def _format_action_display(
         self, action: dict, viewing_player_id: str
     ) -> Dict[str, str | List[str]]:
         """Format action for display with emojis and proper categorization.
+        
+        🔥 ENHANCED: Shows bidirectional actions with full Name(ID) format for all parties.
 
         Returns dict with 'emoji', 'type_label', 'detail_lines'
         """
@@ -184,97 +192,163 @@ class ActionsPaginationView(discord.ui.View):
         target_player_id = str(
             action.get("target_player_id", "") if action.get("target_player_id") else ""
         )
-        player_name = action.get("player_name", "Unknown")
+        player_name = action.get("player_name", "")
         target_player_name = action.get("target_player_name", "")
+        item_name = action.get("item_name", "")
+        item_quantity = action.get("item_quantity")
 
         # FALLBACK: If target_player_id is NULL, try to extract from action_detail
         if not target_player_id and detail:
             extracted_id, extracted_name = extract_target_from_detail(detail)
             if extracted_id:
                 target_player_id = extracted_id
-                target_player_name = extracted_name
+                target_player_name = extracted_name or target_player_name
+
+        # Format player references as Name(ID)
+        sender_ref = self._format_player_ref(player_name, player_id) if player_id else "Unknown"
+        receiver_ref = self._format_player_ref(target_player_name, target_player_id) if target_player_id else ""
 
         # Check if viewing player is sender or receiver
         is_sender = player_id == viewing_player_id
         is_receiver = target_player_id == viewing_player_id
 
-        # Handle item transfers (gave/received)
-        if ("ia dat lui" in detail.lower() or "a dat lui" in detail.lower()) and (
-            is_sender or is_receiver
+        # ============================================================================
+        # ITEM TRANSFERS (gave/received)
+        # ============================================================================
+        if action_type in ("item_given", "item_received") or (
+            "ia dat lui" in detail.lower() or "a dat lui" in detail.lower()
         ):
-            # Extract items from detail
-            match = re.search(
-                r"(?:ia|a)\s+dat\s+lui\s+.+?\(\d+\)\s+(.+)", detail, re.IGNORECASE
-            )
-            items = match.group(1).strip() if match else detail.split("lui")[-1].strip()
+            # Build items string
+            if item_name and item_quantity:
+                items_str = f"{item_quantity}x {item_name}"
+            elif item_name:
+                items_str = item_name
+            else:
+                # Extract items from detail as fallback
+                match = re.search(r":\s*(.+?)$", detail)
+                items_str = match.group(1).strip() if match else "items"
 
             if is_sender:
                 # Viewing player GAVE to target
                 return {
                     "emoji": "📤",
-                    "type_label": "GAVE",
+                    "type_label": "ITEM GIVEN",
                     "detail_lines": [
-                        f"To: {target_player_name} ({target_player_id})"
-                        if target_player_name
-                        else f"To: ID {target_player_id}",
-                        f"Items: {items}",
+                        f"{sender_ref} i-a dat lui {receiver_ref}: {items_str}",
                     ],
                 }
             elif is_receiver:
                 # Viewing player RECEIVED from sender
                 return {
                     "emoji": "📥",
-                    "type_label": "RECEIVED",
+                    "type_label": "ITEM RECEIVED",
                     "detail_lines": [
-                        f"From: {player_name} ({player_id})",
-                        f"Items: {items}",
+                        f"{sender_ref} i-a dat lui {receiver_ref}: {items_str}",
+                    ],
+                }
+            else:
+                # Neither sender nor receiver (shouldn't happen but fallback)
+                return {
+                    "emoji": "📦",
+                    "type_label": "ITEM TRANSFER",
+                    "detail_lines": [
+                        f"{sender_ref} i-a dat lui {receiver_ref}: {items_str}",
                     ],
                 }
 
-        # Handle chest deposits
-        if action_type == "chest_deposit" or "pus in chest" in detail:
+        # ============================================================================
+        # MONEY TRANSFERS
+        # ============================================================================
+        if action_type == "money_transfer" or "transferat" in detail.lower():
+            # Extract amount from detail
+            amount_match = re.search(r"([\d.,]+)\s*\$", detail)
+            amount = amount_match.group(1) if amount_match else "?"
+
+            if is_sender:
+                # Viewing player SENT money
+                return {
+                    "emoji": "💸",
+                    "type_label": "MONEY SENT",
+                    "detail_lines": [
+                        f"{sender_ref} i-a transferat {amount}$ lui {receiver_ref}",
+                    ],
+                }
+            elif is_receiver:
+                # Viewing player RECEIVED money
+                return {
+                    "emoji": "💰",
+                    "type_label": "MONEY RECEIVED",
+                    "detail_lines": [
+                        f"{sender_ref} i-a transferat {amount}$ lui {receiver_ref}",
+                    ],
+                }
+            else:
+                return {
+                    "emoji": "💸",
+                    "type_label": "MONEY TRANSFER",
+                    "detail_lines": [
+                        f"{sender_ref} i-a transferat {amount}$ lui {receiver_ref}",
+                    ],
+                }
+
+        # ============================================================================
+        # MONEY DEPOSIT/WITHDRAW
+        # ============================================================================
+        if action_type == "money_deposit" or "depozitat" in detail.lower():
+            return {
+                "emoji": "🏦",
+                "type_label": "MONEY DEPOSIT",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        if action_type == "money_withdraw" or "retras suma" in detail.lower():
+            return {
+                "emoji": "🏧",
+                "type_label": "MONEY WITHDRAW",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        # ============================================================================
+        # CHEST DEPOSITS/WITHDRAWALS
+        # ============================================================================
+        if action_type == "chest_deposit" or "pus in chest" in detail.lower():
             return {
                 "emoji": "📦",
                 "type_label": "CHEST DEPOSIT",
-                "detail_lines": [f"Detail: {detail}"],
+                "detail_lines": [f"{sender_ref}: {detail}"],
             }
 
-        # Handle chest withdrawals
-        if (
-            action_type == "chest_withdraw"
-            or "retras din chest" in detail
-            or "scos din chest" in detail
-        ):
+        if action_type == "chest_withdraw" or "retras din chest" in detail.lower():
             return {
                 "emoji": "📂",
                 "type_label": "CHEST WITHDRAW",
-                "detail_lines": [f"Detail: {detail}"],
+                "detail_lines": [f"{sender_ref}: {detail}"],
             }
 
-        # 🔥 NEW: Handle contract/vehicle transfer actions
-        if action_type == "contract" or "contract" in detail.lower():
-            item_name = action.get("item_name", "Vehicle")
-            is_sender = player_id == viewing_player_id
-            is_receiver = target_player_id == viewing_player_id
+        # ============================================================================
+        # CONTRACTS / VEHICLE TRANSFERS
+        # ============================================================================
+        if action_type in ("contract", "vehicle_contract") or "contract" in detail.lower():
+            vehicle = item_name or "Vehicle"
 
             if is_sender:
+                # Viewing player GAVE vehicle
                 return {
                     "emoji": "📝",
                     "type_label": "CONTRACT GIVEN",
                     "detail_lines": [
-                        f"**Vehicle:** {item_name}",
-                        f"**To:** {target_player_name} ({target_player_id})"
-                        if target_player_name
-                        else f"**To:** ID {target_player_id}",
+                        f"{sender_ref} → {receiver_ref}",
+                        f"Vehicle: {vehicle}",
                     ],
                 }
             elif is_receiver:
+                # Viewing player RECEIVED vehicle
                 return {
                     "emoji": "📝",
                     "type_label": "CONTRACT RECEIVED",
                     "detail_lines": [
-                        f"**Vehicle:** {item_name}",
-                        f"**From:** {player_name} ({player_id})",
+                        f"{sender_ref} → {receiver_ref}",
+                        f"Vehicle: {vehicle}",
                     ],
                 }
             else:
@@ -282,39 +356,202 @@ class ActionsPaginationView(discord.ui.View):
                     "emoji": "📝",
                     "type_label": "CONTRACT",
                     "detail_lines": [
-                        f"**Vehicle:** {item_name}",
-                        f"**From:** {player_name} ({player_id})",
-                        f"**To:** {target_player_name} ({target_player_id})"
-                        if target_player_name
-                        else "",
+                        f"{sender_ref} → {receiver_ref}",
+                        f"Vehicle: {vehicle}",
                     ],
                 }
 
-        # Handle warnings
+        # ============================================================================
+        # TRADES
+        # ============================================================================
+        if action_type == "trade" or "trade" in detail.lower():
+            if is_sender or is_receiver:
+                return {
+                    "emoji": "🤝",
+                    "type_label": "TRADE",
+                    "detail_lines": [
+                        f"{sender_ref} ↔ {receiver_ref}",
+                        f"Detail: {detail}",
+                    ],
+                }
+            return {
+                "emoji": "🤝",
+                "type_label": "TRADE",
+                "detail_lines": [f"Detail: {detail}"],
+            }
+
+        # ============================================================================
+        # ADMIN ACTIONS (warnings, bans, jails)
+        # ============================================================================
         if action_type == "warning_received" or "avertisment" in detail.lower():
+            admin_ref = self._format_player_ref(action.get("admin_name"), action.get("admin_id", "")) if action.get("admin_id") else "Admin"
+            reason = action.get("reason", "")
             return {
                 "emoji": "⚠️",
                 "type_label": "WARNING",
-                "detail_lines": [f"Detail: {detail}"],
+                "detail_lines": [
+                    f"{sender_ref} a primit avertisment de la {admin_ref}",
+                    f"Motiv: {reason}" if reason else "",
+                ],
             }
 
-        # Handle vehicle actions
-        if (
-            action_type in ("vehicle_bought", "vehicle_sold")
-            or "cumparat" in detail
-            or "vandut" in detail
-        ):
-            emoji = "🚗" if "cumparat" in detail else "💰"
+        if action_type == "ban_received":
+            admin_ref = self._format_player_ref(action.get("admin_name"), action.get("admin_id", "")) if action.get("admin_id") else "Admin"
+            reason = action.get("reason", "")
             return {
-                "emoji": emoji,
-                "type_label": "VEHICLE",
-                "detail_lines": [f"Detail: {detail}"],
+                "emoji": "🔨",
+                "type_label": "BAN",
+                "detail_lines": [
+                    f"{sender_ref} a fost banat de {admin_ref}",
+                    f"Motiv: {reason}" if reason else "",
+                ],
             }
 
-        # Default for other actions
+        if action_type == "admin_jail":
+            admin_ref = self._format_player_ref(action.get("admin_name"), action.get("admin_id", "")) if action.get("admin_id") else "Admin"
+            return {
+                "emoji": "🔒",
+                "type_label": "ADMIN JAIL",
+                "detail_lines": [f"{sender_ref} - {detail}"],
+            }
+
+        if action_type == "admin_unjail":
+            admin_ref = self._format_player_ref(action.get("admin_name"), action.get("admin_id", "")) if action.get("admin_id") else "Admin"
+            return {
+                "emoji": "🔓",
+                "type_label": "UNJAIL",
+                "detail_lines": [f"{sender_ref} - {detail}"],
+            }
+
+        if action_type == "admin_unban":
+            return {
+                "emoji": "✅",
+                "type_label": "UNBAN",
+                "detail_lines": [f"{sender_ref} - {detail}"],
+            }
+
+        if action_type == "kill_character":
+            return {
+                "emoji": "💀",
+                "type_label": "KILL CHARACTER",
+                "detail_lines": [f"{sender_ref} - {detail}"],
+            }
+
+        # ============================================================================
+        # VEHICLE ACTIONS (buy/sell)
+        # ============================================================================
+        if action_type == "vehicle_bought" or "cumparat" in detail.lower():
+            return {
+                "emoji": "🚗",
+                "type_label": "VEHICLE BOUGHT",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        if action_type == "vehicle_sold" or "vandut" in detail.lower():
+            return {
+                "emoji": "💰",
+                "type_label": "VEHICLE SOLD",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        if action_type == "vehicle_scrapped":
+            return {
+                "emoji": "🗑️",
+                "type_label": "VEHICLE SCRAPPED",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        # ============================================================================
+        # PROPERTY ACTIONS
+        # ============================================================================
+        if action_type == "property_bought":
+            return {
+                "emoji": "🏠",
+                "type_label": "PROPERTY BOUGHT",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        if action_type == "property_sold":
+            return {
+                "emoji": "🏠",
+                "type_label": "PROPERTY SOLD",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        # ============================================================================
+        # OTHER SPECIFIC ACTIONS
+        # ============================================================================
+        if action_type == "gambling_win":
+            return {
+                "emoji": "🎰",
+                "type_label": "GAMBLING WIN",
+                "detail_lines": [f"{sender_ref} vs {receiver_ref}: {detail}" if receiver_ref else f"{sender_ref}: {detail}"],
+            }
+
+        if action_type == "bank_heist_delivery":
+            return {
+                "emoji": "💵",
+                "type_label": "BANK HEIST",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        if action_type == "license_plate_sale":
+            return {
+                "emoji": "🔢",
+                "type_label": "LICENSE PLATE SALE",
+                "detail_lines": [f"{sender_ref} → {receiver_ref}: {detail}" if receiver_ref else f"{sender_ref}: {detail}"],
+            }
+
+        if action_type == "house_safe_withdraw":
+            return {
+                "emoji": "🏠",
+                "type_label": "SAFE WITHDRAW",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        if action_type == "house_safe_deposit":
+            return {
+                "emoji": "🏠",
+                "type_label": "SAFE DEPOSIT",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        if action_type == "item_sold":
+            return {
+                "emoji": "🛒",
+                "type_label": "ITEM SOLD",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        if action_type == "faction_kicked":
+            return {
+                "emoji": "👢",
+                "type_label": "FACTION KICKED",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        if action_type == "mute_received":
+            return {
+                "emoji": "🔇",
+                "type_label": "MUTE",
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+
+        # ============================================================================
+        # DEFAULT FALLBACK
+        # ============================================================================
+        # For unknown/other action types, still try to show player info
+        type_label = action_type.upper().replace("_", " ") if action_type else "ACTION"
+        if player_id:
+            return {
+                "emoji": "📋",
+                "type_label": type_label,
+                "detail_lines": [f"{sender_ref}: {detail}"],
+            }
+        
         return {
             "emoji": "📋",
-            "type_label": action_type.upper().replace("_", " "),
+            "type_label": type_label,
             "detail_lines": [f"Detail: {detail}"],
         }
 
