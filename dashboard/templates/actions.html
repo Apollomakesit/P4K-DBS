@@ -51,20 +51,25 @@
                     <template x-for="action in actions" :key="action.id">
                         <tr class="border-b border-gray-800/50 hover:bg-dark-100">
                             <td class="py-3">
-                                <a :href="'/player/' + action.player_id" class="text-primary hover:underline" x-text="action.player_name || 'Unknown'"></a>
-                                <p class="text-xs text-gray-500" x-text="'ID: ' + action.player_id"></p>
+                                <a :href="'/player/' + action.player_id" class="text-primary hover:underline font-medium" 
+                                   x-text="(action.player_name || 'Unknown') + ' (' + action.player_id + ')'"></a>
                             </td>
                             <td class="py-3">
                                 <span class="px-2 py-1 text-xs rounded-full"
                                       :class="getTypeClass(action.action_type)"
                                       x-text="action.action_type.replace(/_/g, ' ')"></span>
                             </td>
-                            <td class="py-3 text-sm text-gray-400 max-w-xs truncate" x-text="action.action_detail"></td>
+                            <td class="py-3 text-sm text-gray-400 max-w-md" x-html="parseActionDetail(action.action_detail)"></td>
                             <td class="py-3">
                                 <template x-if="action.target_player_id">
-                                    <a :href="'/player/' + action.target_player_id" class="text-primary hover:underline" x-text="action.target_player_name || action.target_player_id"></a>
+                                    <a :href="'/player/' + action.target_player_id" class="text-blue-400 hover:underline font-medium" 
+                                       x-text="(action.target_player_name || 'Player') + ' (' + action.target_player_id + ')'"></a>
                                 </template>
-                                <span x-show="!action.target_player_id" class="text-gray-600">-</span>
+                                <template x-if="action.admin_id && !action.target_player_id">
+                                    <a :href="'/player/' + action.admin_id" class="text-orange-400 hover:underline font-medium" 
+                                       x-text="(action.admin_name || 'Admin') + ' (' + action.admin_id + ')'"></a>
+                                </template>
+                                <span x-show="!action.target_player_id && !action.admin_id" class="text-gray-600">-</span>
                             </td>
                             <td class="py-3 text-sm text-gray-500" x-text="formatActionTime(action)"></td>
                         </tr>
@@ -166,6 +171,33 @@ function actionsPage() {
             if (type.includes('ban') || type.includes('jail') || type.includes('kick')) return 'bg-red-500/20 text-red-400';
             if (type.includes('heist')) return 'bg-purple-500/20 text-purple-400';
             return 'bg-gray-500/20 text-gray-400';
+        },
+        
+        // Parse action detail to make player names clickable
+        parseActionDetail(detail) {
+            if (!detail) return '';
+            
+            // Escape HTML first to prevent XSS
+            let escaped = detail
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+            
+            // Pattern to match "Name (ID)" or "Name(ID)" where ID is numeric
+            const playerPattern = /([A-Za-z0-9_\-\s!@#$%^&*\.]+?)\s*\((\d{1,7})\)/g;
+            
+            // Replace matches with clickable links
+            const parsed = escaped.replace(playerPattern, (match, name, id) => {
+                const cleanName = name.trim();
+                // Don't linkify if name is too short or is just a number
+                if (!cleanName || cleanName.length < 1 || /^\d+$/.test(cleanName)) {
+                    return match;
+                }
+                return `<a href="/player/${id}" class="text-primary hover:underline font-medium">${cleanName} (${id})</a>`;
+            });
+            
+            return parsed;
         },
 
         formatTimestamp(timestamp) {

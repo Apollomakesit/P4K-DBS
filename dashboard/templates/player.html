@@ -115,6 +115,7 @@
                     <thead>
                         <tr class="text-left text-gray-500 text-sm border-b border-gray-800">
                             <th class="pb-3 font-medium">Type</th>
+                            <th class="pb-3 font-medium">Players</th>
                             <th class="pb-3 font-medium">Detail</th>
                             <th class="pb-3 font-medium">Time</th>
                         </tr>
@@ -123,10 +124,42 @@
                         <template x-for="action in player.recent_actions" :key="action.id">
                             <tr class="border-b border-gray-800/50 hover:bg-dark-100">
                                 <td class="py-3">
-                                    <span class="px-2 py-1 text-xs rounded-full bg-gray-500/20" x-text="action.action_type.replace(/_/g, ' ')"></span>
+                                    <span class="px-2 py-1 text-xs rounded-full" 
+                                          :class="getActionTypeClass(action.action_type)"
+                                          x-text="action.action_type.replace(/_/g, ' ')"></span>
                                 </td>
-                                <td class="py-3 text-sm text-gray-400" x-text="action.action_detail"></td>
-                                <td class="py-3 text-sm text-gray-500" x-text="action.time_ago"></td>
+                                <td class="py-3">
+                                    <!-- Source Player -->
+                                    <template x-if="action.player_id">
+                                        <div class="mb-1">
+                                            <a :href="'/player/' + action.player_id" 
+                                               class="text-primary hover:underline font-medium"
+                                               x-text="(action.player_name || 'Player') + ' (' + action.player_id + ')'"></a>
+                                        </div>
+                                    </template>
+                                    <!-- Target Player (if exists) -->
+                                    <template x-if="action.target_player_id">
+                                        <div class="text-sm">
+                                            <span class="text-gray-500">→</span>
+                                            <a :href="'/player/' + action.target_player_id" 
+                                               class="text-blue-400 hover:underline ml-1"
+                                               x-text="(action.target_player_name || 'Player') + ' (' + action.target_player_id + ')'"></a>
+                                        </div>
+                                    </template>
+                                    <!-- Admin (if exists) -->
+                                    <template x-if="action.admin_id && !action.target_player_id">
+                                        <div class="text-sm">
+                                            <span class="text-gray-500">by Admin:</span>
+                                            <a :href="'/player/' + action.admin_id" 
+                                               class="text-orange-400 hover:underline ml-1"
+                                               x-text="(action.admin_name || 'Admin') + ' (' + action.admin_id + ')'"></a>
+                                        </div>
+                                    </template>
+                                </td>
+                                <td class="py-3 text-sm text-gray-400 max-w-md">
+                                    <span x-html="parseActionDetail(action.action_detail)"></span>
+                                </td>
+                                <td class="py-3 text-sm text-gray-500 whitespace-nowrap" x-text="action.time_ago"></td>
                             </tr>
                         </template>
                     </tbody>
@@ -191,6 +224,57 @@ function playerPage() {
             
             // Dispatch custom event for other components
             window.dispatchEvent(new CustomEvent('favoritesUpdated', { detail: { favorites } }));
+        },
+        
+        // Get CSS class for action type badges
+        getActionTypeClass(type) {
+            const classes = {
+                'item_given': 'bg-blue-500/20 text-blue-400',
+                'item_received': 'bg-green-500/20 text-green-400',
+                'money_transfer': 'bg-yellow-500/20 text-yellow-400',
+                'money_deposit': 'bg-emerald-500/20 text-emerald-400',
+                'money_withdraw': 'bg-orange-500/20 text-orange-400',
+                'chest_deposit': 'bg-purple-500/20 text-purple-400',
+                'chest_withdraw': 'bg-violet-500/20 text-violet-400',
+                'vehicle_contract': 'bg-cyan-500/20 text-cyan-400',
+                'bank_heist_delivery': 'bg-amber-500/20 text-amber-400',
+                'warning_received': 'bg-red-500/20 text-red-400',
+                'ban_received': 'bg-red-600/20 text-red-500',
+                'admin_jail': 'bg-red-500/20 text-red-400',
+                'admin_unjail': 'bg-green-500/20 text-green-400',
+                'mute_received': 'bg-gray-500/20 text-gray-400',
+                'trade': 'bg-indigo-500/20 text-indigo-400',
+            };
+            return classes[type] || 'bg-gray-500/20 text-gray-400';
+        },
+        
+        // Parse action detail to make player names clickable
+        parseActionDetail(detail) {
+            if (!detail) return '';
+            
+            // Escape HTML first to prevent XSS
+            let escaped = detail
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+            
+            // Pattern to match "Name (ID)" or "Name(ID)" where ID is numeric
+            // This handles various formats: "Player Name (12345)", "PlayerName(12345)", etc.
+            const playerPattern = /([A-Za-z0-9_\-\s!@#$%^&*\.]+?)\s*\((\d{1,7})\)/g;
+            
+            // Replace matches with clickable links
+            const parsed = escaped.replace(playerPattern, (match, name, id) => {
+                // Trim the name
+                const cleanName = name.trim();
+                // Don't linkify if name looks like a number or is too short
+                if (!cleanName || cleanName.length < 1 || /^\d+$/.test(cleanName)) {
+                    return match;
+                }
+                return `<a href="/player/${id}" class="text-primary hover:underline font-medium">${cleanName} (${id})</a>`;
+            });
+            
+            return parsed;
         }
     }
 }
