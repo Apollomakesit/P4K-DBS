@@ -48,6 +48,7 @@ RUN chmod +x entrypoint.sh
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     DATABASE_PATH=/data/pro4kings.db \
+    DASHBOARD_URL=https://p4k-dbs-production.up.railway.app/ \
     PYTHONDONTWRITEBYTECODE=1
 
 # Healthcheck for Railway (optional but recommended)
