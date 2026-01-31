@@ -26,10 +26,10 @@
     
     <!-- Factions Grid -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <template x-for="faction in filteredFactions" :key="faction.faction_name">
-            <a :href="'/faction/' + encodeURIComponent(faction.faction_name)" class="card rounded-xl p-6 hover:border-primary/50 transition-colors">
+        <template x-for="faction in filteredFactions" :key="faction.name">
+            <a :href="'/faction/' + encodeURIComponent(faction.name)" class="card rounded-xl p-6 hover:border-primary/50 transition-colors">
                 <div class="flex items-start justify-between">
-                    <h3 class="text-lg font-semibold" x-text="faction.faction_name"></h3>
+                    <h3 class="text-lg font-semibold" x-text="faction.name"></h3>
                     <span class="flex items-center text-sm text-green-400" x-show="faction.online_count > 0">
                         <span class="w-2 h-2 bg-green-500 rounded-full mr-2 pulse-dot"></span>
                         <span x-text="faction.online_count"></span>
@@ -92,7 +92,7 @@ function factionsPage() {
             } else {
                 const searchLower = this.search.toLowerCase();
                 this.filteredFactions = this.factions.filter(f => 
-                    f.faction_name.toLowerCase().includes(searchLower)
+                    f.name.toLowerCase().includes(searchLower)
                 );
             }
             
