@@ -924,7 +924,9 @@ def api_faction(faction_name):
 def api_bans():
     """Get banned players"""
     try:
-        include_expired = request.args.get('expired', 'false').lower() == 'true'
+        # Support both 'expired' and 'include_expired' param names
+        include_expired = request.args.get('include_expired', '') or request.args.get('expired', 'false')
+        include_expired = include_expired.lower() == 'true'
         
         conn = get_db_connection()
         cursor = conn.cursor()
