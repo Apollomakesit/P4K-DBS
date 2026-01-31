@@ -1523,6 +1523,99 @@ class Database:
 
         return await asyncio.to_thread(_get_promotions_sync)
 
+    async def get_all_heists(self, days: int = 30) -> List[Dict]:
+        """🆕 Get all bank heist deliveries with player faction info"""
+
+        def _get_heists_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(days=days)
+
+                cursor.execute(
+                    """
+                    SELECT 
+                        a.player_id,
+                        a.player_name,
+                        a.action_type,
+                        a.action_detail,
+                        a.timestamp,
+                        p.faction,
+                        p.faction_rank
+                    FROM actions a
+                    LEFT JOIN player_profiles p ON a.player_id = p.player_id
+                    WHERE a.action_type = 'bank_heist_delivery'
+                    AND a.timestamp >= ?
+                    ORDER BY a.timestamp DESC
+                """,
+                    (cutoff,),
+                )
+
+                return [dict(row) for row in cursor.fetchall()]
+
+        return await asyncio.to_thread(_get_heists_sync)
+
+    async def get_faction_actions(self, faction_name: str, days: int = 7) -> List[Dict]:
+        """🆕 Get all actions for players in a specific faction"""
+
+        def _get_faction_actions_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = datetime.now() - timedelta(days=days)
+
+                # First get all player IDs in this faction
+                cursor.execute(
+                    """
+                    SELECT player_id FROM player_profiles WHERE faction = ?
+                """,
+                    (faction_name,),
+                )
+                faction_player_ids = [row[0] for row in cursor.fetchall()]
+
+                if not faction_player_ids:
+                    return []
+
+                # Get all actions for these players
+                placeholders = ",".join("?" * len(faction_player_ids))
+                cursor.execute(
+                    f"""
+                    SELECT 
+                        a.*,
+                        p.faction,
+                        p.faction_rank
+                    FROM actions a
+                    LEFT JOIN player_profiles p ON a.player_id = p.player_id
+                    WHERE a.player_id IN ({placeholders})
+                    AND a.timestamp >= ?
+                    ORDER BY a.timestamp DESC
+                    LIMIT 500
+                """,
+                    (*faction_player_ids, cutoff),
+                )
+
+                return [dict(row) for row in cursor.fetchall()]
+
+        return await asyncio.to_thread(_get_faction_actions_sync)
+
+    async def get_all_faction_names(self) -> List[str]:
+        """🆕 Get list of all distinct faction names for autocomplete"""
+
+        def _get_faction_names_sync():
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT DISTINCT faction 
+                    FROM player_profiles 
+                    WHERE faction IS NOT NULL 
+                    AND faction != '' 
+                    AND faction NOT IN ('Civil', 'Fără', 'None', '-', 'N/A')
+                    ORDER BY faction ASC
+                """
+                )
+                return [row[0] for row in cursor.fetchall()]
+
+        return await asyncio.to_thread(_get_faction_names_sync)
+
     async def get_player_stats(self, identifier: str) -> Optional[Dict]:
         """🆕 Get player stats by ID or name - unified method for commands"""
 

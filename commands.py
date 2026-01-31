@@ -1262,6 +1262,409 @@ class BansPaginationView(discord.ui.View):
             pass
 
 
+class SessionsPaginationView(discord.ui.View):
+    """🆕 Pagination view for player gaming sessions"""
+
+    def __init__(
+        self,
+        sessions: List[dict],
+        player_info: dict,
+        first_last: dict,
+        days: int,
+        author_id: int,
+        total_hours: float,
+        items_per_page: int = 10,
+    ):
+        super().__init__(timeout=180)
+        self.sessions = sessions
+        self.player_info = player_info
+        self.first_last = first_last
+        self.days = days
+        self.author_id = author_id
+        self.total_hours = total_hours
+        self.items_per_page = items_per_page
+        self.current_page = 0
+        self.total_pages = (
+            (len(self.sessions) + items_per_page - 1) // items_per_page
+            if self.sessions
+            else 1
+        )
+        self.message: Optional[discord.Message] = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page >= self.total_pages - 1
+
+    def _format_duration(self, seconds: int) -> str:
+        """Format duration in seconds to human readable"""
+        if not seconds or seconds <= 0:
+            return "N/A"
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        minutes = int(seconds // 60)
+        hours = minutes // 60
+        minutes = minutes % 60
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        return f"{minutes}m"
+
+    def build_embed(self) -> discord.Embed:
+        """Build embed for current page"""
+        start_idx = self.current_page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, len(self.sessions))
+        page_sessions = self.sessions[start_idx:end_idx]
+
+        embed = discord.Embed(
+            title=f"📊 Sessions for {self.player_info['username']}",
+            description=f"Last {self.days} days • {len(self.sessions)} session(s) • {self.total_hours:.1f}h total",
+            color=discord.Color.blue(),
+            timestamp=datetime.now(),
+        )
+
+        # Show first detected login info on first page only
+        if self.current_page == 0:
+            first_login = self.first_last.get("first_login")
+            total_logins = self.first_last.get("total_sessions", 0)
+            
+            if first_login:
+                if isinstance(first_login, str):
+                    first_login = datetime.fromisoformat(first_login)
+                first_login_str = first_login.strftime("%Y-%m-%d %H:%M") if first_login else "Never"
+            else:
+                first_login_str = "Never (no logins recorded)"
+            
+            embed.add_field(
+                name="📅 First Detected Login",
+                value=f"**{first_login_str}**\nTotal logins: {total_logins:,}",
+                inline=False,
+            )
+
+        # Session number offset (for display: "Session 50", "Session 49", etc.)
+        total_sessions = len(self.sessions)
+
+        for i, session in enumerate(page_sessions):
+            session_num = total_sessions - (start_idx + i)
+            
+            login_time = session.get("login_time")
+            logout_time = session.get("logout_time")
+            duration = session.get("session_duration_seconds", 0)
+
+            if isinstance(login_time, str):
+                login_time = datetime.fromisoformat(login_time)
+            if isinstance(logout_time, str):
+                logout_time = datetime.fromisoformat(logout_time)
+
+            login_str = login_time.strftime("%Y-%m-%d %H:%M") if login_time else "Unknown"
+            logout_str = logout_time.strftime("%H:%M") if logout_time else "Still online"
+            duration_str = self._format_duration(duration)
+
+            embed.add_field(
+                name=f"🎮 Session {session_num}",
+                value=f"🔵 Login: {login_str}\n🔴 Logout: {logout_str}\n⏱️ Duration: {duration_str}",
+                inline=True,
+            )
+
+        embed.set_footer(
+            text=f"Page {self.current_page + 1}/{self.total_pages} • Use buttons to navigate"
+        )
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the person who ran this command can use these buttons!",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.primary)
+    async def previous_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.primary)
+    async def next_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        self.current_page = min(self.total_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
+class HeistsPaginationView(discord.ui.View):
+    """🆕 Pagination view for bank heists history"""
+
+    def __init__(
+        self,
+        heists: List[dict],
+        author_id: int,
+        days: int,
+        items_per_page: int = 10,
+    ):
+        super().__init__(timeout=180)
+        self.heists = heists
+        self.author_id = author_id
+        self.days = days
+        self.items_per_page = items_per_page
+        self.current_page = 0
+        self.total_pages = (
+            (len(self.heists) + items_per_page - 1) // items_per_page
+            if self.heists
+            else 1
+        )
+        self.message: Optional[discord.Message] = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page >= self.total_pages - 1
+
+    def build_embed(self) -> discord.Embed:
+        """Build embed for current page"""
+        start_idx = self.current_page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, len(self.heists))
+        page_heists = self.heists[start_idx:end_idx]
+
+        embed = discord.Embed(
+            title="🏦 Bank Heists History",
+            description=f"**Total:** {len(self.heists)} heist(s) in last {self.days} days",
+            color=discord.Color.gold(),
+            timestamp=datetime.now(),
+        )
+
+        for heist in page_heists:
+            player_name = heist.get("player_name") or f"ID:{heist.get('player_id', '?')}"
+            player_id = heist.get("player_id", "?")
+            faction = heist.get("faction") or "No Faction"
+            faction_rank = heist.get("faction_rank") or "Unknown"
+            action_detail = heist.get("action_detail", "")
+            timestamp = heist.get("timestamp")
+
+            if isinstance(timestamp, str):
+                try:
+                    timestamp = datetime.fromisoformat(timestamp)
+                except:
+                    timestamp = None
+            time_str = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else "?"
+
+            # Extract bank name and amount from action_detail
+            # Format: "Livrat bani de la BankName: Amount$"
+            bank_name = "Unknown Bank"
+            loot = "Unknown"
+            if action_detail:
+                # Try to extract bank name
+                import re
+                bank_match = re.search(r"de la (.+?):", action_detail)
+                if bank_match:
+                    bank_name = bank_match.group(1).strip()
+                
+                # Try to extract amount
+                amount_match = re.search(r":\s*([\d.,]+)", action_detail)
+                if amount_match:
+                    loot = f"{amount_match.group(1)} bani murdari"
+                else:
+                    loot = action_detail.split(":")[-1].strip() if ":" in action_detail else action_detail
+
+            embed.add_field(
+                name=f"💰 {time_str}",
+                value=(
+                    f"**Player:** {player_name} ({player_id})\n"
+                    f"**Faction:** {faction} • **Rank:** {faction_rank}\n"
+                    f"**Bank:** {bank_name}\n"
+                    f"**Loot:** {loot}"
+                ),
+                inline=False,
+            )
+
+        embed.set_footer(
+            text=f"Page {self.current_page + 1}/{self.total_pages} • Use buttons to navigate"
+        )
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the person who ran this command can use these buttons!",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.primary)
+    async def previous_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.primary)
+    async def next_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        self.current_page = min(self.total_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
+class FactionActionsPaginationView(discord.ui.View):
+    """🆕 Pagination view for faction member actions"""
+
+    def __init__(
+        self,
+        actions: List[dict],
+        faction_name: str,
+        author_id: int,
+        days: int,
+        items_per_page: int = 10,
+    ):
+        super().__init__(timeout=180)
+        self.actions = actions
+        self.faction_name = faction_name
+        self.author_id = author_id
+        self.days = days
+        self.items_per_page = items_per_page
+        self.current_page = 0
+        self.total_pages = (
+            (len(self.actions) + items_per_page - 1) // items_per_page
+            if self.actions
+            else 1
+        )
+        self.message: Optional[discord.Message] = None
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page >= self.total_pages - 1
+
+    def build_embed(self) -> discord.Embed:
+        """Build embed for current page"""
+        start_idx = self.current_page * self.items_per_page
+        end_idx = min(start_idx + self.items_per_page, len(self.actions))
+        page_actions = self.actions[start_idx:end_idx]
+
+        embed = discord.Embed(
+            title=f"📋 Actions for {self.faction_name}",
+            description=f"**Total:** {len(self.actions):,} action(s) in last {self.days} days",
+            color=discord.Color.purple(),
+            timestamp=datetime.now(),
+        )
+
+        # Emoji map for action types
+        type_emojis = {
+            "item_given": "📤",
+            "item_received": "📥",
+            "money_transfer": "💸",
+            "money_deposit": "🏦",
+            "money_withdraw": "🏧",
+            "chest_deposit": "📦",
+            "chest_withdraw": "📂",
+            "vehicle_contract": "📝",
+            "bank_heist_delivery": "💰",
+            "warning_received": "⚠️",
+            "ban_received": "🔨",
+            "trade": "🤝",
+        }
+
+        for action in page_actions:
+            action_type = action.get("action_type", "unknown")
+            emoji = type_emojis.get(action_type, "📋")
+            player_name = action.get("player_name") or f"ID:{action.get('player_id', '?')}"
+            player_id = action.get("player_id", "?")
+            action_detail = action.get("action_detail", "No details")
+            timestamp = action.get("timestamp")
+
+            if isinstance(timestamp, str):
+                try:
+                    timestamp = datetime.fromisoformat(timestamp)
+                except:
+                    timestamp = None
+            time_str = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else "?"
+
+            # Truncate long details
+            if len(action_detail) > 80:
+                action_detail = action_detail[:77] + "..."
+
+            type_label = action_type.replace("_", " ").title()
+
+            embed.add_field(
+                name=f"{emoji} {type_label} - {time_str}",
+                value=f"**{player_name}** ({player_id})\n{action_detail}",
+                inline=False,
+            )
+
+        embed.set_footer(
+            text=f"Page {self.current_page + 1}/{self.total_pages} • Use buttons to navigate"
+        )
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ Only the person who ran this command can use these buttons!",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.primary)
+    async def previous_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        self.current_page = max(0, self.current_page - 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.primary)
+    async def next_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        self.current_page = min(self.total_pages - 1, self.current_page + 1)
+        self.update_buttons()
+        embed = self.build_embed()
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
 # Helper Functions
 def format_time_duration(seconds: float) -> str:
     """Format seconds into human-readable time"""
@@ -2536,7 +2939,7 @@ def setup_commands(bot, db, scraper_getter):
     async def sessions_command(
         interaction: discord.Interaction, identifier: str, days: int = 7
     ):
-        """View player's gaming sessions with first detected login info"""
+        """View player's gaming sessions with pagination and first detected login info"""
         await interaction.response.defer()
 
         try:
@@ -2553,7 +2956,7 @@ def setup_commands(bot, db, scraper_getter):
                 )
                 return
 
-            # 🆕 Get first/last session info
+            # Get first/last session info
             first_last = await db.get_player_first_last_session(player["player_id"])
             sessions = await db.get_player_sessions(player["player_id"], days)
 
@@ -2565,31 +2968,31 @@ def setup_commands(bot, db, scraper_getter):
             )
             total_hours = total_seconds / 3600
 
-            embed = discord.Embed(
-                title=f"📊 Sessions for {player['username']}",
-                description=f"Last {days} days • {len(sessions)} session(s) • {total_hours:.1f}h total",
-                color=discord.Color.blue(),
-                timestamp=datetime.now(),
-            )
-
-            # 🆕 Show first ever detected login (important for tracking)
-            first_login = first_last.get("first_login")
-            total_logins = first_last.get("total_sessions", 0)
-            
-            if first_login:
-                if isinstance(first_login, str):
-                    first_login = datetime.fromisoformat(first_login)
-                first_login_str = first_login.strftime("%Y-%m-%d %H:%M") if first_login else "Never"
-            else:
-                first_login_str = "Never (no logins recorded)"
-            
-            embed.add_field(
-                name="📅 First Detected Login",
-                value=f"**{first_login_str}**\nTotal logins: {total_logins:,}",
-                inline=False,
-            )
-
             if not sessions:
+                embed = discord.Embed(
+                    title=f"📊 Sessions for {player['username']}",
+                    description=f"Last {days} days • 0 session(s)",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now(),
+                )
+
+                # Show first ever detected login (important for tracking)
+                first_login = first_last.get("first_login")
+                total_logins = first_last.get("total_sessions", 0)
+                
+                if first_login:
+                    if isinstance(first_login, str):
+                        first_login = datetime.fromisoformat(first_login)
+                    first_login_str = first_login.strftime("%Y-%m-%d %H:%M") if first_login else "Never"
+                else:
+                    first_login_str = "Never (no logins recorded)"
+                
+                embed.add_field(
+                    name="📅 First Detected Login",
+                    value=f"**{first_login_str}**\nTotal logins: {total_logins:,}",
+                    inline=False,
+                )
+
                 embed.add_field(
                     name="⚠️ No Recent Sessions",
                     value=f"No sessions found in the last {days} days.\nTry `/sessions {identifier} 30` for more history.",
@@ -2598,36 +3001,20 @@ def setup_commands(bot, db, scraper_getter):
                 await interaction.followup.send(embed=embed)
                 return
 
-            # Show up to 10 most recent sessions
-            for session in sessions[:10]:
-                login_time = session.get("login_time")
-                logout_time = session.get("logout_time")
-                duration = session.get("session_duration_seconds", 0)
+            # Create pagination view for sessions
+            view = SessionsPaginationView(
+                sessions=sessions,
+                player_info=player,
+                first_last=first_last,
+                days=days,
+                author_id=interaction.user.id,
+                total_hours=total_hours,
+            )
 
-                if isinstance(login_time, str):
-                    login_time = datetime.fromisoformat(login_time)
-                if isinstance(logout_time, str):
-                    logout_time = datetime.fromisoformat(logout_time)
-
-                login_str = (
-                    login_time.strftime("%Y-%m-%d %H:%M") if login_time else "Unknown"
-                )
-                logout_str = (
-                    logout_time.strftime("%H:%M") if logout_time else "Still online"
-                )
-                duration_str = format_time_duration(duration) if duration else "N/A"
-
-                value = f"Login: {login_str}\nLogout: {logout_str}\nDuration: {duration_str}"
-                embed.add_field(
-                    name=f"Session {len(sessions) - sessions.index(session)}",
-                    value=value,
-                    inline=True,
-                )
-
-            if len(sessions) > 10:
-                embed.set_footer(text=f"Showing 10 of {len(sessions)} sessions")
-
-            await interaction.followup.send(embed=embed)
+            # Send initial page with pagination buttons
+            embed = view.build_embed()
+            message = await interaction.followup.send(embed=embed, view=view)
+            view.message = message  # Store message reference for timeout handling
 
         except Exception as e:
             logger.error(f"Error in sessions command: {e}", exc_info=True)
@@ -2703,11 +3090,37 @@ def setup_commands(bot, db, scraper_getter):
     # FACTION COMMANDS
     # ========================================================================
 
+    # 🆕 Faction autocomplete function
+    async def faction_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> List[app_commands.Choice[str]]:
+        """Autocomplete for faction names from database"""
+        try:
+            # Get all faction names from database
+            all_factions = await db.get_all_faction_names()
+            
+            # Filter based on current input
+            if current:
+                filtered = [f for f in all_factions if current.lower() in f.lower()]
+            else:
+                filtered = all_factions
+            
+            # Return up to 25 choices (Discord limit)
+            return [
+                app_commands.Choice(name=faction, value=faction)
+                for faction in filtered[:25]
+            ]
+        except Exception as e:
+            logger.error(f"Error in faction autocomplete: {e}")
+            return []
+
     @bot.tree.command(
         name="faction",
         description="🔥 FIXED: List all members of a faction (auto-refreshes placeholder usernames)",
     )
-    @app_commands.describe(faction_name="Name of faction")
+    @app_commands.describe(faction_name="Name of faction (select from list)")
+    @app_commands.autocomplete(faction_name=faction_autocomplete)
     @app_commands.checks.cooldown(1, 30)
     async def faction_command(interaction: discord.Interaction, faction_name: str):
         """🔥 FIXED: List all members of a faction - auto-refreshes placeholder usernames AND missing ranks"""
@@ -2875,6 +3288,87 @@ def setup_commands(bot, db, scraper_getter):
 
         except Exception as e:
             logger.error(f"Error in promotions command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    @bot.tree.command(name="heists", description="🆕 View bank heist history with faction info")
+    @app_commands.describe(days="Days to look back (default: 30, max: 90)")
+    @app_commands.checks.cooldown(1, 30)
+    async def heists_command(interaction: discord.Interaction, days: int = 30):
+        """View all bank heist deliveries with player faction info"""
+        await interaction.response.defer()
+
+        try:
+            if days < 1 or days > 90:
+                await interaction.followup.send("❌ Days must be between 1 and 90!")
+                return
+
+            heists = await db.get_all_heists(days)
+
+            if not heists:
+                await interaction.followup.send(
+                    f"🏦 **No Bank Heists**\n\nNo bank heist deliveries recorded in the last {days} days."
+                )
+                return
+
+            # Create pagination view
+            view = HeistsPaginationView(
+                heists=heists,
+                author_id=interaction.user.id,
+                days=days,
+            )
+
+            # Send initial page with pagination buttons
+            embed = view.build_embed()
+            message = await interaction.followup.send(embed=embed, view=view)
+            view.message = message
+
+        except Exception as e:
+            logger.error(f"Error in heists command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
+    @bot.tree.command(name="factionactions", description="🆕 View all actions for a faction's members")
+    @app_commands.describe(
+        faction_name="Name of faction (select from list)",
+        days="Days to look back (default: 7, max: 30)"
+    )
+    @app_commands.autocomplete(faction_name=faction_autocomplete)
+    @app_commands.checks.cooldown(1, 30)
+    async def factionactions_command(
+        interaction: discord.Interaction,
+        faction_name: str,
+        days: int = 7
+    ):
+        """View all actions for players within a specific faction"""
+        await interaction.response.defer()
+
+        try:
+            if days < 1 or days > 30:
+                await interaction.followup.send("❌ Days must be between 1 and 30!")
+                return
+
+            actions = await db.get_faction_actions(faction_name, days)
+
+            if not actions:
+                await interaction.followup.send(
+                    f"📋 **No Actions**\n\nNo actions found for faction `{faction_name}` in the last {days} days."
+                )
+                return
+
+            # Create pagination view
+            view = FactionActionsPaginationView(
+                actions=actions,
+                faction_name=faction_name,
+                author_id=interaction.user.id,
+                days=days,
+            )
+
+            # Send initial page with pagination buttons
+            embed = view.build_embed()
+            message = await interaction.followup.send(embed=embed, view=view)
+            view.message = message
+
+        except Exception as e:
+            logger.error(f"Error in factionactions command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
     # ========================================================================
