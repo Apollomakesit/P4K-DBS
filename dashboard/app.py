@@ -1862,6 +1862,197 @@ def page_bot_status():
     return render_template('bot_status.html')
 
 # ============================================================================
+# ADMIN: LOGIN EVENTS CLEANUP API
+# ============================================================================
+
+@app.route('/api/admin/login-stats')
+def api_admin_login_stats():
+    """Get login/logout event statistics for cleanup analysis"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get total counts
+        cursor.execute("SELECT event_type, COUNT(*) FROM login_events GROUP BY event_type")
+        counts = dict(cursor.fetchall())
+        
+        login_count = counts.get('login', 0)
+        logout_count = counts.get('logout', 0)
+        
+        # Get unique players
+        cursor.execute("SELECT COUNT(DISTINCT player_id) FROM login_events")
+        unique_players = cursor.fetchone()[0]
+        
+        # Count duplicate LOGOUTs (consecutive logouts)
+        cursor.execute("""
+            WITH ordered_events AS (
+                SELECT 
+                    event_type,
+                    LAG(event_type) OVER (PARTITION BY player_id ORDER BY timestamp) as prev_event
+                FROM login_events
+            )
+            SELECT COUNT(*) FROM ordered_events
+            WHERE event_type = 'logout' AND prev_event = 'logout'
+        """)
+        duplicate_logouts = cursor.fetchone()[0]
+        
+        # Count duplicate LOGINs (consecutive logins)
+        cursor.execute("""
+            WITH ordered_events AS (
+                SELECT 
+                    event_type,
+                    LEAD(event_type) OVER (PARTITION BY player_id ORDER BY timestamp) as next_event
+                FROM login_events
+            )
+            SELECT COUNT(*) FROM ordered_events
+            WHERE event_type = 'login' AND next_event = 'login'
+        """)
+        duplicate_logins = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return jsonify({
+            'login_count': login_count,
+            'logout_count': logout_count,
+            'unique_players': unique_players,
+            'duplicate_logouts': duplicate_logouts,
+            'duplicate_logins': duplicate_logins,
+            'total_duplicates': duplicate_logouts + duplicate_logins,
+            'ratio': round(logout_count / login_count, 2) if login_count > 0 else 0,
+            'healthy': logout_count <= login_count * 1.1 if login_count > 0 else False
+        })
+    except Exception as e:
+        logger.error(f"Error getting login stats: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/cleanup-login-events', methods=['POST'])
+def api_admin_cleanup_login_events():
+    """
+    Cleanup duplicate login/logout events.
+    
+    POST body (JSON):
+    - dry_run: bool (default: true) - Preview only, don't delete
+    - confirm: bool (default: false) - Required to be true for actual deletion
+    
+    Rules:
+    1. Consecutive LOGOUTs: Keep first, delete rest
+    2. Consecutive LOGINs: Keep last, delete earlier ones
+    """
+    try:
+        data = request.get_json() or {}
+        dry_run = data.get('dry_run', True)
+        confirm = data.get('confirm', False)
+        
+        # Safety check
+        if not dry_run and not confirm:
+            return jsonify({
+                'error': 'Must set confirm=true to actually delete data',
+                'dry_run': True
+            }), 400
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Find duplicate LOGOUTs
+        cursor.execute("""
+            WITH ordered_events AS (
+                SELECT 
+                    id,
+                    player_id,
+                    event_type,
+                    timestamp,
+                    LAG(event_type) OVER (PARTITION BY player_id ORDER BY timestamp) as prev_event
+                FROM login_events
+            )
+            SELECT id FROM ordered_events
+            WHERE event_type = 'logout' AND prev_event = 'logout'
+        """)
+        logout_ids = [row[0] for row in cursor.fetchall()]
+        
+        # Find duplicate LOGINs
+        cursor.execute("""
+            WITH ordered_events AS (
+                SELECT 
+                    id,
+                    player_id,
+                    event_type,
+                    timestamp,
+                    LEAD(event_type) OVER (PARTITION BY player_id ORDER BY timestamp) as next_event
+                FROM login_events
+            )
+            SELECT id FROM ordered_events
+            WHERE event_type = 'login' AND next_event = 'login'
+        """)
+        login_ids = [row[0] for row in cursor.fetchall()]
+        
+        all_ids = list(set(logout_ids + login_ids))
+        
+        result = {
+            'duplicate_logouts': len(logout_ids),
+            'duplicate_logins': len(login_ids),
+            'total_to_delete': len(all_ids),
+            'dry_run': dry_run
+        }
+        
+        if not all_ids:
+            conn.close()
+            result['message'] = 'No duplicates found - data is already clean!'
+            return jsonify(result)
+        
+        if dry_run:
+            conn.close()
+            result['message'] = f'Found {len(all_ids):,} duplicates. Set dry_run=false and confirm=true to delete.'
+            return jsonify(result)
+        
+        # Actually delete
+        deleted = 0
+        batch_size = 10000
+        
+        for i in range(0, len(all_ids), batch_size):
+            batch = all_ids[i:i + batch_size]
+            placeholders = ",".join("?" * len(batch))
+            cursor.execute(f"DELETE FROM login_events WHERE id IN ({placeholders})", batch)
+            deleted += cursor.rowcount
+            conn.commit()
+        
+        # Recalculate session durations
+        cursor.execute("""
+            UPDATE login_events
+            SET session_duration_seconds = (
+                SELECT CAST((julianday(login_events.timestamp) - julianday(prev_login.timestamp)) * 86400 AS INTEGER)
+                FROM login_events AS prev_login
+                WHERE prev_login.player_id = login_events.player_id
+                AND prev_login.event_type = 'login'
+                AND prev_login.timestamp < login_events.timestamp
+                ORDER BY prev_login.timestamp DESC
+                LIMIT 1
+            )
+            WHERE event_type = 'logout'
+        """)
+        durations_updated = cursor.rowcount
+        conn.commit()
+        
+        # Get new counts
+        cursor.execute("SELECT event_type, COUNT(*) FROM login_events GROUP BY event_type")
+        new_counts = dict(cursor.fetchall())
+        
+        conn.close()
+        
+        result['deleted'] = deleted
+        result['durations_recalculated'] = durations_updated
+        result['new_login_count'] = new_counts.get('login', 0)
+        result['new_logout_count'] = new_counts.get('logout', 0)
+        result['message'] = f'Successfully deleted {deleted:,} duplicate events!'
+        
+        logger.info(f"🧹 Cleaned up {deleted:,} duplicate login events")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up login events: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
 # MAIN
 # ============================================================================
 

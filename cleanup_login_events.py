@@ -31,12 +31,21 @@ logger = logging.getLogger(__name__)
 
 def get_db_path():
     """Get database path"""
-    if os.path.exists("/data"):
-        return "/data/pro4kings.db"
+    # Check environment variable first (Railway sets this)
     env_path = os.getenv("DATABASE_PATH")
-    if env_path:
+    if env_path and os.path.exists(env_path):
         return env_path
-    return "data/pro4kings.db"
+    
+    # Railway volume mount
+    if os.path.exists("/data/pro4kings.db"):
+        return "/data/pro4kings.db"
+    
+    # Local development
+    if os.path.exists("data/pro4kings.db"):
+        return "data/pro4kings.db"
+    
+    # Fallback
+    return os.getenv("DATABASE_PATH", "/data/pro4kings.db")
 
 
 def analyze_login_events(conn):
