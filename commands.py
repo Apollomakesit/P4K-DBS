@@ -2768,6 +2768,65 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in config command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
+    @bot.tree.command(name="dashboard", description="🌐 Access the web dashboard")
+    @app_commands.checks.cooldown(1, 5)
+    async def dashboard_command(interaction: discord.Interaction):
+        """Access the web dashboard for database and analytics"""
+        await interaction.response.defer()
+
+        try:
+            # Get dashboard URL from environment or use default
+            dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:5000")
+            
+            embed = discord.Embed(
+                title="🌐 Web Dashboard",
+                description="Access the P4K-DBS Web Dashboard for database browsing, analytics, and management",
+                color=discord.Color.blue(),
+                timestamp=datetime.now(),
+            )
+            
+            embed.add_field(
+                name="Dashboard Features",
+                value=(
+                    "• 📊 Database Statistics\n"
+                    "• 👥 Player Profiles & Search\n"
+                    "• 📝 Action Log Viewer\n"
+                    "• 👮 Admin Actions Monitor\n"
+                    "• 📋 Faction Management\n"
+                    "• 🚫 Ban List\n"
+                    "• 📈 Activity Charts\n"
+                    "• 🏆 Promotions & Rank History\n"
+                    "• 💰 Bank Heists\n"
+                    "• 🎮 Player Sessions"
+                ),
+                inline=False,
+            )
+            
+            embed.add_field(
+                name="📍 Access Link",
+                value=f"**[Click here to open dashboard]({dashboard_url})**",
+                inline=False,
+            )
+            
+            embed.add_field(
+                name="💡 Tips",
+                value=(
+                    "• Dashboard automatically syncs with bot database\n"
+                    "• Use filters and search to find specific data\n"
+                    "• Refresh page to see latest updates"
+                ),
+                inline=False,
+            )
+            
+            embed.set_footer(text="Dashboard provides web-based access to all P4K-DBS features")
+            
+            await interaction.followup.send(embed=embed)
+            logger.info(f"Dashboard link provided to {interaction.user}")
+
+        except Exception as e:
+            logger.error(f"Error in dashboard command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
     @bot.tree.command(name="stats", description="Show database statistics")
     @app_commands.checks.cooldown(1, 10)
     async def stats_command(interaction: discord.Interaction):
