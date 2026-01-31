@@ -693,6 +693,20 @@ async def scrape_actions():
                     await db.save_logout(action.player_id, action.timestamp or datetime.now())
                     logger.info(f"🚫 Server kick detected: {action.player_name}({action.player_id}) - triggering logout")
 
+                # 🔥 NEW: Ban detection - auto-add to banned_players table when ban action detected
+                if action.action_type == "ban_received" and action.player_id:
+                    ban_data = {
+                        "player_id": action.player_id,
+                        "player_name": action.player_name or f"Player_{action.player_id}",
+                        "admin": action.admin_name,
+                        "reason": action.reason,
+                        "duration": None,  # Duration not always in action detail
+                        "ban_date": (action.timestamp or datetime.now()).strftime("%Y-%m-%d %H:%M:%S"),
+                        "expiry_date": None,
+                    }
+                    await db.save_banned_player(ban_data)
+                    logger.info(f"🔨 Ban detected from action: {action.player_name}({action.player_id}) by {action.admin_name}")
+
                 if action.player_id:
                     player_name = action.player_name or f"Player_{action.player_id}"
                     new_player_ids.add((action.player_id, player_name))
@@ -798,6 +812,20 @@ async def scrape_vip_actions():
                     if action.action_type == "faction_kicked" and action.player_id:
                         await db.save_logout(action.player_id, action.timestamp or datetime.now())
                         logger.info(f"🚫 VIP Server kick: {action.player_name}({action.player_id}) - triggering logout")
+
+                    # 🔥 NEW: Ban detection for VIP players
+                    if action.action_type == "ban_received" and action.player_id:
+                        ban_data = {
+                            "player_id": action.player_id,
+                            "player_name": action.player_name or f"Player_{action.player_id}",
+                            "admin": action.admin_name,
+                            "reason": action.reason,
+                            "duration": None,
+                            "ban_date": (action.timestamp or datetime.now()).strftime("%Y-%m-%d %H:%M:%S"),
+                            "expiry_date": None,
+                        }
+                        await db.save_banned_player(ban_data)
+                        logger.info(f"🔨 VIP Ban detected: {action.player_name}({action.player_id}) by {action.admin_name}")
 
                     if action.player_id:
                         player_name = action.player_name or f"Player_{action.player_id}"
@@ -1129,7 +1157,7 @@ async def update_missing_faction_ranks_error(_loop, error):
 
 @tasks.loop(seconds=Config.CHECK_BANNED_INTERVAL)
 async def check_banned_players():
-    """Check and update banned players list"""
+    """🔥 FIXED: Check and update banned players list - now fetches ALL pages"""
     if SHUTDOWN_REQUESTED:
         return
 
@@ -1138,14 +1166,15 @@ async def check_banned_players():
 
     try:
         scraper_instance = await get_or_recreate_scraper()
-        banned = await scraper_instance.get_banned_players()
+        # 🔥 FIX: Use get_banned_players_all_pages() to fetch from ALL banlist pages
+        banned = await scraper_instance.get_banned_players_all_pages()
         current_ban_ids = {ban["player_id"] for ban in banned if ban.get("player_id")}
 
         for ban_data in banned:
             await db.save_banned_player(ban_data)
 
         await db.mark_expired_bans(current_ban_ids)
-        logger.info(f"✓ Updated {len(banned)} banned players")
+        logger.info(f"✓ Updated {len(banned)} banned players (all pages)")
         TASK_HEALTH["check_banned_players"]["error_count"] = 0
 
     except Exception as e:

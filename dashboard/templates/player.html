@@ -124,9 +124,11 @@
                         <template x-for="action in player.recent_actions" :key="action.id">
                             <tr class="border-b border-gray-800/50 hover:bg-dark-100">
                                 <td class="py-3">
-                                    <span class="px-2 py-1 text-xs rounded-full" 
-                                          :class="getActionTypeClass(action.action_type)"
-                                          x-text="action.action_type.replace(/_/g, ' ')"></span>
+                                    <span class="inline-flex items-center px-2 py-1 text-xs rounded-full" 
+                                          :class="getActionTypeClass(action.action_type)">
+                                        <i :class="getActionIcon(action.action_type)" class="mr-1.5"></i>
+                                        <span x-text="action.action_type.replace(/_/g, ' ')"></span>
+                                    </span>
                                 </td>
                                 <td class="py-3">
                                     <!-- Source Player -->
@@ -237,15 +239,63 @@ function playerPage() {
                 'chest_deposit': 'bg-purple-500/20 text-purple-400',
                 'chest_withdraw': 'bg-violet-500/20 text-violet-400',
                 'vehicle_contract': 'bg-cyan-500/20 text-cyan-400',
+                'vehicle_bought': 'bg-teal-500/20 text-teal-400',
+                'vehicle_sold': 'bg-lime-500/20 text-lime-400',
+                'vehicle_scrapped': 'bg-rose-500/20 text-rose-400',
                 'bank_heist_delivery': 'bg-amber-500/20 text-amber-400',
                 'warning_received': 'bg-red-500/20 text-red-400',
                 'ban_received': 'bg-red-600/20 text-red-500',
                 'admin_jail': 'bg-red-500/20 text-red-400',
                 'admin_unjail': 'bg-green-500/20 text-green-400',
+                'admin_unban': 'bg-green-600/20 text-green-500',
                 'mute_received': 'bg-gray-500/20 text-gray-400',
                 'trade': 'bg-indigo-500/20 text-indigo-400',
+                'faction_kicked': 'bg-fuchsia-500/20 text-fuchsia-400',
+                'kill_character': 'bg-pink-600/20 text-pink-400',
+                'property_bought': 'bg-sky-500/20 text-sky-400',
+                'property_sold': 'bg-slate-500/20 text-slate-400',
+                'item_sold': 'bg-lime-600/20 text-lime-500',
+                'gambling_win': 'bg-yellow-600/20 text-yellow-500',
+                'license_plate_sale': 'bg-zinc-500/20 text-zinc-400',
+                'house_safe_deposit': 'bg-emerald-600/20 text-emerald-500',
+                'house_safe_withdraw': 'bg-orange-600/20 text-orange-500',
             };
             return classes[type] || 'bg-gray-500/20 text-gray-400';
+        },
+        
+        // Get FontAwesome icon class for action type
+        getActionIcon(type) {
+            const icons = {
+                'item_given': 'fas fa-hand-holding',
+                'item_received': 'fas fa-gift',
+                'money_transfer': 'fas fa-money-bill-transfer',
+                'money_deposit': 'fas fa-piggy-bank',
+                'money_withdraw': 'fas fa-money-bill-wave',
+                'chest_deposit': 'fas fa-box-archive',
+                'chest_withdraw': 'fas fa-box-open',
+                'vehicle_contract': 'fas fa-file-signature',
+                'vehicle_bought': 'fas fa-car',
+                'vehicle_sold': 'fas fa-car-side',
+                'vehicle_scrapped': 'fas fa-car-burst',
+                'bank_heist_delivery': 'fas fa-sack-dollar',
+                'warning_received': 'fas fa-triangle-exclamation',
+                'ban_received': 'fas fa-gavel',
+                'admin_jail': 'fas fa-lock',
+                'admin_unjail': 'fas fa-lock-open',
+                'admin_unban': 'fas fa-user-check',
+                'mute_received': 'fas fa-volume-xmark',
+                'trade': 'fas fa-handshake',
+                'faction_kicked': 'fas fa-user-slash',
+                'kill_character': 'fas fa-skull',
+                'property_bought': 'fas fa-house',
+                'property_sold': 'fas fa-house-circle-xmark',
+                'item_sold': 'fas fa-tags',
+                'gambling_win': 'fas fa-dice',
+                'license_plate_sale': 'fas fa-id-card',
+                'house_safe_deposit': 'fas fa-vault',
+                'house_safe_withdraw': 'fas fa-safe',
+            };
+            return icons[type] || 'fas fa-circle-info';
         },
         
         // Parse action detail to make player names clickable

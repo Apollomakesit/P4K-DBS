@@ -127,6 +127,11 @@ def actions_page():
 def factions_page():
     return render_template('factions.html')
 
+@app.route('/faction/<faction_name>')
+def faction_detail_page(faction_name):
+    """Individual faction page showing members and stats"""
+    return render_template('faction.html', faction_name=faction_name)
+
 @app.route('/bans')
 def bans_page():
     return render_template('bans.html')
@@ -217,6 +222,13 @@ def api_stats():
         cursor.execute("SELECT COUNT(DISTINCT faction) FROM player_profiles WHERE faction IS NOT NULL AND faction != ''")
         total_factions = cursor.fetchone()[0]
         
+        # Unique players in last 24h (from login_events)
+        cursor.execute("""
+            SELECT COUNT(DISTINCT player_id) FROM login_events 
+            WHERE event_type = 'login' AND timestamp >= ?
+        """, (cutoff_24h,))
+        unique_24h = cursor.fetchone()[0]
+        
         conn.close()
         
         return jsonify({
@@ -227,6 +239,8 @@ def api_stats():
             'logins_today': logins_today,
             'active_bans': active_bans,
             'total_factions': total_factions,
+            'factions_count': total_factions,  # Alias for template compatibility
+            'unique_24h': unique_24h,
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
@@ -1257,11 +1271,12 @@ def api_faction_history():
 def api_compare_players():
     """Compare two players side-by-side"""
     try:
-        player1_id = request.args.get('player1', '')
-        player2_id = request.args.get('player2', '')
+        # Support both 'id1'/'id2' (frontend) and 'player1'/'player2' (legacy) params
+        player1_id = request.args.get('id1', '') or request.args.get('player1', '')
+        player2_id = request.args.get('id2', '') or request.args.get('player2', '')
         
         if not player1_id or not player2_id:
-            return jsonify({'error': 'Both player1 and player2 are required'}), 400
+            return jsonify({'error': 'Both player IDs are required (use id1 and id2 parameters)'}), 400
         
         conn = get_db_connection()
         cursor = conn.cursor()

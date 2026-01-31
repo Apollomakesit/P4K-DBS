@@ -5,7 +5,7 @@
 {% block content %}
 <div x-data="analyticsPage()" x-init="init()">
     <!-- Header -->
-    <div class="flex items-center justify-between mb-8">
+    <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between mb-8 gap-4">
         <div>
             <h1 class="text-3xl font-bold text-white flex items-center">
                 <i class="fas fa-chart-line text-blue-500 mr-3"></i>
@@ -13,17 +13,90 @@
             </h1>
             <p class="text-gray-400 mt-1">Activity trends, peak times, and insights</p>
         </div>
-        <div class="flex items-center space-x-4">
+        <div class="flex flex-wrap items-center gap-3">
+            <!-- Date Range Selector -->
             <select x-model="daysRange" @change="loadAllData()" 
                     class="bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500">
                 <option value="7">Last 7 days</option>
                 <option value="14">Last 14 days</option>
                 <option value="30">Last 30 days</option>
+                <option value="60">Last 60 days</option>
+                <option value="90">Last 90 days</option>
             </select>
-            <button @click="loadAllData()" 
-                    class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition">
-                <i class="fas fa-sync-alt mr-2"></i> Refresh
+            
+            <!-- Comparison Mode Toggle -->
+            <button @click="comparisonMode = !comparisonMode; if(comparisonMode) loadComparisonData()" 
+                    :class="comparisonMode ? 'bg-purple-600' : 'bg-gray-700 hover:bg-gray-600'"
+                    class="text-white px-4 py-2 rounded-lg transition flex items-center">
+                <i class="fas fa-code-compare mr-2"></i>
+                <span x-text="comparisonMode ? 'Compare: ON' : 'Compare'"></span>
             </button>
+            
+            <!-- Auto-Refresh Toggle -->
+            <div class="flex items-center bg-gray-700 rounded-lg overflow-hidden">
+                <button @click="toggleAutoRefresh()" 
+                        :class="autoRefresh ? 'bg-green-600' : 'bg-gray-700'"
+                        class="text-white px-3 py-2 transition flex items-center">
+                    <i :class="autoRefresh ? 'fas fa-pause' : 'fas fa-play'" class="mr-2"></i>
+                    <span x-text="autoRefresh ? 'Auto' : 'Auto'"></span>
+                </button>
+                <span x-show="autoRefresh" class="px-3 py-2 text-green-400 text-sm font-mono" x-text="refreshCountdown + 's'"></span>
+            </div>
+            
+            <!-- Export Button -->
+            <div class="relative" x-data="{ exportOpen: false }">
+                <button @click="exportOpen = !exportOpen" 
+                        class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition flex items-center">
+                    <i class="fas fa-download mr-2"></i> Export
+                    <i class="fas fa-chevron-down ml-2 text-xs"></i>
+                </button>
+                <div x-show="exportOpen" @click.away="exportOpen = false"
+                     class="absolute right-0 mt-2 w-48 bg-gray-800 rounded-lg shadow-xl border border-gray-700 z-50">
+                    <button @click="exportData('csv'); exportOpen = false" 
+                            class="w-full text-left px-4 py-3 text-gray-300 hover:bg-gray-700 rounded-t-lg flex items-center">
+                        <i class="fas fa-file-csv text-green-500 mr-3"></i> Export as CSV
+                    </button>
+                    <button @click="exportData('json'); exportOpen = false" 
+                            class="w-full text-left px-4 py-3 text-gray-300 hover:bg-gray-700 rounded-b-lg flex items-center">
+                        <i class="fas fa-file-code text-blue-500 mr-3"></i> Export as JSON
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Refresh Button -->
+            <button @click="loadAllData()" 
+                    :class="loading ? 'bg-gray-600' : 'bg-blue-600 hover:bg-blue-700'"
+                    class="text-white px-4 py-2 rounded-lg transition flex items-center">
+                <i :class="loading ? 'fas fa-spinner fa-spin' : 'fas fa-sync-alt'" class="mr-2"></i> 
+                <span x-text="loading ? 'Loading...' : 'Refresh'"></span>
+            </button>
+        </div>
+    </div>
+    
+    <!-- Comparison Banner -->
+    <div x-show="comparisonMode" x-transition class="bg-purple-900/30 border border-purple-500/30 rounded-xl p-4 mb-6 flex items-center justify-between">
+        <div class="flex items-center">
+            <i class="fas fa-code-compare text-purple-400 text-xl mr-3"></i>
+            <div>
+                <p class="text-purple-300 font-medium">Comparison Mode Active</p>
+                <p class="text-purple-400/70 text-sm">Comparing current <span x-text="daysRange"></span> days vs previous <span x-text="daysRange"></span> days</p>
+            </div>
+        </div>
+        <div class="flex items-center space-x-6">
+            <div class="text-center">
+                <div class="text-2xl font-bold" :class="comparisonDelta.logins >= 0 ? 'text-green-400' : 'text-red-400'">
+                    <i :class="comparisonDelta.logins >= 0 ? 'fas fa-arrow-up' : 'fas fa-arrow-down'" class="mr-1"></i>
+                    <span x-text="Math.abs(comparisonDelta.logins).toFixed(1) + '%'"></span>
+                </div>
+                <div class="text-xs text-gray-400">Logins</div>
+            </div>
+            <div class="text-center">
+                <div class="text-2xl font-bold" :class="comparisonDelta.actions >= 0 ? 'text-green-400' : 'text-red-400'">
+                    <i :class="comparisonDelta.actions >= 0 ? 'fas fa-arrow-up' : 'fas fa-arrow-down'" class="mr-1"></i>
+                    <span x-text="Math.abs(comparisonDelta.actions).toFixed(1) + '%'"></span>
+                </div>
+                <div class="text-xs text-gray-400">Actions</div>
+            </div>
         </div>
     </div>
 
@@ -41,20 +114,42 @@
             
             <!-- Login Activity Chart -->
             <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
-                <h2 class="text-xl font-semibold text-white mb-4 flex items-center">
-                    <i class="fas fa-sign-in-alt text-green-500 mr-2"></i>
-                    Login/Logout Activity
-                </h2>
-                <div class="h-64">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-semibold text-white flex items-center">
+                        <i class="fas fa-sign-in-alt text-green-500 mr-2"></i>
+                        Login/Logout Activity
+                    </h2>
+                    <div class="flex items-center space-x-2">
+                        <!-- Chart Type Toggle -->
+                        <button @click="loginChartType = 'line'; renderLoginChart(loginData.labels, loginData.logins, loginData.logouts)"
+                                :class="loginChartType === 'line' ? 'bg-green-600' : 'bg-gray-700'"
+                                class="text-white px-2 py-1 rounded text-xs transition">
+                            <i class="fas fa-chart-line"></i>
+                        </button>
+                        <button @click="loginChartType = 'bar'; renderLoginChart(loginData.labels, loginData.logins, loginData.logouts)"
+                                :class="loginChartType === 'bar' ? 'bg-green-600' : 'bg-gray-700'"
+                                class="text-white px-2 py-1 rounded text-xs transition">
+                            <i class="fas fa-chart-bar"></i>
+                        </button>
+                        <a href="/sessions" class="text-gray-400 hover:text-white transition ml-2" title="View Sessions">
+                            <i class="fas fa-external-link-alt"></i>
+                        </a>
+                    </div>
+                </div>
+                <div class="h-64 cursor-pointer" @click="window.location.href='/sessions'">
                     <canvas id="loginActivityChart"></canvas>
                 </div>
                 <div class="mt-4 grid grid-cols-2 gap-4 text-center">
-                    <div class="bg-gray-700/50 rounded-lg p-3">
-                        <div class="text-2xl font-bold text-green-500" x-text="totalLogins.toLocaleString()">0</div>
+                    <div class="bg-gray-700/50 rounded-lg p-3 hover:bg-gray-700 transition cursor-pointer" @click="window.location.href='/sessions'">
+                        <div class="text-2xl font-bold text-green-500">
+                            <span x-text="animatedLogins.toLocaleString()">0</span>
+                        </div>
                         <div class="text-sm text-gray-400">Total Logins</div>
                     </div>
-                    <div class="bg-gray-700/50 rounded-lg p-3">
-                        <div class="text-2xl font-bold text-red-400" x-text="totalLogouts.toLocaleString()">0</div>
+                    <div class="bg-gray-700/50 rounded-lg p-3 hover:bg-gray-700 transition cursor-pointer" @click="window.location.href='/sessions'">
+                        <div class="text-2xl font-bold text-red-400">
+                            <span x-text="animatedLogouts.toLocaleString()">0</span>
+                        </div>
                         <div class="text-sm text-gray-400">Total Logouts</div>
                     </div>
                 </div>
@@ -62,23 +157,43 @@
 
             <!-- Actions Trend Chart -->
             <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
-                <h2 class="text-xl font-semibold text-white mb-4 flex items-center">
-                    <i class="fas fa-chart-bar text-purple-500 mr-2"></i>
-                    Actions Per Day
-                </h2>
-                <div class="h-64">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-semibold text-white flex items-center">
+                        <i class="fas fa-chart-bar text-purple-500 mr-2"></i>
+                        Actions Per Day
+                    </h2>
+                    <div class="flex items-center space-x-2">
+                        <!-- Chart Type Toggle -->
+                        <button @click="actionsChartType = 'bar'; renderActionsChart(actionsData)"
+                                :class="actionsChartType === 'bar' ? 'bg-purple-600' : 'bg-gray-700'"
+                                class="text-white px-2 py-1 rounded text-xs transition">
+                            <i class="fas fa-chart-bar"></i>
+                        </button>
+                        <button @click="actionsChartType = 'line'; renderActionsChart(actionsData)"
+                                :class="actionsChartType === 'line' ? 'bg-purple-600' : 'bg-gray-700'"
+                                class="text-white px-2 py-1 rounded text-xs transition">
+                            <i class="fas fa-chart-line"></i>
+                        </button>
+                        <a href="/actions" class="text-gray-400 hover:text-white transition ml-2" title="View Actions">
+                            <i class="fas fa-external-link-alt"></i>
+                        </a>
+                    </div>
+                </div>
+                <div class="h-64 cursor-pointer" @click="window.location.href='/actions'">
                     <canvas id="actionsTrendChart"></canvas>
                 </div>
                 <div class="mt-4 grid grid-cols-3 gap-4 text-center">
-                    <div class="bg-gray-700/50 rounded-lg p-3">
-                        <div class="text-xl font-bold text-purple-500" x-text="totalActions.toLocaleString()">0</div>
+                    <div class="bg-gray-700/50 rounded-lg p-3 hover:bg-gray-700 transition">
+                        <div class="text-xl font-bold text-purple-500">
+                            <span x-text="animatedTotalActions.toLocaleString()">0</span>
+                        </div>
                         <div class="text-sm text-gray-400">Total Actions</div>
                     </div>
-                    <div class="bg-gray-700/50 rounded-lg p-3">
+                    <div class="bg-gray-700/50 rounded-lg p-3 hover:bg-gray-700 transition">
                         <div class="text-xl font-bold text-blue-500" x-text="avgActions.toLocaleString()">0</div>
                         <div class="text-sm text-gray-400">Daily Average</div>
                     </div>
-                    <div class="bg-gray-700/50 rounded-lg p-3">
+                    <div class="bg-gray-700/50 rounded-lg p-3 hover:bg-gray-700 transition">
                         <div class="text-xl font-bold text-yellow-500" x-text="peakActions.toLocaleString()">0</div>
                         <div class="text-sm text-gray-400">Peak Day</div>
                     </div>
@@ -88,11 +203,19 @@
 
         <!-- Row 2: Peak Times Heatmap -->
         <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
-            <h2 class="text-xl font-semibold text-white mb-4 flex items-center">
-                <i class="fas fa-fire text-orange-500 mr-2"></i>
-                Peak Online Times (Heatmap)
-            </h2>
-            <p class="text-gray-400 text-sm mb-4">Login activity by day of week and hour</p>
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-xl font-semibold text-white flex items-center">
+                        <i class="fas fa-fire text-orange-500 mr-2"></i>
+                        Peak Online Times (Heatmap)
+                    </h2>
+                    <p class="text-gray-400 text-sm mt-1">Login activity by day of week and hour - Click a cell for details</p>
+                </div>
+                <div class="flex items-center space-x-2 text-sm">
+                    <span class="text-gray-400">Hottest:</span>
+                    <span class="text-orange-400 font-bold" x-text="hottestPeriod">-</span>
+                </div>
+            </div>
             
             <div class="overflow-x-auto">
                 <div class="min-w-[900px]">
@@ -109,9 +232,14 @@
                         <div class="flex items-center mb-1">
                             <div class="w-24 text-sm text-gray-400 truncate" x-text="day.substr(0,3)"></div>
                             <template x-for="(hour, hourIdx) in 24" :key="hourIdx">
-                                <div class="flex-1 h-8 mx-px rounded"
+                                <div class="flex-1 h-8 mx-px rounded cursor-pointer hover:ring-2 hover:ring-white/30 transition-all relative group"
                                      :style="{ backgroundColor: getHeatmapColor(heatmapData[dayIdx]?.[hourIdx] || 0) }"
-                                     :title="`${day} ${hourIdx}:00 - ${heatmapData[dayIdx]?.[hourIdx] || 0} logins`">
+                                     @click="showHeatmapDetail(day, hourIdx, heatmapData[dayIdx]?.[hourIdx] || 0)">
+                                    <!-- Tooltip on hover -->
+                                    <div class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                                        <span x-text="day.substr(0,3) + ' ' + hourIdx + ':00'"></span> - 
+                                        <span class="font-bold text-blue-400" x-text="(heatmapData[dayIdx]?.[hourIdx] || 0) + ' logins'"></span>
+                                    </div>
                                 </div>
                             </template>
                         </div>
@@ -136,11 +264,16 @@
 
         <!-- Row 3: Faction Member Counts -->
         <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
-            <h2 class="text-xl font-semibold text-white mb-4 flex items-center">
-                <i class="fas fa-users text-cyan-500 mr-2"></i>
-                Top Faction Member Counts
-            </h2>
-            <div class="h-80">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold text-white flex items-center">
+                    <i class="fas fa-users text-cyan-500 mr-2"></i>
+                    Top Faction Member Counts
+                </h2>
+                <a href="/factions" class="text-gray-400 hover:text-white transition flex items-center text-sm">
+                    View All Factions <i class="fas fa-arrow-right ml-2"></i>
+                </a>
+            </div>
+            <div class="h-80 cursor-pointer" @click="window.location.href='/factions'">
                 <canvas id="factionChart"></canvas>
             </div>
         </div>
@@ -150,10 +283,15 @@
             
             <!-- Action Types Pie Chart -->
             <div class="bg-gray-800 rounded-xl p-6 shadow-lg">
-                <h2 class="text-xl font-semibold text-white mb-4 flex items-center">
-                    <i class="fas fa-chart-pie text-pink-500 mr-2"></i>
-                    Action Type Distribution
-                </h2>
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-semibold text-white flex items-center">
+                        <i class="fas fa-chart-pie text-pink-500 mr-2"></i>
+                        Action Type Distribution
+                    </h2>
+                    <a href="/actions" class="text-gray-400 hover:text-white transition text-sm">
+                        <i class="fas fa-external-link-alt"></i>
+                    </a>
+                </div>
                 <div class="h-64">
                     <canvas id="actionTypesChart"></canvas>
                 </div>
@@ -202,18 +340,28 @@ function analyticsPage() {
         totalLogins: 0,
         totalLogouts: 0,
         loginChart: null,
+        loginChartType: 'line',
+        loginData: { labels: [], logins: [], logouts: [] },
+        
+        // Animated counters
+        animatedLogins: 0,
+        animatedLogouts: 0,
+        animatedTotalActions: 0,
         
         // Actions trend
         totalActions: 0,
         avgActions: 0,
         peakActions: 0,
         actionsChart: null,
+        actionsChartType: 'bar',
+        actionsData: [],
         
         // Heatmap
         daysLabels: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
         hoursLabels: [],
         heatmapData: [],
         heatmapMax: 1,
+        hottestPeriod: '-',
         
         // Faction chart
         factionChart: null,
@@ -223,6 +371,13 @@ function analyticsPage() {
         
         // Stats
         stats: {},
+        
+        // Comparison & Auto-refresh
+        comparisonMode: false,
+        comparisonDelta: { logins: 0, actions: 0, loginsPercent: 0, actionsPercent: 0 },
+        autoRefresh: false,
+        refreshCountdown: 60,
+        refreshInterval: null,
         
         async init() {
             // Generate hours labels
@@ -244,6 +399,11 @@ function analyticsPage() {
                     this.loadActionTypes(),
                     this.loadStats()
                 ]);
+                
+                // If comparison mode, load comparison data
+                if (this.comparisonMode) {
+                    await this.loadComparisonData();
+                }
             } catch (e) {
                 console.error('Error loading analytics:', e);
             }
@@ -251,13 +411,153 @@ function analyticsPage() {
             this.loading = false;
         },
         
+        // Animate number counting up
+        animateValue(start, end, callback, duration = 1000) {
+            const startTime = performance.now();
+            const step = (currentTime) => {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                const easeOutQuad = 1 - (1 - progress) * (1 - progress);
+                const current = Math.floor(start + (end - start) * easeOutQuad);
+                callback(current);
+                if (progress < 1) requestAnimationFrame(step);
+            };
+            requestAnimationFrame(step);
+        },
+        
+        // Toggle auto-refresh
+        toggleAutoRefresh() {
+            this.autoRefresh = !this.autoRefresh;
+            if (this.autoRefresh) {
+                this.refreshCountdown = 60;
+                this.refreshInterval = setInterval(() => {
+                    this.refreshCountdown--;
+                    if (this.refreshCountdown <= 0) {
+                        this.refreshCountdown = 60;
+                        this.loadAllData();
+                    }
+                }, 1000);
+            } else {
+                if (this.refreshInterval) clearInterval(this.refreshInterval);
+                this.refreshInterval = null;
+            }
+        },
+        
+        // Load comparison data from previous period
+        async loadComparisonData() {
+            try {
+                // Fetch data from previous period (daysRange * 2 ago to daysRange ago)
+                const prevHours = this.daysRange * 24 * 2;
+                const res = await fetch(`/api/login-activity?hours=${prevHours}`);
+                const data = await res.json();
+                
+                // Split data into current and previous periods
+                const halfIndex = Math.floor(data.data.length / 2);
+                const previousData = data.data.slice(0, halfIndex);
+                const currentData = data.data.slice(halfIndex);
+                
+                const prevLogins = previousData.reduce((sum, d) => sum + d.logins, 0);
+                const currLogins = currentData.reduce((sum, d) => sum + d.logins, 0);
+                
+                // Calculate deltas
+                this.comparisonDelta.logins = currLogins - prevLogins;
+                this.comparisonDelta.loginsPercent = prevLogins > 0 
+                    ? Math.round((this.comparisonDelta.logins / prevLogins) * 100) 
+                    : 0;
+                
+                // Actions comparison
+                const actionsRes = await fetch(`/api/actions-trend?days=${this.daysRange * 2}`);
+                const actionsData = await actionsRes.json();
+                const actionsHalfIndex = Math.floor(actionsData.data.length / 2);
+                const prevActions = actionsData.data.slice(0, actionsHalfIndex).reduce((sum, d) => sum + d.count, 0);
+                const currActions = actionsData.data.slice(actionsHalfIndex).reduce((sum, d) => sum + d.count, 0);
+                
+                this.comparisonDelta.actions = currActions - prevActions;
+                this.comparisonDelta.actionsPercent = prevActions > 0 
+                    ? Math.round((this.comparisonDelta.actions / prevActions) * 100) 
+                    : 0;
+            } catch (e) {
+                console.error('Error loading comparison data:', e);
+            }
+        },
+        
+        // Export data as CSV or JSON
+        exportData(format) {
+            const exportPayload = {
+                daysRange: this.daysRange,
+                stats: this.stats,
+                loginActivity: {
+                    totalLogins: this.totalLogins,
+                    totalLogouts: this.totalLogouts,
+                    data: this.loginData
+                },
+                actionsTrend: {
+                    total: this.totalActions,
+                    average: this.avgActions,
+                    peak: this.peakActions,
+                    data: this.actionsData
+                },
+                heatmap: this.heatmapData,
+                exportedAt: new Date().toISOString()
+            };
+            
+            let content, filename, type;
+            
+            if (format === 'json') {
+                content = JSON.stringify(exportPayload, null, 2);
+                filename = `analytics_${this.daysRange}days_${new Date().toISOString().split('T')[0]}.json`;
+                type = 'application/json';
+            } else {
+                // CSV format - flatten the data
+                const rows = [['Metric', 'Value']];
+                rows.push(['Days Range', this.daysRange]);
+                rows.push(['Total Logins', this.totalLogins]);
+                rows.push(['Total Logouts', this.totalLogouts]);
+                rows.push(['Total Actions', this.totalActions]);
+                rows.push(['Average Actions/Day', this.avgActions]);
+                rows.push(['Peak Actions', this.peakActions]);
+                rows.push(['Total Players', this.stats.totalPlayers || 0]);
+                rows.push(['Online Now', this.stats.onlineNow || 0]);
+                rows.push(['Active Bans', this.stats.activeBans || 0]);
+                rows.push(['Hottest Period', this.hottestPeriod]);
+                
+                content = rows.map(r => r.join(',')).join('\n');
+                filename = `analytics_${this.daysRange}days_${new Date().toISOString().split('T')[0]}.csv`;
+                type = 'text/csv';
+            }
+            
+            const blob = new Blob([content], { type });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        },
+        
+        // Show heatmap cell detail
+        showHeatmapDetail(day, hourIndex, value) {
+            const dayName = this.daysLabels[day];
+            const hourLabel = this.hoursLabels[hourIndex];
+            alert(`📊 Peak Activity Detail\n\nDay: ${dayName}\nTime: ${hourLabel}\nLogins: ${value}\n\nThis represents ${Math.round(value / this.heatmapMax * 100)}% of peak activity.`);
+        },
+        
         async loadLoginActivity() {
             const hours = this.daysRange * 24;
             const res = await fetch(`/api/login-activity?hours=${hours}`);
             const data = await res.json();
             
+            const oldLogins = this.totalLogins;
+            const oldLogouts = this.totalLogouts;
+            
             this.totalLogins = data.data.reduce((sum, d) => sum + d.logins, 0);
             this.totalLogouts = data.data.reduce((sum, d) => sum + d.logouts, 0);
+            
+            // Animate the counters
+            this.animateValue(oldLogins, this.totalLogins, (v) => { this.animatedLogins = v; });
+            this.animateValue(oldLogouts, this.totalLogouts, (v) => { this.animatedLogouts = v; });
             
             // Aggregate by day for cleaner chart
             const byDay = {};
@@ -272,6 +572,9 @@ function analyticsPage() {
             const logins = Object.values(byDay).map(d => d.logins);
             const logouts = Object.values(byDay).map(d => d.logouts);
             
+            // Store data for chart type switching
+            this.loginData = { labels, logins, logouts };
+            
             this.renderLoginChart(labels, logins, logouts);
         },
         
@@ -281,8 +584,10 @@ function analyticsPage() {
             
             if (this.loginChart) this.loginChart.destroy();
             
+            const isLine = this.loginChartType === 'line';
+            
             this.loginChart = new Chart(ctx, {
-                type: 'line',
+                type: this.loginChartType,
                 data: {
                     labels: labels.map(l => l.substr(5)),
                     datasets: [
@@ -290,17 +595,17 @@ function analyticsPage() {
                             label: 'Logins',
                             data: logins,
                             borderColor: '#22c55e',
-                            backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                            fill: true,
-                            tension: 0.3
+                            backgroundColor: isLine ? 'rgba(34, 197, 94, 0.1)' : 'rgba(34, 197, 94, 0.7)',
+                            fill: isLine,
+                            tension: isLine ? 0.3 : 0
                         },
                         {
                             label: 'Logouts',
                             data: logouts,
                             borderColor: '#ef4444',
-                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                            fill: true,
-                            tension: 0.3
+                            backgroundColor: isLine ? 'rgba(239, 68, 68, 0.1)' : 'rgba(239, 68, 68, 0.7)',
+                            fill: isLine,
+                            tension: isLine ? 0.3 : 0
                         }
                     ]
                 },

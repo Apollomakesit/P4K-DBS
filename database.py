@@ -628,13 +628,37 @@ class Database:
             self._save_login_sync, player_id, player_name, timestamp
         )
 
-    def _save_logout_sync(self, player_id: str, timestamp: datetime) -> None:
-        """🔥 OPTIMIZED SYNC: Save logout event - FAST VERSION"""
+    def _save_logout_sync(self, player_id: str, timestamp: datetime) -> bool:
+        """🔥 FIXED SYNC: Save logout event - PREVENTS DUPLICATES
+        
+        Only saves a logout if:
+        1. Player's last event was a LOGIN (meaning they're logged in), OR
+        2. Player has no events at all (edge case, shouldn't happen)
+        
+        Returns True if logout was saved, False if skipped (duplicate)
+        """
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                
+                # 🔥 FIX: Check if last event was already a logout - skip if so
+                cursor.execute(
+                    """
+                    SELECT event_type FROM login_events 
+                    WHERE player_id = ? 
+                    ORDER BY timestamp DESC 
+                    LIMIT 1
+                """,
+                    (player_id,),
+                )
+                last_event = cursor.fetchone()
+                
+                # Skip if already logged out (last event was logout)
+                if last_event and last_event[0] == 'logout':
+                    logger.debug(f"Skipping duplicate logout for player {player_id} - already logged out")
+                    return False
 
-                # 🔥 Single optimized query with subquery instead of separate SELECT
+                # 🔥 Try to pair with most recent login and calculate duration
                 cursor.execute(
                     """
                     INSERT INTO login_events (player_id, event_type, timestamp, session_duration_seconds)
@@ -647,8 +671,9 @@ class Database:
                     (player_id, timestamp, timestamp, player_id),
                 )
 
-                # If no matching login found, insert without duration
-                if cursor.rowcount == 0:
+                # If no matching login found but player has no events at all, insert logout
+                # (This handles edge cases where bot restarts and sees player go offline)
+                if cursor.rowcount == 0 and last_event is None:
                     cursor.execute(
                         """
                         INSERT INTO login_events (player_id, event_type, timestamp, session_duration_seconds)
@@ -658,13 +683,15 @@ class Database:
                     )
 
                 conn.commit()
+                return True
         except Exception as e:
             logger.error(f"Error saving logout for {player_id}: {e}", exc_info=True)
+            return False
             # Don't raise - this shouldn't crash the bot
 
-    async def save_logout(self, player_id: str, timestamp: datetime) -> None:
-        """🔥 ASYNC: Save logout event - NON-BLOCKING"""
-        await asyncio.to_thread(self._save_logout_sync, player_id, timestamp)
+    async def save_logout(self, player_id: str, timestamp: datetime) -> bool:
+        """🔥 ASYNC: Save logout event - returns True if saved, False if skipped"""
+        return await asyncio.to_thread(self._save_logout_sync, player_id, timestamp)
 
     def _update_online_players_sync(self, online_players: List[Dict]) -> None:
         """🔥 OPTIMIZED SYNC: Batch update online players"""
@@ -824,6 +851,71 @@ class Database:
     async def cleanup_duplicate_logins(self, dry_run: bool = True) -> Dict:
         """🆕 ASYNC: Remove duplicate consecutive login events"""
         return await asyncio.to_thread(self._cleanup_duplicate_logins_sync, dry_run)
+
+    def _cleanup_duplicate_logouts_sync(self, dry_run: bool = True) -> Dict:
+        """🆕 SYNC: Remove duplicate consecutive logout events without matching logins
+        
+        Keeps the FIRST logout in each consecutive series, deletes the rest.
+        For each player:
+        1. Find all logout events
+        2. For each logout, check if previous event was also a logout
+        3. If so, it's a duplicate - delete it
+        
+        Returns dict with stats about what was/would be deleted
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Find duplicate logouts to delete (logouts preceded by another logout)
+                cursor.execute("""
+                    WITH ordered_events AS (
+                        SELECT 
+                            id,
+                            player_id,
+                            event_type,
+                            timestamp,
+                            LAG(event_type) OVER (PARTITION BY player_id ORDER BY timestamp) as prev_event
+                        FROM login_events
+                    )
+                    SELECT id, player_id, timestamp
+                    FROM ordered_events
+                    WHERE event_type = 'logout' AND prev_event = 'logout'
+                """)
+                
+                duplicates = cursor.fetchall()
+                duplicate_count = len(duplicates)
+                
+                # Count by player for stats
+                player_counts = {}
+                for dup in duplicates:
+                    pid = dup[1]
+                    player_counts[pid] = player_counts.get(pid, 0) + 1
+                
+                if not dry_run and duplicate_count > 0:
+                    # Actually delete the duplicates
+                    duplicate_ids = [dup[0] for dup in duplicates]
+                    placeholders = ",".join("?" * len(duplicate_ids))
+                    cursor.execute(
+                        f"DELETE FROM login_events WHERE id IN ({placeholders})",
+                        duplicate_ids
+                    )
+                    conn.commit()
+                    logger.info(f"🧹 Deleted {duplicate_count} duplicate logout events")
+                
+                return {
+                    "total_duplicates": duplicate_count,
+                    "players_affected": len(player_counts),
+                    "top_players": dict(sorted(player_counts.items(), key=lambda x: x[1], reverse=True)[:10])
+                }
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up duplicate logouts: {e}", exc_info=True)
+            return {"error": str(e)}
+
+    async def cleanup_duplicate_logouts(self, dry_run: bool = True) -> Dict:
+        """🆕 ASYNC: Remove duplicate consecutive logout events"""
+        return await asyncio.to_thread(self._cleanup_duplicate_logouts_sync, dry_run)
 
     def _mark_player_for_update_sync(self, player_id: str, player_name: str) -> None:
         """Mark player for priority update - allows duplicate usernames"""

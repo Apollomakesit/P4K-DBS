@@ -4489,6 +4489,101 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in cleanup_logins command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
+    # ========================================================================
+    # 🆕 CLEANUP DUPLICATE LOGOUTS COMMAND
+    # ========================================================================
+
+    @bot.tree.command(
+        name="cleanuplogouts",
+        description="🧹 Remove duplicate consecutive logout events (Admin only)",
+    )
+    @app_commands.describe(
+        dry_run="Preview without deleting (default: true)",
+        confirm="Set to true to actually delete (required if dry_run=false)"
+    )
+    @app_commands.checks.cooldown(1, 60)
+    async def cleanup_logouts_command(
+        interaction: discord.Interaction,
+        dry_run: bool = True,
+        confirm: bool = False
+    ):
+        """Remove duplicate consecutive logout events that inflate logout counts"""
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ **Access Denied**\n\nThis command is restricted to bot administrators.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        try:
+            # Safety check
+            if not dry_run and not confirm:
+                await interaction.followup.send(
+                    "⚠️ **Safety Check**\n\n"
+                    "To actually delete data, you must set both `dry_run:false` AND `confirm:true`"
+                )
+                return
+
+            # Run cleanup
+            results = await db.cleanup_duplicate_logouts(dry_run=dry_run)
+
+            if "error" in results:
+                await interaction.followup.send(f"❌ **Error:** {results['error']}")
+                return
+
+            total_dups = results.get("total_duplicates", 0)
+            players_affected = results.get("players_affected", 0)
+            top_players = results.get("top_players", {})
+
+            if total_dups == 0:
+                await interaction.followup.send(
+                    "✅ **No duplicate logouts found!**\n\n"
+                    "Logout events are already clean."
+                )
+                return
+
+            if dry_run:
+                embed = discord.Embed(
+                    title="🔍 DRY RUN - Duplicate Logouts Preview",
+                    description=(
+                        f"Found **{total_dups:,}** duplicate logout events to remove.\n\n"
+                        f"**Players affected:** {players_affected:,}\n\n"
+                        "To delete, run:\n`/cleanuplogouts dry_run:false confirm:true`"
+                    ),
+                    color=discord.Color.orange(),
+                    timestamp=datetime.now(),
+                )
+            else:
+                embed = discord.Embed(
+                    title="✅ Duplicate Logouts Cleaned!",
+                    description=(
+                        f"Deleted **{total_dups:,}** duplicate logout events.\n\n"
+                        f"**Players affected:** {players_affected:,}"
+                    ),
+                    color=discord.Color.green(),
+                    timestamp=datetime.now(),
+                )
+                logger.info(f"🧹 Admin {interaction.user} cleaned {total_dups:,} duplicate logouts")
+
+            # Show top affected players
+            if top_players:
+                top_list = "\n".join([f"• Player {pid}: {count} duplicates" for pid, count in list(top_players.items())[:5]])
+                embed.add_field(
+                    name="📊 Top Affected Players",
+                    value=top_list,
+                    inline=False
+                )
+
+            embed.set_footer(text="Duplicate logouts occur when same logout event is recorded multiple times")
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in cleanup_logouts command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
     logger.info(
         "✅ All slash commands registered successfully with auto-refresh for placeholder usernames"
     )

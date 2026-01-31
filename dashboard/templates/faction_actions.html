@@ -49,7 +49,10 @@
                                 <a :href="'/player/' + action.player_id" class="text-primary hover:underline" x-text="action.player_name || action.player_id"></a>
                             </td>
                             <td class="py-3">
-                                <span class="px-2 py-1 text-xs rounded-full bg-gray-500/20 text-gray-300" x-text="formatType(action.action_type)"></span>
+                                <span class="inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-full" :class="getActionBadgeClass(action.action_type)">
+                                    <i :class="getActionIcon(action.action_type)" class="mr-1.5"></i>
+                                    <span x-text="formatType(action.action_type)"></span>
+                                </span>
                             </td>
                             <td class="py-3 text-sm text-gray-400 max-w-xs truncate" x-text="action.action_detail || '—'"></td>
                         </tr>
@@ -107,7 +110,75 @@ function factionActionsPage() {
 
         formatType(type) {
             if (!type) return 'Unknown';
-            return type.replace(/_/g, ' ');
+            return type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        },
+
+        getActionBadgeClass(type) {
+            const colorMap = {
+                'item_given': 'bg-emerald-500/20 text-emerald-400',
+                'item_received': 'bg-green-500/20 text-green-400',
+                'money_transfer': 'bg-yellow-500/20 text-yellow-400',
+                'money_deposit': 'bg-amber-500/20 text-amber-400',
+                'money_withdraw': 'bg-orange-500/20 text-orange-300',
+                'warning_received': 'bg-orange-600/20 text-orange-400',
+                'ban_received': 'bg-red-600/20 text-red-500',
+                'admin_jail': 'bg-red-500/20 text-red-400',
+                'admin_unjail': 'bg-lime-500/20 text-lime-400',
+                'admin_unban': 'bg-green-600/20 text-green-400',
+                'chest_deposit': 'bg-blue-500/20 text-blue-400',
+                'chest_withdraw': 'bg-sky-500/20 text-sky-400',
+                'trade': 'bg-purple-500/20 text-purple-400',
+                'vehicle_contract': 'bg-indigo-500/20 text-indigo-400',
+                'vehicle_bought': 'bg-teal-500/20 text-teal-400',
+                'vehicle_sold': 'bg-cyan-500/20 text-cyan-400',
+                'vehicle_scrapped': 'bg-rose-500/20 text-rose-400',
+                'property_bought': 'bg-violet-500/20 text-violet-400',
+                'property_sold': 'bg-fuchsia-500/20 text-fuchsia-400',
+                'bank_heist_delivery': 'bg-yellow-600/20 text-yellow-300',
+                'gambling_win': 'bg-pink-500/20 text-pink-400',
+                'house_safe_deposit': 'bg-slate-500/20 text-slate-300',
+                'house_safe_withdraw': 'bg-slate-500/20 text-slate-300',
+                'item_sold': 'bg-lime-600/20 text-lime-400',
+                'license_plate_sale': 'bg-zinc-500/20 text-zinc-300',
+                'mute_received': 'bg-gray-600/20 text-gray-400',
+                'faction_kicked': 'bg-red-700/20 text-red-400',
+                'kill_character': 'bg-red-900/20 text-red-500'
+            };
+            return colorMap[type] || 'bg-gray-500/20 text-gray-400';
+        },
+
+        getActionIcon(type) {
+            const iconMap = {
+                'item_given': 'fas fa-hand-holding',
+                'item_received': 'fas fa-gift',
+                'money_transfer': 'fas fa-money-bill-transfer',
+                'money_deposit': 'fas fa-piggy-bank',
+                'money_withdraw': 'fas fa-money-bill-wave',
+                'warning_received': 'fas fa-triangle-exclamation',
+                'ban_received': 'fas fa-gavel',
+                'admin_jail': 'fas fa-lock',
+                'admin_unjail': 'fas fa-lock-open',
+                'admin_unban': 'fas fa-user-check',
+                'chest_deposit': 'fas fa-box-archive',
+                'chest_withdraw': 'fas fa-box-open',
+                'trade': 'fas fa-handshake',
+                'vehicle_contract': 'fas fa-file-signature',
+                'vehicle_bought': 'fas fa-car',
+                'vehicle_sold': 'fas fa-car-side',
+                'vehicle_scrapped': 'fas fa-car-burst',
+                'property_bought': 'fas fa-house-circle-check',
+                'property_sold': 'fas fa-house-circle-xmark',
+                'bank_heist_delivery': 'fas fa-sack-dollar',
+                'gambling_win': 'fas fa-dice',
+                'house_safe_deposit': 'fas fa-vault',
+                'house_safe_withdraw': 'fas fa-vault',
+                'item_sold': 'fas fa-cash-register',
+                'license_plate_sale': 'fas fa-id-card',
+                'mute_received': 'fas fa-volume-xmark',
+                'faction_kicked': 'fas fa-user-slash',
+                'kill_character': 'fas fa-skull'
+            };
+            return iconMap[type] || 'fas fa-circle-info';
         },
 
         formatTimestamp(timestamp) {
