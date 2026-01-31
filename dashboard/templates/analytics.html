@@ -627,10 +627,17 @@ function analyticsPage() {
             const res = await fetch(`/api/actions-trend?days=${this.daysRange}`);
             const data = await res.json();
             
+            const oldTotal = this.totalActions;
             const counts = data.data.map(d => d.count);
             this.totalActions = counts.reduce((a, b) => a + b, 0);
             this.avgActions = Math.round(this.totalActions / counts.length);
             this.peakActions = Math.max(...counts);
+            
+            // Animate the total counter
+            this.animateValue(oldTotal, this.totalActions, (v) => { this.animatedTotalActions = v; });
+            
+            // Store data for chart type switching
+            this.actionsData = data.data;
             
             this.renderActionsChart(data.data);
         },
@@ -641,16 +648,20 @@ function analyticsPage() {
             
             if (this.actionsChart) this.actionsChart.destroy();
             
+            const isLine = this.actionsChartType === 'line';
+            
             this.actionsChart = new Chart(ctx, {
-                type: 'bar',
+                type: this.actionsChartType,
                 data: {
                     labels: data.map(d => d.date.substr(5)),
                     datasets: [{
                         label: 'Actions',
                         data: data.map(d => d.count),
-                        backgroundColor: 'rgba(139, 92, 246, 0.6)',
+                        backgroundColor: isLine ? 'rgba(139, 92, 246, 0.1)' : 'rgba(139, 92, 246, 0.6)',
                         borderColor: '#8b5cf6',
-                        borderWidth: 1
+                        borderWidth: isLine ? 2 : 1,
+                        fill: isLine,
+                        tension: isLine ? 0.3 : 0
                     }]
                 },
                 options: {
@@ -673,13 +684,31 @@ function analyticsPage() {
             
             this.heatmapData = data.heatmap || [];
             
-            // Find max for color scaling
+            // Find max for color scaling and track hottest period
             this.heatmapMax = 1;
-            data.heatmap.forEach(row => {
-                row.forEach(val => {
+            let hottestDay = 0;
+            let hottestHour = 0;
+            let maxValue = 0;
+            
+            const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            
+            data.heatmap.forEach((row, dayIndex) => {
+                row.forEach((val, hourIndex) => {
                     if (val > this.heatmapMax) this.heatmapMax = val;
+                    if (val > maxValue) {
+                        maxValue = val;
+                        hottestDay = dayIndex;
+                        hottestHour = hourIndex;
+                    }
                 });
             });
+            
+            // Set hottest period string
+            if (maxValue > 0) {
+                this.hottestPeriod = `${days[hottestDay]} ${hottestHour.toString().padStart(2, '0')}:00`;
+            } else {
+                this.hottestPeriod = '-';
+            }
         },
         
         getHeatmapColor(value) {

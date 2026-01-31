@@ -878,6 +878,20 @@ def api_sessions(player_id):
         
         sessions = [dict(row) for row in cursor.fetchall()]
         
+        # Format session times for display
+        for session in sessions:
+            login_ts = _parse_timestamp(session.get('login_time'))
+            logout_ts = _parse_timestamp(session.get('logout_time'))
+            
+            session['login_time_display'] = _format_timestamp(login_ts) if login_ts else None
+            session['login_time_ago'] = _time_ago(login_ts) if login_ts else None
+            session['logout_time_display'] = _format_timestamp(logout_ts) if logout_ts else None
+            session['logout_time_ago'] = _time_ago(logout_ts) if logout_ts else None
+            
+            # Recalculate duration if missing but we have both timestamps
+            if not session.get('session_duration_seconds') and login_ts and logout_ts:
+                session['session_duration_seconds'] = int((logout_ts - login_ts).total_seconds())
+        
         # Calculate total playtime from sessions
         total_seconds = sum(s.get('session_duration_seconds', 0) or 0 for s in sessions)
         total_hours = total_seconds / 3600
