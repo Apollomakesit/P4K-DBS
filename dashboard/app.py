@@ -92,8 +92,13 @@ def _parse_timestamp(value):
     if isinstance(value, datetime):
         return value
     try:
-        return datetime.fromisoformat(value)
-    except Exception:
+        # Handle multiple timestamp formats
+        if 'T' in str(value):
+            return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        else:
+            return datetime.fromisoformat(str(value))
+    except (ValueError, AttributeError) as e:
+        logger.warning(f"Failed to parse timestamp '{value}': {e}")
         return None
 
 def _format_timestamp(dt: datetime) -> str:
