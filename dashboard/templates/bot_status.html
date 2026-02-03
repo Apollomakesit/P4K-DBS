@@ -242,11 +242,11 @@
                 </div>
                 <div class="flex justify-between items-center py-2 border-b border-gray-700">
                     <span class="text-gray-400">Database Size</span>
-                    <span class="text-white font-medium" x-text="status.database?.size_mb ? status.database.size_mb.toFixed(2) + ' MB' : 'N/A'"></span>
+                    <span class="text-white font-medium" x-text="status.database?.size_mb !== undefined ? status.database.size_mb.toFixed(2) + ' MB' : (status.database_size_mb !== undefined ? status.database_size_mb.toFixed(2) + ' MB' : 'N/A')"></span>
                 </div>
                 <div class="flex justify-between items-center py-2">
                     <span class="text-gray-400">Database Path</span>
-                    <span class="text-gray-300 text-sm font-mono" x-text="status.database?.path || 'N/A'"></span>
+                    <span class="text-gray-300 text-sm font-mono" x-text="status.database?.path || status.database_path || 'Unknown'"></span>
                 </div>
             </div>
         </div>
@@ -328,6 +328,7 @@ function botStatusPage() {
         error: '',
         lastUpdate: 'Never',
         refreshInterval: null,
+        refreshTimer: null,
         
         get activeTasks() {
             if (!this.status.tasks) return 0;
@@ -346,8 +347,33 @@ function botStatusPage() {
         
         async init() {
             await this.refresh();
-            // Auto-refresh every 30 seconds
-            this.refreshInterval = setInterval(() => this.refresh(), 30000);
+            this.startAutoRefresh();
+            document.addEventListener('visibilitychange', this.handleVisibilityChange.bind(this));
+            window.addEventListener('focus', () => this.refresh());
+        },
+
+        startAutoRefresh() {
+            if (!this.refreshInterval) {
+                this.refreshInterval = setInterval(() => this.refresh(), 15000);
+            }
+        },
+
+        stopAutoRefresh() {
+            if (this.refreshInterval) {
+                clearInterval(this.refreshInterval);
+                this.refreshInterval = null;
+            }
+            if (this.refreshTimer) {
+                clearTimeout(this.refreshTimer);
+                this.refreshTimer = null;
+            }
+        },
+
+        handleVisibilityChange() {
+            if (document.visibilityState === 'visible') {
+                this.refresh();
+                this.startAutoRefresh();
+            }
         },
         
         async refresh() {
@@ -374,6 +400,12 @@ function botStatusPage() {
                 this.status = { connected: false };
             } finally {
                 this.loading = false;
+                if (!this.refreshTimer) {
+                    this.refreshTimer = setTimeout(() => {
+                        this.refreshTimer = null;
+                        this.refresh();
+                    }, 15000);
+                }
             }
         },
         
