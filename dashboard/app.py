@@ -93,8 +93,10 @@ def _parse_timestamp(value):
         return value
     try:
         # Handle multiple timestamp formats
+        # Note: Both Pro4Kings panel and this dashboard use Romania local time
+        # so we just strip 'Z' suffix instead of treating it as UTC
         if 'T' in str(value):
-            return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+            return datetime.fromisoformat(str(value).rstrip('Z'))
         else:
             return datetime.fromisoformat(str(value))
     except (ValueError, AttributeError) as e:
@@ -1583,7 +1585,9 @@ def api_peak_times():
             ts = row['timestamp']
             if isinstance(ts, str):
                 try:
-                    ts = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                    # Both Pro4Kings panel and dashboard use Romania local time
+                    # Just strip 'Z' suffix instead of treating it as UTC
+                    ts = datetime.fromisoformat(ts.rstrip('Z'))
                 except:
                     continue
             if ts:
