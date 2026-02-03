@@ -76,20 +76,21 @@
                 <div>
                     <p class="text-gray-400 text-sm">Memory Usage</p>
                     <p class="text-2xl font-bold text-white mt-1">
-                        <span x-text="status.memory?.current_mb ? status.memory.current_mb.toFixed(1) + ' MB' : 'N/A'"></span>
+                        <span x-text="status.memory?.current_mb ? status.memory.current_mb.toFixed(1) + ' MB' : (status.dashboard_memory_mb ? status.dashboard_memory_mb.toFixed(1) + ' MB' : 'N/A')"></span>
                     </p>
                 </div>
                 <div class="w-12 h-12 bg-blue-600/20 rounded-lg flex items-center justify-center">
                     <i class="fas fa-memory text-blue-400 text-xl"></i>
                 </div>
             </div>
-            <div x-show="status.memory" class="mt-4">
+            <div x-show="status.memory || status.dashboard_memory_mb" class="mt-4">
                 <div class="flex justify-between text-xs text-gray-400 mb-1">
                     <span>Peak: <span x-text="status.memory?.peak_mb ? status.memory.peak_mb.toFixed(1) + ' MB' : 'N/A'"></span></span>
+                    <span>System: <span x-text="status.system_memory_percent ? status.system_memory_percent.toFixed(1) + '%' : 'N/A'"></span></span>
                 </div>
                 <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
                     <div class="h-full bg-blue-500 transition-all duration-500 rounded-full"
-                         :style="{ width: (status.memory?.percent || 0) + '%' }"></div>
+                         :style="{ width: (status.memory?.percent || status.system_memory_percent || 0) + '%' }"></div>
                 </div>
             </div>
         </div>
@@ -100,7 +101,7 @@
                 <div>
                     <p class="text-gray-400 text-sm">CPU Usage</p>
                     <p class="text-2xl font-bold text-white mt-1">
-                        <span x-text="status.cpu?.percent ? status.cpu.percent.toFixed(1) + '%' : 'N/A'"></span>
+                        <span x-text="status.cpu?.percent !== undefined ? status.cpu.percent.toFixed(1) + '%' : 'N/A'"></span>
                     </p>
                 </div>
                 <div class="w-12 h-12 bg-purple-600/20 rounded-lg flex items-center justify-center">
@@ -108,6 +109,10 @@
                 </div>
             </div>
             <div x-show="status.cpu" class="mt-4">
+                <div class="flex justify-between text-xs text-gray-400 mb-1">
+                    <span>Threads: <span x-text="status.cpu?.num_threads || 'N/A'"></span></span>
+                    <span>System: <span x-text="status.cpu?.system_cpu_percent ? status.cpu.system_cpu_percent.toFixed(1) + '%' : 'N/A'"></span></span>
+                </div>
                 <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
                     <div class="h-full transition-all duration-500 rounded-full"
                          :class="{ 'bg-green-500': status.cpu?.percent < 50, 'bg-yellow-500': status.cpu?.percent >= 50 && status.cpu?.percent < 80, 'bg-red-500': status.cpu?.percent >= 80 }"

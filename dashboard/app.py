@@ -1734,11 +1734,15 @@ def api_bot_status():
     try:
         import json
         import psutil
+        import tracemalloc
         
         status = {
             'bot_connected': False,
             'uptime': None,
-            'memory_mb': None,
+            'memory': {},
+            'cpu': {},
+            'database': {},
+            'config': {},
             'tasks': {},
             'last_check': datetime.now().isoformat()
         }
@@ -1815,30 +1819,143 @@ def api_bot_status():
             except:
                 pass
         
-        # Get system memory info
+        # 🔥 ENHANCED: Get comprehensive memory info
         try:
             process = psutil.Process(os.getpid())
-            status['dashboard_memory_mb'] = round(process.memory_info().rss / 1024 / 1024, 1)
-            status['system_memory_percent'] = psutil.virtual_memory().percent
-        except:
-            pass
+            mem_info = process.memory_info()
+            
+            # Get tracemalloc data if available
+            try:
+                tracemalloc.start()
+            except:
+                pass  # Already started
+            
+            current_traced, peak_traced = 0, 0
+            try:
+                current_traced, peak_traced = tracemalloc.get_traced_memory()
+            except:
+                pass
+            
+            status['memory'] = {
+                'current_mb': round(mem_info.rss / 1024 / 1024, 1),
+                'peak_mb': round(peak_traced / 1024 / 1024, 1) if peak_traced > 0 else round(mem_info.rss / 1024 / 1024, 1),
+                'percent': round((mem_info.rss / psutil.virtual_memory().total) * 100, 1),
+                'rss_mb': round(mem_info.rss / 1024 / 1024, 1),
+                'vms_mb': round(mem_info.vms / 1024 / 1024, 1)
+            }
+            
+            # System memory
+            sys_mem = psutil.virtual_memory()
+            status['system_memory_percent'] = round(sys_mem.percent, 1)
+            status['system_memory_available_gb'] = round(sys_mem.available / 1024**3, 2)
+            
+        except Exception as e:
+            logger.warning(f"Error getting memory info: {e}")
+            status['memory'] = {
+                'current_mb': 0,
+                'peak_mb': 0,
+                'percent': 0
+            }
         
-        cursor.execute("SELECT COUNT(*) as count FROM player_profiles")
-        status['total_players'] = cursor.fetchone()['count']
+        # 🔥 NEW: Get CPU usage
+        try:
+            process = psutil.Process(os.getpid())
+            # Get CPU percent over a short interval
+            cpu_percent = process.cpu_percent(interval=0.1)
+            
+            status['cpu'] = {
+                'percent': round(cpu_percent, 1),
+                'num_threads': process.num_threads(),
+                'system_cpu_percent': round(psutil.cpu_percent(interval=0.1), 1)
+            }
+        except Exception as e:
+            logger.warning(f"Error getting CPU info: {e}")
+            status['cpu'] = {
+                'percent': 0,
+                'num_threads': 0,
+                'system_cpu_percent': 0
+            }
         
-        cursor.execute("SELECT COUNT(*) as count FROM actions")
-        status['total_actions'] = cursor.fetchone()['count']
+        # 🔥 ENHANCED: Database statistics
+        try:
+            cursor.execute("SELECT COUNT(*) as count FROM player_profiles")
+            total_players = cursor.fetchone()['count']
+            
+            cursor.execute("SELECT COUNT(*) as count FROM actions")
+            total_actions = cursor.fetchone()['count']
+            
+            cursor.execute("SELECT COUNT(*) FROM online_players")
+            online_count = cursor.fetchone()['count']
+            
+            # Get database file size
+            db_path = get_db_path()
+            db_size_mb = 0
+            if os.path.exists(db_path):
+                db_size_mb = round(os.path.getsize(db_path) / 1024 / 1024, 1)
+            
+            status['database'] = {
+                'total_players': total_players,
+                'total_actions': total_actions,
+                'online_count': online_count,
+                'size_mb': db_size_mb,
+                'path': db_path
+            }
+            
+            # Also set at root level for backward compatibility
+            status['total_players'] = total_players
+            status['total_actions'] = total_actions
+            status['database_size_mb'] = db_size_mb
+            
+        except Exception as e:
+            logger.warning(f"Error getting database stats: {e}")
+            status['database'] = {
+                'total_players': 0,
+                'total_actions': 0,
+                'online_count': 0,
+                'size_mb': 0,
+                'path': 'Unknown'
+            }
         
-        # Get database file size
-        db_path = get_db_path()
-        if os.path.exists(db_path):
-            status['database_size_mb'] = round(os.path.getsize(db_path) / 1024 / 1024, 1)
+        # 🔥 NEW: Configuration info from environment/config
+        try:
+            # Import config to get actual values
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            try:
+                from config import Config
+                
+                status['config'] = {
+                    'scraper_workers': Config.SCRAPER_MAX_CONCURRENT,
+                    'rate_limit': Config.SCRAPER_RATE_LIMIT,
+                    'vip_count': len(Config.VIP_PLAYER_IDS),
+                    'actions_interval': Config.SCRAPE_ACTIONS_INTERVAL,
+                    'online_interval': Config.SCRAPE_ONLINE_INTERVAL,
+                    'track_online': Config.TRACK_ONLINE_PLAYERS_PRIORITY,
+                    'vip_interval': Config.VIP_SCAN_INTERVAL,
+                    'update_profiles_interval': Config.UPDATE_PROFILES_INTERVAL,
+                    'check_banned_interval': Config.CHECK_BANNED_INTERVAL
+                }
+            except ImportError:
+                # Fallback if config not available
+                status['config'] = {
+                    'scraper_workers': int(os.getenv('SCRAPER_MAX_CONCURRENT', 5)),
+                    'rate_limit': float(os.getenv('SCRAPER_RATE_LIMIT', 25.0)),
+                    'vip_count': len([p for p in os.getenv('VIP_PLAYER_IDS', '').split(',') if p.strip()]),
+                    'actions_interval': int(os.getenv('SCRAPE_ACTIONS_INTERVAL', 5)),
+                    'online_interval': int(os.getenv('SCRAPE_ONLINE_INTERVAL', 60)),
+                    'track_online': os.getenv('TRACK_ONLINE_PLAYERS_PRIORITY', 'true').lower() == 'true',
+                    'vip_interval': int(os.getenv('VIP_SCAN_INTERVAL', 600)),
+                    'update_profiles_interval': int(os.getenv('UPDATE_PROFILES_INTERVAL', 120)),
+                    'check_banned_interval': int(os.getenv('CHECK_BANNED_INTERVAL', 3600))
+                }
+        except Exception as e:
+            logger.warning(f"Error getting config: {e}")
+            status['config'] = {}
         
         conn.close()
         
         return jsonify(status)
     except Exception as e:
-        logger.error(f"Error getting bot status: {e}")
+        logger.error(f"Error getting bot status: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/vip-events')
