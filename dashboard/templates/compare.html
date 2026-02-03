@@ -405,7 +405,10 @@ function comparePage() {
         
         formatDate(dateStr) {
             if (!dateStr) return 'Unknown';
-            const date = new Date(dateStr);
+            // Convert space-separated format to ISO format for reliable parsing
+            const isoDateStr = String(dateStr).replace(' ', 'T');
+            const date = new Date(isoDateStr);
+            if (isNaN(date.getTime())) return dateStr;
             return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
     }

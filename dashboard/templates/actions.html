@@ -359,7 +359,10 @@ function actionsPage() {
 
         formatTimestamp(timestamp) {
             if (!timestamp) return '';
-            const date = new Date(timestamp);
+            // Convert space-separated format to ISO format for reliable parsing
+            const isoTimestamp = String(timestamp).replace(' ', 'T');
+            const date = new Date(isoTimestamp);
+            if (isNaN(date.getTime())) return timestamp;  // Return original if parsing fails
             const pad = (n) => String(n).padStart(2, '0');
             return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
                    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
@@ -367,10 +370,14 @@ function actionsPage() {
 
         formatRelative(timestamp) {
             if (!timestamp) return '';
-            const date = new Date(timestamp);
+            // Convert space-separated format to ISO format for reliable parsing
+            const isoTimestamp = String(timestamp).replace(' ', 'T');
+            const date = new Date(isoTimestamp);
+            if (isNaN(date.getTime())) return '';
             const now = new Date();
             const diff = (now - date) / 1000;
             
+            if (diff < 0) return 'Just now';  // Handle future timestamps
             if (diff < 60) return 'Just now';
             if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
             if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';

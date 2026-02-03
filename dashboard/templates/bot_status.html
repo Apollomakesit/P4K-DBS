@@ -379,10 +379,14 @@ function botStatusPage() {
         formatTimeAgo(timestamp) {
             if (!timestamp) return 'Never';
             
-            const date = new Date(timestamp);
+            // Convert space-separated format to ISO format for reliable parsing
+            const isoTimestamp = String(timestamp).replace(' ', 'T');
+            const date = new Date(isoTimestamp);
+            if (isNaN(date.getTime())) return timestamp;
             const now = new Date();
             const seconds = Math.floor((now - date) / 1000);
             
+            if (seconds < 0) return 'Just now';
             if (seconds < 60) return seconds + 's ago';
             if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
             if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';

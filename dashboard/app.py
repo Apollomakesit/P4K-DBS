@@ -104,12 +104,23 @@ def _parse_timestamp(value):
         return None
 
 def _format_timestamp(dt: datetime) -> str:
+    # Ensure we're working with naive datetime (no timezone)
+    if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None)
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 def _time_ago(dt: datetime) -> str:
     if not dt:
         return ""
+    # Ensure we're working with naive datetime for comparison
+    if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None)
+    
     diff = (datetime.now() - dt).total_seconds()
+    
+    # Handle negative diff (timestamp in "future" - shouldn't happen but safety check)
+    if diff < 0:
+        return "Just now"
     if diff < 60:
         return "Just now"
     if diff < 3600:

@@ -222,10 +222,16 @@ function playerPage() {
         formatTimestamp(ts) {
             if (!ts) return 'Unknown';
             try {
-                const date = new Date(ts);
+                // Convert space-separated format to ISO format for reliable parsing
+                const isoTs = String(ts).replace(' ', 'T');
+                const date = new Date(isoTs);
                 if (isNaN(date.getTime())) return ts;
                 const now = new Date();
                 const diffMs = now - date;
+                
+                // Handle negative diff (future timestamps)
+                if (diffMs < 0) return 'Just now';
+                
                 const diffMins = Math.floor(diffMs / 60000);
                 const diffHours = Math.floor(diffMs / 3600000);
                 const diffDays = Math.floor(diffMs / 86400000);

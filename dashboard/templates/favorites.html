@@ -314,9 +314,16 @@ function favoritesPage() {
         
         formatDate(dateStr) {
             if (!dateStr) return 'Unknown';
-            const date = new Date(dateStr);
+            // Convert space-separated format to ISO format for reliable parsing
+            const isoDateStr = String(dateStr).replace(' ', 'T');
+            const date = new Date(isoDateStr);
+            if (isNaN(date.getTime())) return dateStr;
             const now = new Date();
             const diffMs = now - date;
+            
+            // Handle negative diff (future timestamps)
+            if (diffMs < 0) return 'Just now';
+            
             const diffMins = Math.floor(diffMs / 60000);
             
             if (diffMins < 1) return 'Just now';
