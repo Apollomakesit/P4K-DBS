@@ -4584,6 +4584,262 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in cleanup_logouts command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
+    # ========================================================================
+    # 🆕 REPARSE UNKNOWN ACTIONS COMMAND
+    # ========================================================================
+
+    @bot.tree.command(
+        name="reparseunknown",
+        description="🔄 Re-parse unknown actions with updated patterns (Admin only)",
+    )
+    @app_commands.describe(
+        action_type="Filter by action type (optional)",
+        dry_run="Preview without updating (default: true)",
+        confirm="Set to true to actually update (required if dry_run=false)",
+        limit="Max actions to process (default: 1000, max: 10000)"
+    )
+    @app_commands.choices(action_type=[
+        app_commands.Choice(name="Unknown", value="unknown"),
+        app_commands.Choice(name="Other", value="other"),
+        app_commands.Choice(name="Legacy Multi-Action", value="legacy_multi_action"),
+    ])
+    @app_commands.checks.cooldown(1, 60)
+    async def reparse_unknown_command(
+        interaction: discord.Interaction,
+        dry_run: bool = True,
+        confirm: bool = False,
+        action_type: Optional[str] = None,
+        limit: int = 1000
+    ):
+        """🔄 Re-parse unknown actions with updated scraper patterns"""
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ **Access Denied**\n\nThis command is restricted to bot administrators.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        try:
+            # Safety check
+            if not dry_run and not confirm:
+                await interaction.followup.send(
+                    "⚠️ **Safety Check**\n\n"
+                    "To actually update database, you must set both `dry_run:false` AND `confirm:true`"
+                )
+                return
+
+            # Clamp limit
+            limit = max(10, min(limit, 10000))
+
+            await interaction.followup.send(
+                f"🔄 **Re-parsing {'all' if not action_type else action_type} unknown actions...**\n"
+                f"Mode: {'DRY RUN (preview)' if dry_run else 'EXECUTE (will update)'}\n"
+                f"Limit: {limit:,} actions"
+            )
+
+            # Get unknown actions from database
+            def _get_unknown_actions():
+                with db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    
+                    if action_type:
+                        cursor.execute("""
+                            SELECT id, player_id, player_name, action_type, action_detail,
+                                   timestamp, raw_text, item_name, item_quantity,
+                                   target_player_id, target_player_name,
+                                   admin_id, admin_name, warning_count, reason
+                            FROM actions
+                            WHERE action_type = ?
+                            ORDER BY timestamp DESC
+                            LIMIT ?
+                        """, (action_type, limit))
+                    else:
+                        cursor.execute("""
+                            SELECT id, player_id, player_name, action_type, action_detail,
+                                   timestamp, raw_text, item_name, item_quantity,
+                                   target_player_id, target_player_name,
+                                   admin_id, admin_name, warning_count, reason
+                            FROM actions
+                            WHERE action_type IN ('unknown', 'other', 'legacy_multi_action')
+                            ORDER BY timestamp DESC
+                            LIMIT ?
+                        """, (limit,))
+                    
+                    return [dict(row) for row in cursor.fetchall()]
+
+            unknown_actions = await asyncio.to_thread(_get_unknown_actions)
+
+            if not unknown_actions:
+                await interaction.followup.send(
+                    "✅ **No unknown actions found!**\n\n"
+                    "All actions are already properly categorized."
+                )
+                return
+
+            # Re-parse each action using scraper
+            scraper = await scraper_getter(max_concurrent=1)
+            re_parsed_count = 0
+            still_unknown_count = 0
+            errors = 0
+            by_new_type = {}
+            updates_to_apply = []
+
+            for i, action in enumerate(unknown_actions, 1):
+                try:
+                    raw_text = action.get("raw_text")
+                    timestamp = action.get("timestamp")
+
+                    if not raw_text:
+                        still_unknown_count += 1
+                        continue
+
+                    # Parse timestamp
+                    if isinstance(timestamp, str):
+                        try:
+                            timestamp = datetime.fromisoformat(timestamp)
+                        except:
+                            timestamp = datetime.now()
+
+                    # Re-parse using scraper's _parse_action_text
+                    parsed = scraper._parse_action_text(raw_text, timestamp)
+
+                    if not parsed:
+                        still_unknown_count += 1
+                        continue
+
+                    old_type = action.get("action_type")
+                    new_type = parsed.action_type
+
+                    # Check if action type changed to a recognized type
+                    if new_type in ("unknown", "other", "legacy_multi_action"):
+                        still_unknown_count += 1
+                        continue
+
+                    if new_type == old_type:
+                        still_unknown_count += 1
+                        continue
+
+                    # Successfully re-parsed!
+                    re_parsed_count += 1
+                    by_new_type[new_type] = by_new_type.get(new_type, 0) + 1
+
+                    # Store update data
+                    updates_to_apply.append({
+                        "id": action["id"],
+                        "new_type": new_type,
+                        "player_id": parsed.player_id,
+                        "player_name": parsed.player_name,
+                        "action_detail": parsed.action_detail,
+                        "item_name": parsed.item_name,
+                        "item_quantity": parsed.item_quantity,
+                        "target_player_id": parsed.target_player_id,
+                        "target_player_name": parsed.target_player_name,
+                        "admin_id": parsed.admin_id,
+                        "admin_name": parsed.admin_name,
+                        "warning_count": parsed.warning_count,
+                        "reason": parsed.reason,
+                    })
+
+                except Exception as e:
+                    logger.error(f"Error re-parsing action {action.get('id')}: {e}")
+                    errors += 1
+
+            # Apply updates if not dry run
+            if not dry_run and updates_to_apply:
+                def _apply_updates():
+                    with db.get_connection() as conn:
+                        cursor = conn.cursor()
+                        for update in updates_to_apply:
+                            cursor.execute("""
+                                UPDATE actions
+                                SET action_type = ?,
+                                    player_id = ?,
+                                    player_name = ?,
+                                    action_detail = ?,
+                                    item_name = ?,
+                                    item_quantity = ?,
+                                    target_player_id = ?,
+                                    target_player_name = ?,
+                                    admin_id = ?,
+                                    admin_name = ?,
+                                    warning_count = ?,
+                                    reason = ?
+                                WHERE id = ?
+                            """, (
+                                update["new_type"],
+                                update["player_id"],
+                                update["player_name"],
+                                update["action_detail"],
+                                update["item_name"],
+                                update["item_quantity"],
+                                update["target_player_id"],
+                                update["target_player_name"],
+                                update["admin_id"],
+                                update["admin_name"],
+                                update["warning_count"],
+                                update["reason"],
+                                update["id"],
+                            ))
+                        conn.commit()
+
+                await asyncio.to_thread(_apply_updates)
+
+            # Build result embed
+            recognition_rate = (re_parsed_count / len(unknown_actions) * 100) if unknown_actions else 0
+
+            if dry_run:
+                embed = discord.Embed(
+                    title="🔍 DRY RUN - Re-parse Preview",
+                    description=(
+                        f"**Total processed:** {len(unknown_actions):,}\n"
+                        f"**Successfully re-parsed:** {re_parsed_count:,} ({recognition_rate:.1f}%)\n"
+                        f"**Still unknown:** {still_unknown_count:,}\n"
+                        f"**Errors:** {errors}\n\n"
+                        "To apply changes, run:\n"
+                        "`/reparseunknown dry_run:false confirm:true`"
+                    ),
+                    color=discord.Color.orange(),
+                    timestamp=datetime.now(),
+                )
+            else:
+                embed = discord.Embed(
+                    title="✅ Re-parse Complete!",
+                    description=(
+                        f"**Total processed:** {len(unknown_actions):,}\n"
+                        f"**Successfully re-categorized:** {re_parsed_count:,} ({recognition_rate:.1f}%)\n"
+                        f"**Still unknown:** {still_unknown_count:,}\n"
+                        f"**Errors:** {errors}"
+                    ),
+                    color=discord.Color.green(),
+                    timestamp=datetime.now(),
+                )
+                logger.info(f"🔄 Admin {interaction.user} re-parsed {re_parsed_count:,} unknown actions")
+
+            # Show breakdown by new type
+            if by_new_type:
+                type_breakdown = "\n".join([
+                    f"• **{action_type}**: {count:,}"
+                    for action_type, count in sorted(by_new_type.items(), key=lambda x: x[1], reverse=True)
+                ][:10])  # Show top 10
+                
+                embed.add_field(
+                    name="📊 Re-categorized By Type",
+                    value=type_breakdown,
+                    inline=False
+                )
+
+            embed.set_footer(
+                text="💡 These actions will now appear in their respective views (heists, faction actions, etc.)"
+            )
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in reparse_unknown command: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ **Error:** {str(e)}")
+
     logger.info(
         "✅ All slash commands registered successfully with auto-refresh for placeholder usernames"
     )
