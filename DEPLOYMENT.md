@@ -196,17 +196,19 @@ If you set `ADMIN_USER_IDS`, you'll receive Discord DMs when:
 
 ### 6.1 Performance Tuning
 
-**For faster scraping** (more Railway resources):
+> 🔥 **Note**: panel.pro4kings.ro has a 30-connection shared hosting limit. Don't exceed these values.
+
+**For faster scraping** (more Railway resources, but respect server limits):
 ```bash
-SCRAPER_MAX_CONCURRENT=10
-SCRAPER_RATE_LIMIT=50.0
+SCRAPER_MAX_CONCURRENT=5
+SCRAPER_RATE_LIMIT=10.0
 SCRAPE_ACTIONS_INTERVAL=15
 ```
 
 **For lower resources** (hobby plan):
 ```bash
 SCRAPER_MAX_CONCURRENT=3
-SCRAPER_RATE_LIMIT=10.0
+SCRAPER_RATE_LIMIT=8.0
 SCRAPE_ACTIONS_INTERVAL=60
 ```
 

@@ -1943,9 +1943,10 @@ def api_bot_status():
                 }
             except ImportError:
                 # Fallback if config not available
+                # 🔥 OPTIMIZED: Conservative limits for shared hosting
                 status['config'] = {
                     'scraper_workers': int(os.getenv('SCRAPER_MAX_CONCURRENT', 5)),
-                    'rate_limit': float(os.getenv('SCRAPER_RATE_LIMIT', 25.0)),
+                    'rate_limit': float(os.getenv('SCRAPER_RATE_LIMIT', 10.0)),  # Reduced from 25
                     'vip_count': len([p for p in os.getenv('VIP_PLAYER_IDS', '').split(',') if p.strip()]),
                     'actions_interval': int(os.getenv('SCRAPE_ACTIONS_INTERVAL', 5)),
                     'online_interval': int(os.getenv('SCRAPE_ONLINE_INTERVAL', 60)),

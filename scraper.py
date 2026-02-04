@@ -515,9 +515,9 @@ class Pro4KingsScraper:
     async def batch_get_profiles(self, player_ids: List[str]) -> List[PlayerProfile]:
         """Batch fetch profiles with configurable wave size"""
         results = []
-        # Scale wave size with worker count (minimum 10, maximum 50)
-        wave_size = min(50, max(10, self.max_concurrent * 5))
-        wave_delay = 0.05  # 50ms between waves
+        # 🔥 OPTIMIZED: Reduced wave size and increased delay for shared hosting
+        wave_size = min(25, max(10, self.max_concurrent * 3))  # Reduced from 50
+        wave_delay = 0.1  # 100ms between waves (was 50ms)
 
         for i in range(0, len(player_ids), wave_size):
             wave = player_ids[i : i + wave_size]

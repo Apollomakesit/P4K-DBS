@@ -354,8 +354,8 @@ SCRAPER_MAX_CONCURRENT=5
 ### SCRAPER_RATE_LIMIT
 
 **Type**: Float (requests/second)  
-**Default**: `25.0`  
-**Range**: 5.0-100.0
+**Default**: `10.0`  
+**Range**: 5.0-50.0
 
 **Description**: Target requests per second (uses token bucket algorithm)
 
@@ -364,8 +364,10 @@ SCRAPER_MAX_CONCURRENT=5
 - Automatically throttles on errors
 - Self-adjusting on rate limit detection
 
+> 🔥 **Note**: panel.pro4kings.ro has a 30-connection shared hosting limit. Values above 15 req/s may cause 503 errors.
+
 ```bash
-SCRAPER_RATE_LIMIT=25.0
+SCRAPER_RATE_LIMIT=10.0
 ```
 
 ---
@@ -373,13 +375,15 @@ SCRAPER_RATE_LIMIT=25.0
 ### SCRAPER_BURST_CAPACITY
 
 **Type**: Integer  
-**Default**: `50`  
-**Range**: 10-200
+**Default**: `20`  
+**Range**: 10-100
 
 **Description**: Maximum burst size for rate limiter (allows temporary spikes in requests)
 
+> 🔥 **Note**: Reduced from 50 to prevent overloading shared hosting.
+
 ```bash
-SCRAPER_BURST_CAPACITY=50
+SCRAPER_BURST_CAPACITY=20
 ```
 
 ---
@@ -539,9 +543,9 @@ UPDATE_PROFILES_INTERVAL=60
 LOG_LEVEL=DEBUG
 LOG_MAX_BYTES=20971520
 
-# Aggressive scraping
-SCRAPER_MAX_CONCURRENT=10
-SCRAPER_RATE_LIMIT=50.0
+# Scraping (limited by server's 30-connection limit)
+SCRAPER_MAX_CONCURRENT=5
+SCRAPER_RATE_LIMIT=10.0
 
 # Short retention for testing cleanup
 ACTIONS_RETENTION_DAYS=7
@@ -574,10 +578,10 @@ LOG_LEVEL=INFO
 LOG_MAX_BYTES=10485760
 LOG_BACKUP_COUNT=5
 
-# Moderate scraping
+# Moderate scraping (🔥 optimized for shared hosting)
 SCRAPER_MAX_CONCURRENT=5
-SCRAPER_RATE_LIMIT=25.0
-SCRAPER_BURST_CAPACITY=50
+SCRAPER_RATE_LIMIT=10.0
+SCRAPER_BURST_CAPACITY=20
 
 # Standard retention
 ACTIONS_RETENTION_DAYS=90
@@ -746,7 +750,7 @@ Then run `/cleanup_old_data`
 ```bash
 UPDATE_PROFILES_INTERVAL=60
 PROFILES_UPDATE_BATCH=300
-SCRAPER_MAX_CONCURRENT=10
+SCRAPER_MAX_CONCURRENT=5  # Don't exceed 5 due to server limits
 ```
 
 ---

@@ -69,10 +69,11 @@ def migrate_actions(dry_run: bool = False, batch_size: int = 1000):
     logger.info(f"📁 Database: {db_path}")
     
     # Create scraper instance for parsing
+    # 🔥 OPTIMIZED: Conservative limits for shared hosting
     scraper = Pro4KingsScraper(
         max_concurrent=int(os.getenv("SCRAPER_MAX_CONCURRENT", "5")),
-        rate_limit=float(os.getenv("SCRAPER_RATE_LIMIT", "25.0")),
-        burst_capacity=int(os.getenv("SCRAPER_BURST_CAPACITY", "50")),
+        rate_limit=float(os.getenv("SCRAPER_RATE_LIMIT", "10.0")),  # Reduced from 25
+        burst_capacity=int(os.getenv("SCRAPER_BURST_CAPACITY", "20")),  # Reduced from 50
     )
     
     # Connect to database
