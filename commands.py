@@ -28,7 +28,7 @@ SCAN_STATE = {
     "status_task": None,
     "scan_config": {
         "batch_size": 50,
-        "workers": 10,
+        "workers": 5,
         "wave_delay": 0.05,
         "max_concurrent_batches": 5,
     },

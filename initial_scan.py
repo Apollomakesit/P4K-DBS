@@ -22,8 +22,8 @@ DB_PATH = os.getenv("DATABASE_PATH", "pro4kings.db")
 START_ID = 1
 END_ID = 230000
 
-CONCURRENT_WORKERS = 8
-BATCH_SIZE = 200
+CONCURRENT_WORKERS = 5
+BATCH_SIZE = 50
 
 
 class FastScanner:
