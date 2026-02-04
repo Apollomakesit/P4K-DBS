@@ -29,8 +29,8 @@ SCAN_STATE = {
     "scan_config": {
         "batch_size": 50,
         "workers": 5,
-        "wave_delay": 0.05,
-        "max_concurrent_batches": 5,
+        "wave_delay": 0.1,  # 🔥 OPTIMIZED: Increased from 0.05 to reduce 503 errors
+        "max_concurrent_batches": 3,  # 🔥 OPTIMIZED: Reduced from 5 for stability
     },
     "worker_stats": {},
     "total_scanned": 0,
