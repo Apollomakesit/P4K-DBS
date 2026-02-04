@@ -45,11 +45,12 @@ class Config:
     SCRAPER_BURST_CAPACITY: int = _safe_int("SCRAPER_BURST_CAPACITY", 50)
 
     # VIP Player Tracking - Monitor specific high-priority players
+    # DISABLED - general actions scraper now covers all actions
     VIP_PLAYER_IDS: list[str] = [
         pid.strip()
         for pid in os.getenv(
             "VIP_PLAYER_IDS",
-            "1,799,1207,9,64,100,14,69,215,141,4,46,51",
+            "",  # Empty list - disabled
         ).split(",")
         if pid.strip()
     ]
@@ -58,8 +59,9 @@ class Config:
     )  # Scan VIP actions every 10m
 
     # Online Player Priority - Automatically track all currently online players
+    # DISABLED - general actions scraper already covers online player actions
     TRACK_ONLINE_PLAYERS_PRIORITY: bool = (
-        os.getenv("TRACK_ONLINE_PLAYERS_PRIORITY", "true").lower() == "true"
+        os.getenv("TRACK_ONLINE_PLAYERS_PRIORITY", "false").lower() == "true"
     )
     ONLINE_PLAYERS_SCAN_INTERVAL: int = _safe_int(
         "ONLINE_PLAYERS_SCAN_INTERVAL", 60
@@ -69,7 +71,7 @@ class Config:
     SCRAPE_ACTIONS_INTERVAL: int = _safe_int("SCRAPE_ACTIONS_INTERVAL", 5)
     SCRAPE_ONLINE_INTERVAL: int = _safe_int("SCRAPE_ONLINE_INTERVAL", 60)
     UPDATE_PROFILES_INTERVAL: int = _safe_int("UPDATE_PROFILES_INTERVAL", 120)  # 2 min
-    CHECK_BANNED_INTERVAL: int = _safe_int("CHECK_BANNED_INTERVAL", 3600)  # 1 hour
+    CHECK_BANNED_INTERVAL: int = _safe_int("CHECK_BANNED_INTERVAL", 7200)  # 2 hours
     TASK_WATCHDOG_INTERVAL: int = _safe_int("TASK_WATCHDOG_INTERVAL", 300)  # 5 min
 
     # Data Retention (in days)
