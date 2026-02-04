@@ -24,8 +24,10 @@ END_ID = 230000
 
 CONCURRENT_WORKERS = 5
 BATCH_SIZE = 50
-SCRAPER_RATE_LIMIT = float(os.getenv("SCRAPER_RATE_LIMIT", "25.0"))
-SCRAPER_BURST_CAPACITY = int(os.getenv("SCRAPER_BURST_CAPACITY", "50"))
+# 🔥 OPTIMIZED: Reduced for shared hosting (30 connection limit)
+# Tests showed ~20 req/s works, but bulk scans need conservative limits
+SCRAPER_RATE_LIMIT = float(os.getenv("SCRAPER_RATE_LIMIT", "8.0"))  # Reduced from 25
+SCRAPER_BURST_CAPACITY = int(os.getenv("SCRAPER_BURST_CAPACITY", "15"))  # Reduced from 50
 
 
 class FastScanner:

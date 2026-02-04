@@ -90,12 +90,18 @@ class TokenBucketRateLimiter:
 
 
 class Pro4KingsScraper:
-    """Ultra-safe scraper with TokenBucket rate limiting - supports 1-50 workers"""
+    """Ultra-safe scraper with TokenBucket rate limiting - supports 1-50 workers
+    
+    🔥 OPTIMIZED for panel.pro4kings.ro shared hosting:
+    - Server has 30 connection limit (shared with other users)
+    - Tests showed 5 workers at ~20 req/s sustained works
+    - Using conservative 10 req/s default to avoid 503 errors
+    """
 
     def __init__(
         self,
         base_url: str = "https://panel.pro4kings.ro",
-        max_concurrent: int = 10,  # Default: 10 workers
+        max_concurrent: int = 5,  # Default: 5 workers (reduced from 10)
         rate_limit: Optional[float] = None,
         burst_capacity: Optional[int] = None,
     ):
@@ -107,8 +113,9 @@ class Pro4KingsScraper:
         self.client: Optional[aiohttp.ClientSession] = None
 
         # TokenBucket: Smooth request distribution
-        effective_rate = rate_limit if rate_limit is not None else max(10.0, self.max_concurrent * 1.5)
-        effective_capacity = burst_capacity if burst_capacity is not None else max(20, self.max_concurrent * 3)
+        # 🔥 OPTIMIZED: Conservative defaults for shared hosting
+        effective_rate = rate_limit if rate_limit is not None else min(10.0, self.max_concurrent * 2)
+        effective_capacity = burst_capacity if burst_capacity is not None else min(20, self.max_concurrent * 4)
         effective_rate = max(0.1, float(effective_rate))
         effective_capacity = max(1, int(effective_capacity))
         self.rate_limiter = TokenBucketRateLimiter(

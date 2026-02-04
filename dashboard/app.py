@@ -150,8 +150,9 @@ PROFILE_STALE_HOURS = int(os.getenv("PROFILE_STALE_HOURS", "24"))  # Only refres
 PROFILE_STALE_MINUTES = PROFILE_STALE_HOURS * 60  # Convert to minutes for compatibility
 PROFILE_STALE_THRESHOLD_HOURS = PROFILE_STALE_HOURS  # Alias for API compatibility
 MAX_CONCURRENT_REFRESHES = 3  # Maximum number of concurrent refresh operations
-SCRAPER_RATE_LIMIT = float(os.getenv("SCRAPER_RATE_LIMIT", "25.0"))
-SCRAPER_BURST_CAPACITY = int(os.getenv("SCRAPER_BURST_CAPACITY", "50"))
+# 🔥 OPTIMIZED: Reduced for shared hosting (30 connection limit)
+SCRAPER_RATE_LIMIT = float(os.getenv("SCRAPER_RATE_LIMIT", "10.0"))  # Reduced from 25
+SCRAPER_BURST_CAPACITY = int(os.getenv("SCRAPER_BURST_CAPACITY", "20"))  # Reduced from 50
 REFRESH_QUEUE = set()  # Thread-safe queue of player IDs to refresh
 REFRESH_LOCK = threading.Lock()
 REFRESH_IN_PROGRESS = set()  # Track IDs being refreshed to avoid duplicates
