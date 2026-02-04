@@ -1821,6 +1821,103 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
+        # 🔥 NEW PATTERN K: House/Property purchase
+        # Example: "Jucatorul Ioan Glont(56894) a achizictionat Casa Nr. 95 de la jucatorul cu ID 173608 pentru suma de 500.000.000$."
+        property_purchase = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+achizit?ionat\s+(.+?)\s+de\s+la\s+jucatorul\s+cu\s+ID\s+(\d+)\s+pentru\s+suma\s+de\s+([\d.,]+)\$",
+            text, re.IGNORECASE
+        )
+        if property_purchase:
+            return PlayerAction(
+                player_id=property_purchase.group(2),
+                player_name=property_purchase.group(1).strip(),
+                action_type="property_bought",
+                action_detail=f"a achizitionat {property_purchase.group(3)}: {property_purchase.group(5)}$ de la ID {property_purchase.group(4)}",
+                target_player_id=property_purchase.group(4),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN L: Faction kick/expulsion
+        # Example: "Jucatorul (149788) a fost dat afara de catre NepotuP4K(2446), motiv 'schimba numele'."
+        faction_kick = re.search(
+            r"Jucatorul\s+(?:(.+?)\s+)?\((\d+)\)\s+a\s+fost\s+dat\s+afara\s+de\s+catre\s+(.+?)\((\d+)\)\s*,\s*motiv\s+['\"]([^'\"]+)['\"]",
+            text, re.IGNORECASE
+        )
+        if faction_kick:
+            return PlayerAction(
+                player_id=faction_kick.group(2),
+                player_name=faction_kick.group(1),
+                action_type="faction_kicked",
+                action_detail=f"dat afara de {faction_kick.group(3).strip()}: {faction_kick.group(5)}",
+                admin_id=faction_kick.group(4),
+                admin_name=faction_kick.group(3).strip(),
+                reason=faction_kick.group(5),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN M: Admin warning removal (slightly different format)
+        # Example: "Administratorul Tipic(184) ia scos un avertisment jucatorului defuse (199104)."
+        admin_warning = re.search(
+            r"Administratorul\s+(.+?)\((\d+)\)\s+i?a\s+scos\s+un\s+avertisment\s+jucatorului\s+(.+?)\s*\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if admin_warning:
+            return PlayerAction(
+                player_id=admin_warning.group(4),
+                player_name=admin_warning.group(3).strip(),
+                action_type="warning_removed",
+                action_detail=f"Avertisment scos de {admin_warning.group(1).strip()}",
+                admin_id=admin_warning.group(2),
+                admin_name=admin_warning.group(1).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN N: Vehicle contract - simple format
+        # Example: "Contract Mihai(137922) (137592). ('137922' [], '137592' [Bravado Harger 69, ])"
+        contract_simple = re.search(
+            r"Contract\s+(.+?)\((\d+)\)\s+\((\d+)\)\.",
+            text, re.IGNORECASE
+        )
+        if contract_simple:
+            return PlayerAction(
+                player_id=contract_simple.group(2),
+                player_name=contract_simple.group(1).strip(),
+                action_type="vehicle_contract",
+                action_detail=f"Contract cu ID {contract_simple.group(3)}: Vehicle transfer",
+                target_player_id=contract_simple.group(3),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN O: Trade with minimal info (player IDs only)
+        # Example: "Tradeul dintre jucatorii D4N1(202518) si sasuke (192)(209261) a fost finalizat..."
+        # This handles cases where second player has a tag like "sasuke (192)"
+        trade_with_tag = re.search(
+            r"Tradeul\s+dintre\s+jucatorii\s+([^(]+)\((\d+)\)\s+si\s+([^(]+)\s*(?:\(\d+\))?\s*\((\d+)\)\s+a\s+fost\s+finalizat",
+            text, re.IGNORECASE
+        )
+        if trade_with_tag:
+            player1_name = trade_with_tag.group(1).strip()
+            player1_id = trade_with_tag.group(2)
+            player2_name_raw = trade_with_tag.group(3).strip()
+            # Remove any trailing tag like " (192)" from player2 name
+            player2_name = re.sub(r'\s*\(\d+\)\s*$', '', player2_name_raw).strip()
+            player2_id = trade_with_tag.group(4)
+            
+            return PlayerAction(
+                player_id=player1_id,
+                player_name=player1_name,
+                action_type="trade",
+                action_detail=f"Trade cu {player2_name}",
+                target_player_id=player2_id,
+                target_player_name=player2_name,
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
         # 🔥 PATTERN 34: CATCH-ALL - Save ANY action text even if no patterns match
         if len(text) >= 10:
             logger.debug(f"⚠️ Unrecognized action pattern saved as 'unknown': {text[:80]}...")
