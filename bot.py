@@ -237,7 +237,11 @@ async def get_or_recreate_scraper(max_concurrent=None):
     if scraper is None:
         concurrent = min(max_concurrent if max_concurrent else Config.SCRAPER_MAX_CONCURRENT, 10)
         logger.info(f"🔄 Creating new scraper instance (max_concurrent={concurrent})...")
-        scraper = Pro4KingsScraper(max_concurrent=concurrent)
+        scraper = Pro4KingsScraper(
+            max_concurrent=concurrent,
+            rate_limit=Config.SCRAPER_RATE_LIMIT,
+            burst_capacity=Config.SCRAPER_BURST_CAPACITY,
+        )
         await scraper.__aenter__()
         logger.info(f"✅ Scraper initialized with {concurrent} workers")
 
@@ -248,7 +252,11 @@ async def get_or_recreate_scraper(max_concurrent=None):
         except:
             pass
         concurrent = min(max_concurrent if max_concurrent else Config.SCRAPER_MAX_CONCURRENT, 10)
-        scraper = Pro4KingsScraper(max_concurrent=concurrent)
+        scraper = Pro4KingsScraper(
+            max_concurrent=concurrent,
+            rate_limit=Config.SCRAPER_RATE_LIMIT,
+            burst_capacity=Config.SCRAPER_BURST_CAPACITY,
+        )
         await scraper.__aenter__()
 
     return scraper

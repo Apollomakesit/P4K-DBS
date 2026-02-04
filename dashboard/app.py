@@ -150,6 +150,8 @@ PROFILE_STALE_HOURS = int(os.getenv("PROFILE_STALE_HOURS", "24"))  # Only refres
 PROFILE_STALE_MINUTES = PROFILE_STALE_HOURS * 60  # Convert to minutes for compatibility
 PROFILE_STALE_THRESHOLD_HOURS = PROFILE_STALE_HOURS  # Alias for API compatibility
 MAX_CONCURRENT_REFRESHES = 3  # Maximum number of concurrent refresh operations
+SCRAPER_RATE_LIMIT = float(os.getenv("SCRAPER_RATE_LIMIT", "25.0"))
+SCRAPER_BURST_CAPACITY = int(os.getenv("SCRAPER_BURST_CAPACITY", "50"))
 REFRESH_QUEUE = set()  # Thread-safe queue of player IDs to refresh
 REFRESH_LOCK = threading.Lock()
 REFRESH_IN_PROGRESS = set()  # Track IDs being refreshed to avoid duplicates
@@ -243,7 +245,11 @@ def _do_profile_refresh(player_id: str):
 
 async def _fetch_and_save_profile(player_id: str) -> Optional[dict]:
     """Fetch profile from website and save to database"""
-    async with Pro4KingsScraper(max_concurrent=1) as scraper:
+    async with Pro4KingsScraper(
+        max_concurrent=1,
+        rate_limit=SCRAPER_RATE_LIMIT,
+        burst_capacity=SCRAPER_BURST_CAPACITY,
+    ) as scraper:
         profile_obj = await scraper.get_player_profile(player_id)
         
         if not profile_obj:

@@ -24,6 +24,8 @@ END_ID = 230000
 
 CONCURRENT_WORKERS = 5
 BATCH_SIZE = 50
+SCRAPER_RATE_LIMIT = float(os.getenv("SCRAPER_RATE_LIMIT", "25.0"))
+SCRAPER_BURST_CAPACITY = int(os.getenv("SCRAPER_BURST_CAPACITY", "50"))
 
 
 class FastScanner:
@@ -178,7 +180,11 @@ class FastScanner:
             for i in range(self.workers)
         ]
 
-        async with Pro4KingsScraper(max_concurrent=5) as scraper:
+        async with Pro4KingsScraper(
+            max_concurrent=5,
+            rate_limit=SCRAPER_RATE_LIMIT,
+            burst_capacity=SCRAPER_BURST_CAPACITY,
+        ) as scraper:
             progress_task = asyncio.create_task(self.report_progress(start_id))
             worker_tasks = [
                 asyncio.create_task(self.worker(i, scraper, worker_batches[i]))

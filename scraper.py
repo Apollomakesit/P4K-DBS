@@ -96,6 +96,8 @@ class Pro4KingsScraper:
         self,
         base_url: str = "https://panel.pro4kings.ro",
         max_concurrent: int = 10,  # Default: 10 workers
+        rate_limit: Optional[float] = None,
+        burst_capacity: Optional[int] = None,
     ):
         self.base_url = base_url
         self.max_concurrent = max(
@@ -105,9 +107,13 @@ class Pro4KingsScraper:
         self.client: Optional[aiohttp.ClientSession] = None
 
         # TokenBucket: Smooth request distribution
+        effective_rate = rate_limit if rate_limit is not None else max(10.0, self.max_concurrent * 1.5)
+        effective_capacity = burst_capacity if burst_capacity is not None else max(20, self.max_concurrent * 3)
+        effective_rate = max(0.1, float(effective_rate))
+        effective_capacity = max(1, int(effective_capacity))
         self.rate_limiter = TokenBucketRateLimiter(
-            rate=max(10.0, self.max_concurrent * 1.5),  # Scale with workers
-            capacity=max(20, self.max_concurrent * 3),  # Allow some bursting
+            rate=effective_rate,
+            capacity=effective_capacity,
         )
 
         self.error_503_count = 0
