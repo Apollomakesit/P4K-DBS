@@ -1404,6 +1404,56 @@ def api_unknown_actions():
         logger.error(f"Error getting unknown actions: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/reparse-progress')
+def api_reparse_progress():
+    """Check current re-parse progress and remaining unknown patterns"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Count current unknown actions
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM actions 
+            WHERE action_type IN ('unknown', 'other')
+        """)
+        current_unknown = cursor.fetchone()['total'] or 0
+        
+        # Count total recognized actions
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM actions 
+            WHERE action_type NOT IN ('unknown', 'other')
+        """)
+        recognized = cursor.fetchone()['total'] or 0
+        
+        # Get last 5 patterns that could be cleaned up
+        cursor.execute("""
+            SELECT action_type, action_detail, raw_text, COUNT(*) as count
+            FROM actions 
+            WHERE action_type IN ('unknown', 'other')
+            GROUP BY raw_text
+            ORDER BY count ASC
+            LIMIT 5
+        """)
+        
+        remaining = [dict(row) for row in cursor.fetchall()]
+        
+        conn.close()
+        
+        total_actions = recognized + current_unknown
+        recognition_rate = (recognized / total_actions * 100) if total_actions > 0 else 0
+        
+        return jsonify({
+            'total_unknown': current_unknown,
+            'total_recognized': recognized,
+            'total_actions': total_actions,
+            'recognition_rate': round(recognition_rate, 2),
+            'remaining_patterns': remaining,
+            'status': 'clean' if current_unknown == 0 else 'needs_review'
+        })
+    except Exception as e:
+        logger.error(f"Error getting reparse progress: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/action-stats')
 def api_action_stats():
     """Get action type statistics breakdown"""
@@ -2433,6 +2483,69 @@ def api_admin_cleanup_login_events():
         
     except Exception as e:
         logger.error(f"Error cleaning up login events: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/cleanup-reparsed-patterns')
+def api_cleanup_reparsed():
+    """Cleanup patterns that have all been re-parsed (no longer 'unknown')
+    
+    This endpoint detects patterns where all instances have been successfully
+    re-parsed to recognized action types and removes them from the unknown
+    actions display.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get patterns that are no longer unknown (cleanup success)
+        cursor.execute("""
+            SELECT DISTINCT raw_text
+            FROM actions
+            WHERE action_type IN ('unknown', 'other')
+        """)
+        
+        unknown_patterns = set(row['raw_text'] for row in cursor.fetchall() if row['raw_text'])
+        
+        cleaned_count = 0
+        cleanup_details = []
+        
+        # For each pattern, check if there are any recognized versions
+        for pattern in unknown_patterns:
+            cursor.execute("""
+                SELECT action_type, COUNT(*) as count
+                FROM actions
+                WHERE raw_text = ?
+                GROUP BY action_type
+            """, (pattern,))
+            
+            types = {row['action_type']: row['count'] for row in cursor.fetchall()}
+            
+            # If this pattern exists in both unknown AND recognized types,
+            # some instances have been successfully re-parsed
+            unknown_count = sum(count for action_type, count in types.items() 
+                               if action_type in ('unknown', 'other'))
+            recognized_count = sum(count for action_type, count in types.items() 
+                                  if action_type not in ('unknown', 'other'))
+            
+            if recognized_count > 0 and unknown_count > 0:
+                cleaned_count += 1
+                cleaned_types = [t for t in types.keys() if t not in ('unknown', 'other')]
+                cleanup_details.append({
+                    'pattern': pattern[:100] if pattern else 'empty',
+                    'previously_unknown': unknown_count,
+                    'now_recognized': recognized_count,
+                    'recognized_types': cleaned_types
+                })
+        
+        conn.close()
+        
+        return jsonify({
+            'patterns_partially_cleaned': cleaned_count,
+            'cleanup_details': cleanup_details[:10],  # Top 10
+            'message': f'{cleaned_count} patterns have been partially re-parsed'
+        })
+    except Exception as e:
+        logger.error(f"Error cleaning up re-parsed patterns: {e}")
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
