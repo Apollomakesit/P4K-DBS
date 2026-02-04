@@ -1441,6 +1441,217 @@ def api_action_stats():
         logger.error(f"Error getting action stats: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/player-leaderboards')
+def api_player_leaderboards():
+    """Get player leaderboards - most active, money transferred, items given, etc."""
+    try:
+        limit = min(int(request.args.get('limit', 10)), 25)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        leaderboards = {}
+        
+        # 🔥 Most Active Players (total actions as sender)
+        cursor.execute("""
+            SELECT 
+                a.player_id,
+                COALESCE(p.username, a.player_name) as player_name,
+                COUNT(*) as action_count
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.player_id = p.player_id
+            WHERE a.player_id IS NOT NULL AND a.player_id != ''
+            GROUP BY a.player_id
+            ORDER BY action_count DESC
+            LIMIT ?
+        """, (limit,))
+        leaderboards['most_active'] = [dict(row) for row in cursor.fetchall()]
+        
+        # 🔥 Most Actions Received (as target)
+        cursor.execute("""
+            SELECT 
+                a.target_player_id as player_id,
+                COALESCE(p.username, a.target_player_name) as player_name,
+                COUNT(*) as action_count
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.target_player_id = p.player_id
+            WHERE a.target_player_id IS NOT NULL AND a.target_player_id != ''
+            GROUP BY a.target_player_id
+            ORDER BY action_count DESC
+            LIMIT ?
+        """, (limit,))
+        leaderboards['most_targeted'] = [dict(row) for row in cursor.fetchall()]
+        
+        # 🔥 Top Money Senders (money_transfer action type)
+        cursor.execute("""
+            SELECT 
+                a.player_id,
+                COALESCE(p.username, a.player_name) as player_name,
+                COUNT(*) as transfer_count,
+                SUM(
+                    CAST(
+                        REPLACE(REPLACE(REPLACE(
+                            CASE 
+                                WHEN a.action_detail LIKE '%$%' THEN 
+                                    SUBSTR(a.action_detail, 
+                                           INSTR(a.action_detail, 'Transferat ') + 11,
+                                           INSTR(SUBSTR(a.action_detail, INSTR(a.action_detail, 'Transferat ') + 11), '$') - 1
+                                    )
+                                ELSE '0'
+                            END,
+                        '.', ''), ',', ''), ' ', '')
+                    AS INTEGER)
+                ) as total_sent
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.player_id = p.player_id
+            WHERE a.action_type = 'money_transfer'
+            AND a.player_id IS NOT NULL AND a.player_id != ''
+            GROUP BY a.player_id
+            ORDER BY transfer_count DESC
+            LIMIT ?
+        """, (limit,))
+        leaderboards['top_money_senders'] = [dict(row) for row in cursor.fetchall()]
+        
+        # 🔥 Top Money Receivers
+        cursor.execute("""
+            SELECT 
+                a.target_player_id as player_id,
+                COALESCE(p.username, a.target_player_name) as player_name,
+                COUNT(*) as receive_count
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.target_player_id = p.player_id
+            WHERE a.action_type = 'money_transfer'
+            AND a.target_player_id IS NOT NULL AND a.target_player_id != ''
+            GROUP BY a.target_player_id
+            ORDER BY receive_count DESC
+            LIMIT ?
+        """, (limit,))
+        leaderboards['top_money_receivers'] = [dict(row) for row in cursor.fetchall()]
+        
+        # 🔥 Top Item Givers
+        cursor.execute("""
+            SELECT 
+                a.player_id,
+                COALESCE(p.username, a.player_name) as player_name,
+                COUNT(*) as items_given,
+                SUM(COALESCE(a.item_quantity, 1)) as total_quantity
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.player_id = p.player_id
+            WHERE a.action_type = 'item_given'
+            AND a.player_id IS NOT NULL AND a.player_id != ''
+            GROUP BY a.player_id
+            ORDER BY items_given DESC
+            LIMIT ?
+        """, (limit,))
+        leaderboards['top_item_givers'] = [dict(row) for row in cursor.fetchall()]
+        
+        # 🔥 Top Item Receivers
+        cursor.execute("""
+            SELECT 
+                a.target_player_id as player_id,
+                COALESCE(p.username, a.target_player_name) as player_name,
+                COUNT(*) as items_received,
+                SUM(COALESCE(a.item_quantity, 1)) as total_quantity
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.target_player_id = p.player_id
+            WHERE a.action_type IN ('item_given', 'item_received')
+            AND a.target_player_id IS NOT NULL AND a.target_player_id != ''
+            GROUP BY a.target_player_id
+            ORDER BY items_received DESC
+            LIMIT ?
+        """, (limit,))
+        leaderboards['top_item_receivers'] = [dict(row) for row in cursor.fetchall()]
+        
+        # 🔥 Most Contracts (vehicle transfers)
+        cursor.execute("""
+            SELECT 
+                a.player_id,
+                COALESCE(p.username, a.player_name) as player_name,
+                COUNT(*) as contract_count
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.player_id = p.player_id
+            WHERE a.action_type = 'vehicle_contract'
+            AND a.player_id IS NOT NULL AND a.player_id != ''
+            GROUP BY a.player_id
+            ORDER BY contract_count DESC
+            LIMIT ?
+        """, (limit,))
+        leaderboards['top_contractors'] = [dict(row) for row in cursor.fetchall()]
+        
+        # 🔥 Most Warnings Received
+        cursor.execute("""
+            SELECT 
+                a.player_id,
+                COALESCE(p.username, a.player_name) as player_name,
+                COUNT(*) as warning_count
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.player_id = p.player_id
+            WHERE a.action_type = 'warning_received'
+            AND a.player_id IS NOT NULL AND a.player_id != ''
+            GROUP BY a.player_id
+            ORDER BY warning_count DESC
+            LIMIT ?
+        """, (limit,))
+        leaderboards['most_warned'] = [dict(row) for row in cursor.fetchall()]
+        
+        # 🔥 Most Bans Received
+        cursor.execute("""
+            SELECT 
+                a.player_id,
+                COALESCE(p.username, a.player_name) as player_name,
+                COUNT(*) as ban_count
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.player_id = p.player_id
+            WHERE a.action_type = 'ban_received'
+            AND a.player_id IS NOT NULL AND a.player_id != ''
+            GROUP BY a.player_id
+            ORDER BY ban_count DESC
+            LIMIT ?
+        """, (limit,))
+        leaderboards['most_banned'] = [dict(row) for row in cursor.fetchall()]
+        
+        # 🔥 Top Gamblers (gambling wins)
+        cursor.execute("""
+            SELECT 
+                a.player_id,
+                COALESCE(p.username, a.player_name) as player_name,
+                COUNT(*) as gambling_wins
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.player_id = p.player_id
+            WHERE a.action_type = 'gambling_win'
+            AND a.player_id IS NOT NULL AND a.player_id != ''
+            GROUP BY a.player_id
+            ORDER BY gambling_wins DESC
+            LIMIT ?
+        """, (limit,))
+        leaderboards['top_gamblers'] = [dict(row) for row in cursor.fetchall()]
+        
+        # 🔥 Top Bank Heist Participants
+        cursor.execute("""
+            SELECT 
+                a.player_id,
+                COALESCE(p.username, a.player_name) as player_name,
+                COUNT(*) as heist_count
+            FROM actions a
+            LEFT JOIN player_profiles p ON a.player_id = p.player_id
+            WHERE a.action_type = 'bank_heist_delivery'
+            AND a.player_id IS NOT NULL AND a.player_id != ''
+            GROUP BY a.player_id
+            ORDER BY heist_count DESC
+            LIMIT ?
+        """, (limit,))
+        leaderboards['top_heist_runners'] = [dict(row) for row in cursor.fetchall()]
+        
+        conn.close()
+        
+        return jsonify({
+            'leaderboards': leaderboards,
+            'limit': limit
+        })
+    except Exception as e:
+        logger.error(f"Error getting player leaderboards: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/scan-progress')
 def api_scan_progress():
     """Get initial scan progress (admin info)"""

@@ -165,6 +165,243 @@
             </template>
         </div>
     </div>
+
+    <!-- 🏆 PLAYER LEADERBOARDS SECTION -->
+    <div x-show="!loading && !leaderboardsLoading" class="mt-8">
+        <div class="flex items-center justify-between mb-6">
+            <h2 class="text-2xl font-bold text-white">
+                <i class="fas fa-trophy text-yellow-400 mr-3"></i>Player Leaderboards
+            </h2>
+            <button @click="fetchLeaderboards()" class="bg-primary/20 hover:bg-primary/30 text-primary px-4 py-2 rounded-lg transition-colors">
+                <i class="fas fa-sync-alt mr-2"></i>Refresh
+            </button>
+        </div>
+
+        <!-- Leaderboard Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            <!-- Most Active Players -->
+            <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-blue-600 to-blue-400 px-5 py-4">
+                    <h3 class="text-white font-bold flex items-center gap-2">
+                        <i class="fas fa-fire"></i> Most Active Players
+                    </h3>
+                    <p class="text-blue-100 text-sm opacity-75">Total actions performed</p>
+                </div>
+                <div class="p-4 space-y-2">
+                    <template x-for="(player, index) in leaderboards.most_active || []" :key="player.player_id">
+                        <a :href="'/player/' + player.player_id" class="flex items-center justify-between bg-dark-300 rounded-lg p-3 hover:bg-dark-100 transition-colors">
+                            <div class="flex items-center gap-3">
+                                <span class="w-6 h-6 flex items-center justify-center rounded-full text-sm font-bold"
+                                      :class="index === 0 ? 'bg-yellow-400 text-gray-900' : index === 1 ? 'bg-gray-300 text-gray-900' : index === 2 ? 'bg-amber-600 text-white' : 'bg-dark-100 text-gray-400'"
+                                      x-text="index + 1"></span>
+                                <span class="text-white" x-text="player.player_name || 'ID:' + player.player_id"></span>
+                            </div>
+                            <span class="text-blue-400 font-bold" x-text="player.action_count?.toLocaleString()"></span>
+                        </a>
+                    </template>
+                    <div x-show="!leaderboards.most_active?.length" class="text-center py-4 text-gray-500">No data</div>
+                </div>
+            </div>
+
+            <!-- Top Money Senders -->
+            <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-green-600 to-emerald-400 px-5 py-4">
+                    <h3 class="text-white font-bold flex items-center gap-2">
+                        <i class="fas fa-paper-plane"></i> Top Money Senders
+                    </h3>
+                    <p class="text-green-100 text-sm opacity-75">Most money transfers sent</p>
+                </div>
+                <div class="p-4 space-y-2">
+                    <template x-for="(player, index) in leaderboards.top_money_senders || []" :key="player.player_id">
+                        <a :href="'/player/' + player.player_id" class="flex items-center justify-between bg-dark-300 rounded-lg p-3 hover:bg-dark-100 transition-colors">
+                            <div class="flex items-center gap-3">
+                                <span class="w-6 h-6 flex items-center justify-center rounded-full text-sm font-bold"
+                                      :class="index === 0 ? 'bg-yellow-400 text-gray-900' : index === 1 ? 'bg-gray-300 text-gray-900' : index === 2 ? 'bg-amber-600 text-white' : 'bg-dark-100 text-gray-400'"
+                                      x-text="index + 1"></span>
+                                <span class="text-white" x-text="player.player_name || 'ID:' + player.player_id"></span>
+                            </div>
+                            <span class="text-green-400 font-bold" x-text="player.transfer_count?.toLocaleString() + ' transfers'"></span>
+                        </a>
+                    </template>
+                    <div x-show="!leaderboards.top_money_senders?.length" class="text-center py-4 text-gray-500">No data</div>
+                </div>
+            </div>
+
+            <!-- Top Money Receivers -->
+            <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-emerald-600 to-teal-400 px-5 py-4">
+                    <h3 class="text-white font-bold flex items-center gap-2">
+                        <i class="fas fa-hand-holding-dollar"></i> Top Money Receivers
+                    </h3>
+                    <p class="text-teal-100 text-sm opacity-75">Most money transfers received</p>
+                </div>
+                <div class="p-4 space-y-2">
+                    <template x-for="(player, index) in leaderboards.top_money_receivers || []" :key="player.player_id">
+                        <a :href="'/player/' + player.player_id" class="flex items-center justify-between bg-dark-300 rounded-lg p-3 hover:bg-dark-100 transition-colors">
+                            <div class="flex items-center gap-3">
+                                <span class="w-6 h-6 flex items-center justify-center rounded-full text-sm font-bold"
+                                      :class="index === 0 ? 'bg-yellow-400 text-gray-900' : index === 1 ? 'bg-gray-300 text-gray-900' : index === 2 ? 'bg-amber-600 text-white' : 'bg-dark-100 text-gray-400'"
+                                      x-text="index + 1"></span>
+                                <span class="text-white" x-text="player.player_name || 'ID:' + player.player_id"></span>
+                            </div>
+                            <span class="text-teal-400 font-bold" x-text="player.receive_count?.toLocaleString() + ' received'"></span>
+                        </a>
+                    </template>
+                    <div x-show="!leaderboards.top_money_receivers?.length" class="text-center py-4 text-gray-500">No data</div>
+                </div>
+            </div>
+
+            <!-- Top Item Givers -->
+            <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-purple-600 to-indigo-400 px-5 py-4">
+                    <h3 class="text-white font-bold flex items-center gap-2">
+                        <i class="fas fa-gift"></i> Top Item Givers
+                    </h3>
+                    <p class="text-purple-100 text-sm opacity-75">Most items given to others</p>
+                </div>
+                <div class="p-4 space-y-2">
+                    <template x-for="(player, index) in leaderboards.top_item_givers || []" :key="player.player_id">
+                        <a :href="'/player/' + player.player_id" class="flex items-center justify-between bg-dark-300 rounded-lg p-3 hover:bg-dark-100 transition-colors">
+                            <div class="flex items-center gap-3">
+                                <span class="w-6 h-6 flex items-center justify-center rounded-full text-sm font-bold"
+                                      :class="index === 0 ? 'bg-yellow-400 text-gray-900' : index === 1 ? 'bg-gray-300 text-gray-900' : index === 2 ? 'bg-amber-600 text-white' : 'bg-dark-100 text-gray-400'"
+                                      x-text="index + 1"></span>
+                                <span class="text-white" x-text="player.player_name || 'ID:' + player.player_id"></span>
+                            </div>
+                            <span class="text-purple-400 font-bold" x-text="player.items_given?.toLocaleString() + ' items'"></span>
+                        </a>
+                    </template>
+                    <div x-show="!leaderboards.top_item_givers?.length" class="text-center py-4 text-gray-500">No data</div>
+                </div>
+            </div>
+
+            <!-- Top Contractors -->
+            <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-cyan-600 to-sky-400 px-5 py-4">
+                    <h3 class="text-white font-bold flex items-center gap-2">
+                        <i class="fas fa-file-contract"></i> Top Contractors
+                    </h3>
+                    <p class="text-cyan-100 text-sm opacity-75">Most vehicle contracts</p>
+                </div>
+                <div class="p-4 space-y-2">
+                    <template x-for="(player, index) in leaderboards.top_contractors || []" :key="player.player_id">
+                        <a :href="'/player/' + player.player_id" class="flex items-center justify-between bg-dark-300 rounded-lg p-3 hover:bg-dark-100 transition-colors">
+                            <div class="flex items-center gap-3">
+                                <span class="w-6 h-6 flex items-center justify-center rounded-full text-sm font-bold"
+                                      :class="index === 0 ? 'bg-yellow-400 text-gray-900' : index === 1 ? 'bg-gray-300 text-gray-900' : index === 2 ? 'bg-amber-600 text-white' : 'bg-dark-100 text-gray-400'"
+                                      x-text="index + 1"></span>
+                                <span class="text-white" x-text="player.player_name || 'ID:' + player.player_id"></span>
+                            </div>
+                            <span class="text-cyan-400 font-bold" x-text="player.contract_count?.toLocaleString() + ' contracts'"></span>
+                        </a>
+                    </template>
+                    <div x-show="!leaderboards.top_contractors?.length" class="text-center py-4 text-gray-500">No data</div>
+                </div>
+            </div>
+
+            <!-- Top Bank Heist Runners -->
+            <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-yellow-600 to-amber-400 px-5 py-4">
+                    <h3 class="text-white font-bold flex items-center gap-2">
+                        <i class="fas fa-mask"></i> Top Heist Runners
+                    </h3>
+                    <p class="text-yellow-100 text-sm opacity-75">Most bank heist deliveries</p>
+                </div>
+                <div class="p-4 space-y-2">
+                    <template x-for="(player, index) in leaderboards.top_heist_runners || []" :key="player.player_id">
+                        <a :href="'/player/' + player.player_id" class="flex items-center justify-between bg-dark-300 rounded-lg p-3 hover:bg-dark-100 transition-colors">
+                            <div class="flex items-center gap-3">
+                                <span class="w-6 h-6 flex items-center justify-center rounded-full text-sm font-bold"
+                                      :class="index === 0 ? 'bg-yellow-400 text-gray-900' : index === 1 ? 'bg-gray-300 text-gray-900' : index === 2 ? 'bg-amber-600 text-white' : 'bg-dark-100 text-gray-400'"
+                                      x-text="index + 1"></span>
+                                <span class="text-white" x-text="player.player_name || 'ID:' + player.player_id"></span>
+                            </div>
+                            <span class="text-yellow-400 font-bold" x-text="player.heist_count?.toLocaleString() + ' heists'"></span>
+                        </a>
+                    </template>
+                    <div x-show="!leaderboards.top_heist_runners?.length" class="text-center py-4 text-gray-500">No data</div>
+                </div>
+            </div>
+
+            <!-- Top Gamblers -->
+            <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-pink-600 to-rose-400 px-5 py-4">
+                    <h3 class="text-white font-bold flex items-center gap-2">
+                        <i class="fas fa-dice"></i> Top Gamblers
+                    </h3>
+                    <p class="text-pink-100 text-sm opacity-75">Most gambling wins</p>
+                </div>
+                <div class="p-4 space-y-2">
+                    <template x-for="(player, index) in leaderboards.top_gamblers || []" :key="player.player_id">
+                        <a :href="'/player/' + player.player_id" class="flex items-center justify-between bg-dark-300 rounded-lg p-3 hover:bg-dark-100 transition-colors">
+                            <div class="flex items-center gap-3">
+                                <span class="w-6 h-6 flex items-center justify-center rounded-full text-sm font-bold"
+                                      :class="index === 0 ? 'bg-yellow-400 text-gray-900' : index === 1 ? 'bg-gray-300 text-gray-900' : index === 2 ? 'bg-amber-600 text-white' : 'bg-dark-100 text-gray-400'"
+                                      x-text="index + 1"></span>
+                                <span class="text-white" x-text="player.player_name || 'ID:' + player.player_id"></span>
+                            </div>
+                            <span class="text-pink-400 font-bold" x-text="player.gambling_wins?.toLocaleString() + ' wins'"></span>
+                        </a>
+                    </template>
+                    <div x-show="!leaderboards.top_gamblers?.length" class="text-center py-4 text-gray-500">No data</div>
+                </div>
+            </div>
+
+            <!-- Most Warned Players -->
+            <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-orange-600 to-amber-500 px-5 py-4">
+                    <h3 class="text-white font-bold flex items-center gap-2">
+                        <i class="fas fa-exclamation-triangle"></i> Most Warned
+                    </h3>
+                    <p class="text-orange-100 text-sm opacity-75">Received most warnings</p>
+                </div>
+                <div class="p-4 space-y-2">
+                    <template x-for="(player, index) in leaderboards.most_warned || []" :key="player.player_id">
+                        <a :href="'/player/' + player.player_id" class="flex items-center justify-between bg-dark-300 rounded-lg p-3 hover:bg-dark-100 transition-colors">
+                            <div class="flex items-center gap-3">
+                                <span class="w-6 h-6 flex items-center justify-center rounded-full text-sm font-bold"
+                                      :class="index === 0 ? 'bg-yellow-400 text-gray-900' : index === 1 ? 'bg-gray-300 text-gray-900' : index === 2 ? 'bg-amber-600 text-white' : 'bg-dark-100 text-gray-400'"
+                                      x-text="index + 1"></span>
+                                <span class="text-white" x-text="player.player_name || 'ID:' + player.player_id"></span>
+                            </div>
+                            <span class="text-orange-400 font-bold" x-text="player.warning_count?.toLocaleString() + ' warns'"></span>
+                        </a>
+                    </template>
+                    <div x-show="!leaderboards.most_warned?.length" class="text-center py-4 text-gray-500">No data</div>
+                </div>
+            </div>
+
+            <!-- Most Banned Players -->
+            <div class="bg-dark-200 rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-red-600 to-rose-500 px-5 py-4">
+                    <h3 class="text-white font-bold flex items-center gap-2">
+                        <i class="fas fa-gavel"></i> Most Banned
+                    </h3>
+                    <p class="text-red-100 text-sm opacity-75">Received most bans</p>
+                </div>
+                <div class="p-4 space-y-2">
+                    <template x-for="(player, index) in leaderboards.most_banned || []" :key="player.player_id">
+                        <a :href="'/player/' + player.player_id" class="flex items-center justify-between bg-dark-300 rounded-lg p-3 hover:bg-dark-100 transition-colors">
+                            <div class="flex items-center gap-3">
+                                <span class="w-6 h-6 flex items-center justify-center rounded-full text-sm font-bold"
+                                      :class="index === 0 ? 'bg-yellow-400 text-gray-900' : index === 1 ? 'bg-gray-300 text-gray-900' : index === 2 ? 'bg-amber-600 text-white' : 'bg-dark-100 text-gray-400'"
+                                      x-text="index + 1"></span>
+                                <span class="text-white" x-text="player.player_name || 'ID:' + player.player_id"></span>
+                            </div>
+                            <span class="text-red-400 font-bold" x-text="player.ban_count?.toLocaleString() + ' bans'"></span>
+                        </a>
+                    </template>
+                    <div x-show="!leaderboards.most_banned?.length" class="text-center py-4 text-gray-500">No data</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaderboards Loading State -->
+    <div x-show="leaderboardsLoading" class="mt-8 bg-dark-200 rounded-xl p-12 text-center">
+        <i class="fas fa-spinner fa-spin text-4xl text-primary mb-4"></i>
+        <p class="text-gray-400">Loading leaderboards...</p>
+    </div>
 </div>
 
 <script>
