@@ -1628,9 +1628,26 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 NEW PATTERN D: Money transfer with NO "Jucatorul" prefix and nested parens in sender name
+        # 🔥 NEW PATTERN D: Admin warning removal - "Administratorul Name(ID) ia scos un avertisment jucatorului Name(ID)"
+        # Example: "Administratorul Tipic(184) ia scos un avertisment jucatorului defuse (199104)."
+        warning_removal_match = re.search(
+            r"Administratorul\s+(.+?)\((\d+)\)\s+i?a\s+scos\s+un\s+avertisment\s+jucatorului\s+(.+?)\s*\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if warning_removal_match:
+            return PlayerAction(
+                player_id=warning_removal_match.group(4),
+                player_name=warning_removal_match.group(3).strip(),
+                action_type="other",  # Warning removal is not a standard action type
+                action_detail=f"Avertisment scos de {warning_removal_match.group(1).strip()}",
+                admin_id=warning_removal_match.group(2),
+                admin_name=warning_removal_match.group(1).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN E: Money transfer with fancy names (tags in parens) - NO "Jucatorul" prefix
         # Example: "King pt voi ! (fotomodelu) (218539) ia transferat suma de 500.000 (de) $ lui Alina (126059) [IN MANA]"
-        # Note: The sender has "(tag) (ID)" format - need to find last "(ID)" for sender
         transfer_fancy_name = re.search(
             r"^(.+?)\s+\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s+(.+?)\s*\((\d+)\)",
             text, re.IGNORECASE
@@ -1686,38 +1703,123 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 32: Money transfer without "Jucatorul" prefix - "Name (ID) ia transferat suma de X (de) $ lui Name (ID) [IN MANA]"
-        # Example: "Finn (97424) ia transferat suma de 8.000.000 (de) $ lui (136629) [IN MANA]"
-        transfer_no_prefix_match = re.search(
-            r"^([^(]+)\s*\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s+(?:([^(]*)\s*)?\((\d+)\)",
+        # 🔥 NEW PATTERN F: Contract with email-like names - handles "email@domain(ID)" format
+        # Example: "Contract[email protected](137592) Mihai(137922). ('137592' [Bravado Harger 69, ], '137922' [])"
+        contract_email_name = re.search(
+            r"Contract\s+([^\s(]+@[^\s(]+)\((\d+)\)\s+(.+?)\((\d+)\)\.",
             text, re.IGNORECASE
         )
-        if transfer_no_prefix_match:
-            target_name = transfer_no_prefix_match.group(4)
-            target_name = target_name.strip() if target_name else None
+        if contract_email_name:
             return PlayerAction(
-                player_id=transfer_no_prefix_match.group(2),
-                player_name=transfer_no_prefix_match.group(1).strip(),
-                action_type="money_transfer",
-                action_detail=f"Transferat {transfer_no_prefix_match.group(3)}$ lui {target_name or 'ID:' + transfer_no_prefix_match.group(5)}",
-                target_player_id=transfer_no_prefix_match.group(5),
-                target_player_name=target_name,
+                player_id=contract_email_name.group(2),
+                player_name=contract_email_name.group(1),
+                action_type="vehicle_contract",
+                action_detail=f"Contract cu {contract_email_name.group(3).strip()}: Vehicle transfer",
+                target_player_id=contract_email_name.group(4),
+                target_player_name=contract_email_name.group(3).strip(),
                 timestamp=timestamp,
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 33: Non-Jucatorul actions with player IDs (like contracts without "Jucatorul" prefix)
-        if re.search(r"\(\d+\)", text):
-            id_match = re.search(r"([^(]+)\((\d+)\)", text)
-            if id_match:
-                return PlayerAction(
-                    player_id=id_match.group(2),
-                    player_name=id_match.group(1).strip(),
-                    action_type="other",
-                    action_detail=text[:200],
-                    timestamp=timestamp,
-                    raw_text=text,
-                )
+        # 🔥 NEW PATTERN G: Bank heist with fancy player names (with tags)
+        # Example: "Jucatorul King pt voi ! (fotomodelu)(218539) a livrat bani de la banca(Blaine County Savings)"
+        heist_fancy_name = re.search(
+            r"Jucatorul\s+(.+)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\(([^)]+)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)\s*bani\s+murdari",
+            text, re.IGNORECASE
+        )
+        if heist_fancy_name:
+            return PlayerAction(
+                player_id=heist_fancy_name.group(2),
+                player_name=heist_fancy_name.group(1).strip(),
+                action_type="bank_heist_delivery",
+                action_detail=f"Livrat bani de la {heist_fancy_name.group(3)}: {heist_fancy_name.group(4)} bani murdari",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN H: Money deposit by email-like username (no space before paren)
+        # Example: "Jucatorul[email protected](137592) a depozitat suma de 61.000.000$ (taxa 610.000$)."
+        deposit_email = re.search(
+            r"Jucatorul\s*([^\s(]+@[^\s(]+)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\$\s*\(taxa\s+([\d.,]+)\$\)",
+            text, re.IGNORECASE
+        )
+        if deposit_email:
+            return PlayerAction(
+                player_id=deposit_email.group(2),
+                player_name=deposit_email.group(1),
+                action_type="money_deposit",
+                action_detail=f"Depozitat {deposit_email.group(3)}$ (taxa {deposit_email.group(4)}$)",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN I: Money transfer with email-like username
+        # Example: "Mihai (137922) ia transferat suma de 7.500.000 (de) $ lui[email protected](137592) [IN MANA]"
+        transfer_email_target = re.search(
+            r"^(.+?)\s+\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s*([^\s(]+@[^\s(]+)\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if transfer_email_target:
+            return PlayerAction(
+                player_id=transfer_email_target.group(2),
+                player_name=transfer_email_target.group(1).strip(),
+                action_type="money_transfer",
+                action_detail=f"Transferat {transfer_email_target.group(3)}$ lui {transfer_email_target.group(4)}",
+                target_player_id=transfer_email_target.group(5),
+                target_player_name=transfer_email_target.group(4),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN J: Trade with detailed exchange info (already somewhat covered but with better parsing)
+        # Example: "Tradeul dintre jucatorii Chirila(373) si (136629) a fost finalizat. ('373' [1x Sandwich Cu Sunca, ], '136629' [90.000.000$, ])"
+        trade_detailed = re.search(
+            r"Tradeul\s+dintre\s+jucatorii\s+([^(]+)\((\d+)\)\s+si\s+([^(]*)\((\d+)\)\s+a\s+fost\s+finalizat",
+            text, re.IGNORECASE
+        )
+        if trade_detailed:
+            player1_name = trade_detailed.group(1).strip()
+            player1_id = trade_detailed.group(2)
+            player2_name = trade_detailed.group(3).strip() if trade_detailed.group(3).strip() else None
+            player2_id = trade_detailed.group(4)
+            
+            # Extract what was exchanged from the detail part if present
+            exchange_detail = ""
+            exchange_match = re.findall(r"'(\d+)'\s*\[([^\]]+)\]", text)
+            if exchange_match:
+                for ex_id, ex_items in exchange_match:
+                    if ex_id == player1_id:
+                        exchange_detail = f"Gave: {ex_items.strip().rstrip(', ')}"
+                        break
+            
+            return PlayerAction(
+                player_id=player1_id,
+                player_name=player1_name,
+                action_type="trade",
+                action_detail=f"Trade cu {player2_name or 'ID:' + player2_id}: {exchange_detail}",
+                target_player_id=player2_id,
+                target_player_name=player2_name,
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN E: Money transfer with ID-ONLY sender - "(ID) ia transferat..."
+        # Example: "(76985) ia transferat suma de 94.226 (de) $ lui VARZARU (223077) [IN MANA]"
+        transfer_id_only_sender = re.search(
+            r"^\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s+(.+?)\s*\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if transfer_id_only_sender:
+            return PlayerAction(
+                player_id=transfer_id_only_sender.group(1),
+                player_name=None,
+                action_type="money_transfer",
+                action_detail=f"Transferat {transfer_id_only_sender.group(2)}$ lui {transfer_id_only_sender.group(3).strip()}",
+                target_player_id=transfer_id_only_sender.group(4),
+                target_player_name=transfer_id_only_sender.group(3).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
         
         # 🔥 PATTERN 34: CATCH-ALL - Save ANY action text even if no patterns match
         if len(text) >= 10:
