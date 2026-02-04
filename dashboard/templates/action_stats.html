@@ -182,7 +182,7 @@ function actionStatsApp() {
             try {
                 const response = await fetch('/api/action-stats');
                 const data = await response.json();
-                this.stats = data.stats || [];
+                this.stats = data.by_type || [];  // 🔥 FIX: API returns 'by_type' not 'stats'
             } catch (error) {
                 console.error('Error fetching action stats:', error);
                 this.stats = [];
