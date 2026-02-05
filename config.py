@@ -43,8 +43,12 @@ class Config:
     # 🔥 OPTIMIZED: Based on testing panel.pro4kings.ro (30 connection limit shared hosting)
     # Tests showed 5 workers at ~20 req/s sustained works, but we use conservative limits
     SCRAPER_MAX_CONCURRENT: int = _safe_int("SCRAPER_MAX_CONCURRENT", 5)
-    SCRAPER_RATE_LIMIT: float = _safe_float("SCRAPER_RATE_LIMIT", 10.0)  # requests/sec (reduced from 25)
-    SCRAPER_BURST_CAPACITY: int = _safe_int("SCRAPER_BURST_CAPACITY", 20)  # reduced from 50
+    SCRAPER_RATE_LIMIT: float = _safe_float(
+        "SCRAPER_RATE_LIMIT", 10.0
+    )  # requests/sec (reduced from 25)
+    SCRAPER_BURST_CAPACITY: int = _safe_int(
+        "SCRAPER_BURST_CAPACITY", 20
+    )  # reduced from 50
 
     # VIP Player Tracking - Monitor specific high-priority players
     # DISABLED - general actions scraper now covers all actions

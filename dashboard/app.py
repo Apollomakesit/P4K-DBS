@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from scraper import Pro4KingsScraper
+
     SCRAPER_AVAILABLE = True
 except ImportError:
     SCRAPER_AVAILABLE = False
@@ -35,8 +36,9 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, template_folder='templates', static_folder='static')
+app = Flask(__name__, template_folder="templates", static_folder="static")
 CORS(app)
+
 
 @app.context_processor
 def inject_branding():
@@ -46,18 +48,20 @@ def inject_branding():
     if not logo_url:
         # Use local SVG logo
         logo_url = "/static/logo.svg"
-    return {
-        "logo_url": logo_url
-    }
+    return {"logo_url": logo_url}
+
 
 @app.after_request
 def add_no_cache_headers(response):
     """Disable caching for API responses to keep dashboard fresh."""
     if request.path.startswith("/api/"):
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers[
+            "Cache-Control"
+        ] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
+
 
 # Database path - same as bot (shared database)
 def get_db_path():
@@ -65,19 +69,22 @@ def get_db_path():
     # Railway volume mount
     if os.path.exists("/data"):
         return "/data/pro4kings.db"
-    
+
     # Environment variable override
     env_path = os.getenv("DATABASE_PATH")
     if env_path:
         return env_path
-    
+
     # Local development - check parent directory (since we're in dashboard/)
-    parent_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "pro4kings.db")
+    parent_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "data", "pro4kings.db"
+    )
     if os.path.exists(parent_path):
         return parent_path
-    
+
     # Fallback to relative path
     return "data/pro4kings.db"
+
 
 def get_db_connection():
     """Get database connection with row factory"""
@@ -85,6 +92,7 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
 
 def _parse_timestamp(value):
     if not value:
@@ -95,29 +103,31 @@ def _parse_timestamp(value):
         # Handle multiple timestamp formats
         # Note: Both Pro4Kings panel and this dashboard use Romania local time
         # so we just strip 'Z' suffix instead of treating it as UTC
-        if 'T' in str(value):
-            return datetime.fromisoformat(str(value).rstrip('Z'))
+        if "T" in str(value):
+            return datetime.fromisoformat(str(value).rstrip("Z"))
         else:
             return datetime.fromisoformat(str(value))
     except (ValueError, AttributeError) as e:
         logger.warning(f"Failed to parse timestamp '{value}': {e}")
         return None
 
+
 def _format_timestamp(dt: datetime) -> str:
     # Ensure we're working with naive datetime (no timezone)
-    if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+    if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
         dt = dt.replace(tzinfo=None)
     return dt.strftime("%Y-%m-%d %H:%M:%S")
+
 
 def _time_ago(dt: datetime) -> str:
     if not dt:
         return ""
     # Ensure we're working with naive datetime for comparison
-    if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+    if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
         dt = dt.replace(tzinfo=None)
-    
+
     diff = (datetime.now() - dt).total_seconds()
-    
+
     # Handle negative diff (timestamp in "future" - shouldn't happen but safety check)
     if diff < 0:
         return "Just now"
@@ -129,6 +139,7 @@ def _time_ago(dt: datetime) -> str:
         return f"{int(diff // 3600)}h ago"
     return f"{int(diff // 86400)}d ago"
 
+
 def _normalize_action(action: dict) -> dict:
     ts = _parse_timestamp(action.get("timestamp"))
     if ts:
@@ -139,62 +150,73 @@ def _normalize_action(action: dict) -> dict:
         action["time_ago"] = ""
     return action
 
+
 # ============================================================================
 # 🔥 PROFILE AUTO-REFRESH SYSTEM
 # ============================================================================
 
 # Configuration for auto-refresh
-PROFILE_REFRESH_ENABLED = SCRAPER_AVAILABLE and os.getenv("ENABLE_PROFILE_REFRESH", "true").lower() == "true"
+PROFILE_REFRESH_ENABLED = (
+    SCRAPER_AVAILABLE and os.getenv("ENABLE_PROFILE_REFRESH", "true").lower() == "true"
+)
 # 🔥 CHANGED: Stale threshold increased - we now prioritize ONLINE players instead
-PROFILE_STALE_HOURS = int(os.getenv("PROFILE_STALE_HOURS", "24"))  # Only refresh if profile older than 24h
+PROFILE_STALE_HOURS = int(
+    os.getenv("PROFILE_STALE_HOURS", "24")
+)  # Only refresh if profile older than 24h
 PROFILE_STALE_MINUTES = PROFILE_STALE_HOURS * 60  # Convert to minutes for compatibility
 PROFILE_STALE_THRESHOLD_HOURS = PROFILE_STALE_HOURS  # Alias for API compatibility
 MAX_CONCURRENT_REFRESHES = 3  # Maximum number of concurrent refresh operations
 # 🔥 OPTIMIZED: Reduced for shared hosting (30 connection limit)
 SCRAPER_RATE_LIMIT = float(os.getenv("SCRAPER_RATE_LIMIT", "10.0"))  # Reduced from 25
-SCRAPER_BURST_CAPACITY = int(os.getenv("SCRAPER_BURST_CAPACITY", "20"))  # Reduced from 50
+SCRAPER_BURST_CAPACITY = int(
+    os.getenv("SCRAPER_BURST_CAPACITY", "20")
+)  # Reduced from 50
 REFRESH_QUEUE = set()  # Thread-safe queue of player IDs to refresh
 REFRESH_LOCK = threading.Lock()
 REFRESH_IN_PROGRESS = set()  # Track IDs being refreshed to avoid duplicates
 
 # Thread pool for async refresh operations
-refresh_executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_REFRESHES, thread_name_prefix="profile_refresh")
+refresh_executor = ThreadPoolExecutor(
+    max_workers=MAX_CONCURRENT_REFRESHES, thread_name_prefix="profile_refresh"
+)
+
 
 def is_profile_stale(last_update) -> bool:
     """Check if a profile is stale and needs refresh (24h threshold by default)"""
     if not last_update:
         return True  # Never updated
-    
+
     if isinstance(last_update, str):
         try:
             last_update = datetime.fromisoformat(last_update)
         except:
             return True
-    
+
     # 🔥 CHANGED: Using hours-based threshold (default 24h)
     stale_threshold = datetime.now() - timedelta(hours=PROFILE_STALE_HOURS)
     return last_update < stale_threshold
 
+
 def queue_profile_refresh(player_id: str, priority: bool = False) -> bool:
     """
     Queue a player profile for background refresh.
-    
+
     Args:
         player_id: Player ID to refresh
         priority: If True, refresh immediately (for direct page access)
-    
+
     Returns:
         True if profile was queued, False if already in progress or disabled
     """
     if not PROFILE_REFRESH_ENABLED:
         return False
-    
+
     player_id = str(player_id)
-    
+
     with REFRESH_LOCK:
         if player_id in REFRESH_IN_PROGRESS:
             return False  # Already being refreshed
-        
+
         if priority:
             # For priority refreshes (page access), trigger immediately
             REFRESH_IN_PROGRESS.add(player_id)
@@ -204,16 +226,18 @@ def queue_profile_refresh(player_id: str, priority: bool = False) -> bool:
             REFRESH_QUEUE.add(player_id)
             return True
 
+
 def queue_multiple_profile_refresh(player_ids: list):
     """Queue multiple player profiles for background refresh"""
     if not PROFILE_REFRESH_ENABLED:
         return
-    
+
     with REFRESH_LOCK:
         for pid in player_ids:
             pid = str(pid)
             if pid and pid not in REFRESH_IN_PROGRESS:
                 REFRESH_QUEUE.add(pid)
+
 
 def _do_profile_refresh(player_id: str):
     """
@@ -222,27 +246,30 @@ def _do_profile_refresh(player_id: str):
     """
     try:
         logger.info(f"🔄 Auto-refreshing profile for player {player_id}...")
-        
+
         # Create new event loop for this thread
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         try:
             # Run the async scraper
             profile = loop.run_until_complete(_fetch_and_save_profile(player_id))
-            
+
             if profile:
-                logger.info(f"✅ Profile refreshed: {profile.get('username', player_id)} ({player_id})")
+                logger.info(
+                    f"✅ Profile refreshed: {profile.get('username', player_id)} ({player_id})"
+                )
             else:
                 logger.warning(f"⚠️ Profile not found for player {player_id}")
         finally:
             loop.close()
-            
+
     except Exception as e:
         logger.error(f"❌ Error refreshing profile {player_id}: {e}")
     finally:
         with REFRESH_LOCK:
             REFRESH_IN_PROGRESS.discard(player_id)
+
 
 async def _fetch_and_save_profile(player_id: str) -> Optional[dict]:
     """Fetch profile from website and save to database"""
@@ -252,10 +279,10 @@ async def _fetch_and_save_profile(player_id: str) -> Optional[dict]:
         burst_capacity=SCRAPER_BURST_CAPACITY,
     ) as scraper:
         profile_obj = await scraper.get_player_profile(player_id)
-        
+
         if not profile_obj:
             return None
-        
+
         # Convert to dict and save to database
         profile_dict = {
             "player_id": profile_obj.player_id,
@@ -269,22 +296,26 @@ async def _fetch_and_save_profile(player_id: str) -> Optional[dict]:
             "played_hours": profile_obj.played_hours,
             "age_ic": profile_obj.age_ic,
         }
-        
+
         # Save to database synchronously
         _save_profile_to_db(profile_dict)
-        
+
         return profile_dict
+
 
 def _save_profile_to_db(profile: dict):
     """Save profile to database"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        username = profile.get("player_name") or profile.get("username", f"Player_{profile['player_id']}")
+
+        username = profile.get("player_name") or profile.get(
+            "username", f"Player_{profile['player_id']}"
+        )
         last_seen = profile.get("last_connection") or profile.get("last_seen")
-        
-        cursor.execute("""
+
+        cursor.execute(
+            """
             INSERT INTO player_profiles (
                 player_id, username, is_online, last_seen,
                 faction, faction_rank, job, warnings,
@@ -303,34 +334,37 @@ def _save_profile_to_db(profile: dict):
                 played_hours = excluded.played_hours,
                 age_ic = excluded.age_ic,
                 last_profile_update = CURRENT_TIMESTAMP
-        """, (
-            profile["player_id"],
-            username,
-            profile.get("is_online", False),
-            last_seen,
-            profile.get("faction"),
-            profile.get("faction_rank"),
-            profile.get("job"),
-            profile.get("warns") or profile.get("warnings"),
-            profile.get("played_hours"),
-            profile.get("age_ic"),
-        ))
-        
+        """,
+            (
+                profile["player_id"],
+                username,
+                profile.get("is_online", False),
+                last_seen,
+                profile.get("faction"),
+                profile.get("faction_rank"),
+                profile.get("job"),
+                profile.get("warns") or profile.get("warnings"),
+                profile.get("played_hours"),
+                profile.get("age_ic"),
+            ),
+        )
+
         conn.commit()
         conn.close()
-        
+
     except Exception as e:
         logger.error(f"Error saving profile to DB: {e}")
+
 
 def process_refresh_queue():
     """Process queued profile refreshes (called periodically)"""
     if not PROFILE_REFRESH_ENABLED:
         return
-    
+
     with REFRESH_LOCK:
         if not REFRESH_QUEUE:
             return
-        
+
         # Process up to 10 profiles at a time
         to_refresh = list(REFRESH_QUEUE)[:10]
         for pid in to_refresh:
@@ -339,15 +373,18 @@ def process_refresh_queue():
                 REFRESH_IN_PROGRESS.add(pid)
                 refresh_executor.submit(_do_profile_refresh, pid)
 
+
 # Start background queue processor (simple timer)
 def start_refresh_queue_processor():
     """Start the background queue processor"""
     if not PROFILE_REFRESH_ENABLED:
-        logger.info("📴 Profile refresh disabled (ENABLE_PROFILE_REFRESH=false or scraper not available)")
+        logger.info(
+            "📴 Profile refresh disabled (ENABLE_PROFILE_REFRESH=false or scraper not available)"
+        )
         return
-    
+
     import time
-    
+
     def processor_loop():
         while True:
             try:
@@ -355,174 +392,209 @@ def start_refresh_queue_processor():
             except Exception as e:
                 logger.error(f"Queue processor error: {e}")
             time.sleep(5)  # Process queue every 5 seconds
-    
-    thread = threading.Thread(target=processor_loop, daemon=True, name="refresh_queue_processor")
+
+    thread = threading.Thread(
+        target=processor_loop, daemon=True, name="refresh_queue_processor"
+    )
     thread.start()
     logger.info("✅ Profile refresh queue processor started")
+
 
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
 
-@app.route('/')
+
+@app.route("/")
 def index():
     """Main dashboard page"""
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/players')
+
+@app.route("/players")
 def players_page():
-    return render_template('players.html')
+    return render_template("players.html")
 
-@app.route('/player/<player_id>')
+
+@app.route("/player/<player_id>")
 def player_page(player_id):
     """Individual player profile page"""
-    return render_template('player.html', player_id=player_id)
+    return render_template("player.html", player_id=player_id)
 
-@app.route('/actions')
+
+@app.route("/actions")
 def actions_page():
-    return render_template('actions.html')
+    return render_template("actions.html")
 
-@app.route('/factions')
+
+@app.route("/factions")
 def factions_page():
-    return render_template('factions.html')
+    return render_template("factions.html")
 
-@app.route('/faction/<faction_name>')
+
+@app.route("/faction/<faction_name>")
 def faction_detail_page(faction_name):
     """Individual faction page showing members and stats"""
-    return render_template('faction.html', faction_name=faction_name)
+    return render_template("faction.html", faction_name=faction_name)
 
-@app.route('/bans')
+
+@app.route("/bans")
 def bans_page():
-    return render_template('bans.html')
+    return render_template("bans.html")
 
-@app.route('/search')
+
+@app.route("/search")
 def search_page():
-    return render_template('search.html')
+    return render_template("search.html")
 
-@app.route('/admin-history')
+
+@app.route("/admin-history")
 def admin_history_page():
-    return render_template('admin_history.html')
+    return render_template("admin_history.html")
 
-@app.route('/promotions')
+
+@app.route("/promotions")
 def promotions_page():
-    return render_template('promotions.html')
+    return render_template("promotions.html")
 
-@app.route('/heists')
+
+@app.route("/heists")
 def heists_page():
-    return render_template('heists.html')
+    return render_template("heists.html")
 
-@app.route('/sessions')
+
+@app.route("/sessions")
 def sessions_page():
-    return render_template('sessions.html')
+    return render_template("sessions.html")
 
-@app.route('/faction-actions')
+
+@app.route("/faction-actions")
 def faction_actions_page():
-    return render_template('faction_actions.html')
+    return render_template("faction_actions.html")
 
-@app.route('/online-24h')
+
+@app.route("/online-24h")
 def online_24h_page():
-    return render_template('online_24h.html')
+    return render_template("online_24h.html")
 
-@app.route('/unknown-actions')
+
+@app.route("/unknown-actions")
 def unknown_actions_page():
-    return render_template('unknown_actions.html')
+    return render_template("unknown_actions.html")
 
-@app.route('/action-stats')
+
+@app.route("/action-stats")
 def action_stats_page():
-    return render_template('action_stats.html')
+    return render_template("action_stats.html")
 
-@app.route('/scan-progress')
+
+@app.route("/scan-progress")
 def scan_progress_page():
-    return render_template('scan_progress.html')
+    return render_template("scan_progress.html")
 
-@app.route('/profile-history')
+
+@app.route("/profile-history")
 def profile_history_page():
-    return render_template('profile_history.html')
+    return render_template("profile_history.html")
 
-@app.route('/rank-history')
+
+@app.route("/rank-history")
 def rank_history_page():
-    return render_template('rank_history.html')
+    return render_template("rank_history.html")
 
-@app.route('/api/stats')
+
+@app.route("/api/stats")
 def api_stats():
     """Get overall database statistics"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Total players
         cursor.execute("SELECT COUNT(*) FROM player_profiles")
         total_players = cursor.fetchone()[0]
-        
+
         # Total actions
         cursor.execute("SELECT COUNT(*) FROM actions")
         total_actions = cursor.fetchone()[0]
-        
+
         # 🔥 FIXED: Currently online - just count all online_players entries
         # The bot keeps this table up-to-date by removing stale entries
         cursor.execute("SELECT COUNT(*) FROM online_players")
         online_now = cursor.fetchone()[0]
-        
+
         # 🔥 FIXED: Actions in last 24h using relative comparison within the table
         # This avoids timezone issues by comparing within the same timestamp domain
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) FROM actions 
             WHERE timestamp >= datetime((SELECT MAX(timestamp) FROM actions), '-24 hours')
-        """)
+        """
+        )
         actions_24h = cursor.fetchone()[0]
-        
+
         # 🔥 FIXED: Logins today - compare with max login timestamp
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) FROM login_events 
             WHERE event_type = 'login' 
             AND date(timestamp) = date((SELECT MAX(timestamp) FROM login_events))
-        """)
+        """
+        )
         logins_today = cursor.fetchone()[0]
-        
+
         # Active bans
         cursor.execute("SELECT COUNT(*) FROM banned_players WHERE is_active = TRUE")
         active_bans = cursor.fetchone()[0]
-        
+
         # Total factions
-        cursor.execute("SELECT COUNT(DISTINCT faction) FROM player_profiles WHERE faction IS NOT NULL AND faction != ''")
+        cursor.execute(
+            "SELECT COUNT(DISTINCT faction) FROM player_profiles WHERE faction IS NOT NULL AND faction != ''"
+        )
         total_factions = cursor.fetchone()[0]
-        
+
         # 🔥 FIXED: Unique players in last 24h using relative comparison
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(DISTINCT player_id) FROM login_events 
             WHERE event_type = 'login' 
             AND timestamp >= datetime((SELECT MAX(timestamp) FROM login_events), '-24 hours')
-        """)
+        """
+        )
         unique_24h = cursor.fetchone()[0]
-        
+
         conn.close()
-        
-        return jsonify({
-            'total_players': total_players,
-            'total_actions': total_actions,
-            'online_now': online_now,
-            'actions_24h': actions_24h,
-            'logins_today': logins_today,
-            'active_bans': active_bans,
-            'total_factions': total_factions,
-            'factions_count': total_factions,  # Alias for template compatibility
-            'unique_24h': unique_24h,
-            'timestamp': datetime.now().isoformat()
-        })
+
+        return jsonify(
+            {
+                "total_players": total_players,
+                "total_actions": total_actions,
+                "online_now": online_now,
+                "actions_24h": actions_24h,
+                "logins_today": logins_today,
+                "active_bans": active_bans,
+                "total_factions": total_factions,
+                "factions_count": total_factions,  # Alias for template compatibility
+                "unique_24h": unique_24h,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/online')
+
+@app.route("/api/online")
 def api_online():
     """Get currently online players"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # 🔥 FIXED: Get ALL online players (bot keeps table up-to-date by removing stale entries)
         # No need to filter by timestamp - the bot already handles cleanup
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 o.player_id,
                 o.player_name,
@@ -534,38 +606,45 @@ def api_online():
             FROM online_players o
             LEFT JOIN player_profiles p ON o.player_id = p.player_id
             ORDER BY o.detected_online_at DESC
-        """)
-        
+        """
+        )
+
         players = [dict(row) for row in cursor.fetchall()]
         conn.close()
-        
+
         # 🔥 AUTO-REFRESH: Queue stale online player profiles for refresh
         stale_player_ids = []
         for player in players:
-            if is_profile_stale(player.get('last_profile_update')):
-                stale_player_ids.append(str(player['player_id']))
+            if is_profile_stale(player.get("last_profile_update")):
+                stale_player_ids.append(str(player["player_id"]))
         if stale_player_ids:
-            queue_multiple_profile_refresh(stale_player_ids[:30])  # Online players are higher priority
-        
-        return jsonify({
-            'count': len(players),
-            'players': players,
-            'stale_profiles_queued': len(stale_player_ids)
-        })
+            queue_multiple_profile_refresh(
+                stale_player_ids[:30]
+            )  # Online players are higher priority
+
+        return jsonify(
+            {
+                "count": len(players),
+                "players": players,
+                "stale_profiles_queued": len(stale_player_ids),
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting online players: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/online-24h')
+
+@app.route("/api/online-24h")
 def api_online_24h():
     """Get players who were online within the last 24 hours"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cutoff = datetime.now() - timedelta(hours=24)
-        
+
         # Get unique players who logged in within last 24 hours
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT DISTINCT 
                 le.player_id,
                 COALESCE(p.username, le.player_name) as player_name,
@@ -585,45 +664,50 @@ def api_online_24h():
             AND le.timestamp >= ?
             GROUP BY le.player_id
             ORDER BY is_currently_online DESC, last_activity DESC
-        """, (cutoff,))
-        
+        """,
+            (cutoff,),
+        )
+
         players = [dict(row) for row in cursor.fetchall()]
         conn.close()
-        
+
         # Count currently online vs recently online
-        online_now = sum(1 for p in players if p.get('is_currently_online') == 1)
-        
-        return jsonify({
-            'count': len(players),
-            'online_now': online_now,
-            'recently_online': len(players) - online_now,
-            'players': players
-        })
+        online_now = sum(1 for p in players if p.get("is_currently_online") == 1)
+
+        return jsonify(
+            {
+                "count": len(players),
+                "online_now": online_now,
+                "recently_online": len(players) - online_now,
+                "players": players,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting online 24h players: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/actions')
+
+@app.route("/api/actions")
 def api_actions():
     """Get recent actions with optional filters"""
     try:
-        limit = min(int(request.args.get('limit', 50)), 200)
-        action_type = request.args.get('type', None)
-        player_id = request.args.get('player_id', None)
-        player_query = request.args.get('player', None)
-        per_page = min(int(request.args.get('per_page', limit)), 100)
-        page = max(int(request.args.get('page', 1)), 1)
-        
+        limit = min(int(request.args.get("limit", 50)), 200)
+        action_type = request.args.get("type", None)
+        player_id = request.args.get("player_id", None)
+        player_query = request.args.get("player", None)
+        per_page = min(int(request.args.get("per_page", limit)), 100)
+        page = max(int(request.args.get("page", 1)), 1)
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         query = "SELECT * FROM actions WHERE 1=1"
         params = []
-        
+
         if action_type:
             query += " AND action_type = ?"
             params.append(action_type)
-        
+
         if player_id:
             query += " AND (player_id = ? OR target_player_id = ?)"
             params.extend([player_id, player_id])
@@ -632,7 +716,7 @@ def api_actions():
             query += " AND (player_name LIKE ? OR target_player_name LIKE ? OR player_id = ? OR target_player_id = ?)"
             like_query = f"%{player_query}%"
             params.extend([like_query, like_query, player_query, player_query])
-        
+
         count_query = f"SELECT COUNT(*) FROM ({query}) AS filtered"
         cursor.execute(count_query, params)
         total_count = cursor.fetchone()[0]
@@ -640,159 +724,185 @@ def api_actions():
         offset = (page - 1) * per_page
         query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
         params.extend([per_page, offset])
-        
+
         cursor.execute(query, params)
         actions = [_normalize_action(dict(row)) for row in cursor.fetchall()]
-        
+
         # 🔥 AUTO-REFRESH: Queue stale profiles for players seen in actions
         stale_profiles_queued = 0
         if PROFILE_REFRESH_ENABLED and actions:
             # Collect unique player IDs from actions (both actors and targets)
             action_player_ids = set()
             for action in actions:
-                if action.get('player_id'):
-                    action_player_ids.add(str(action['player_id']))
-                if action.get('target_player_id'):
-                    action_player_ids.add(str(action['target_player_id']))
-            
+                if action.get("player_id"):
+                    action_player_ids.add(str(action["player_id"]))
+                if action.get("target_player_id"):
+                    action_player_ids.add(str(action["target_player_id"]))
+
             # Check which ones are stale (limit to first 50 to avoid overload)
             action_player_ids_list = list(action_player_ids)[:50]
             if action_player_ids_list:
-                placeholders = ','.join(['?' for _ in action_player_ids_list])
-                cursor.execute(f"""
+                placeholders = ",".join(["?" for _ in action_player_ids_list])
+                cursor.execute(
+                    f"""
                     SELECT player_id, last_profile_update FROM player_profiles 
                     WHERE player_id IN ({placeholders})
-                """, action_player_ids_list)
-                
+                """,
+                    action_player_ids_list,
+                )
+
                 stale_player_ids = []
                 for row in cursor.fetchall():
-                    if is_profile_stale(row['last_profile_update']):
-                        stale_player_ids.append(str(row['player_id']))
-                
+                    if is_profile_stale(row["last_profile_update"]):
+                        stale_player_ids.append(str(row["player_id"]))
+
                 # Queue stale profiles for refresh (max 20 at a time)
                 if stale_player_ids:
                     queue_multiple_profile_refresh(stale_player_ids[:20])
                     stale_profiles_queued = len(stale_player_ids[:20])
-                    logger.info(f"📋 Actions view: Queued {stale_profiles_queued} stale player profiles for refresh")
-        
+                    logger.info(
+                        f"📋 Actions view: Queued {stale_profiles_queued} stale player profiles for refresh"
+                    )
+
         conn.close()
-        
-        return jsonify({
-            'count': len(actions),
-            'total_count': total_count,
-            'total_pages': max(1, (total_count + per_page - 1) // per_page),
-            'page': page,
-            'per_page': per_page,
-            'actions': actions,
-            'stale_profiles_queued': stale_profiles_queued
-        })
+
+        return jsonify(
+            {
+                "count": len(actions),
+                "total_count": total_count,
+                "total_pages": max(1, (total_count + per_page - 1) // per_page),
+                "page": page,
+                "per_page": per_page,
+                "actions": actions,
+                "stale_profiles_queued": stale_profiles_queued,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting actions: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/action-types')
+
+@app.route("/api/action-types")
 def api_action_types():
     """Get all action types with counts"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("""
+
+        cursor.execute(
+            """
             SELECT action_type, COUNT(*) as count
             FROM actions
             GROUP BY action_type
             ORDER BY count DESC
-        """)
-        
+        """
+        )
+
         types = [dict(row) for row in cursor.fetchall()]
         conn.close()
-        
-        return jsonify({'types': types})
+
+        return jsonify({"types": types})
     except Exception as e:
         logger.error(f"Error getting action types: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/player/<player_id>')
+
+@app.route("/api/player/<player_id>")
 def api_player(player_id):
     """Get player profile and recent activity"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Get profile
-        cursor.execute("SELECT * FROM player_profiles WHERE player_id = ?", (player_id,))
+        cursor.execute(
+            "SELECT * FROM player_profiles WHERE player_id = ?", (player_id,)
+        )
         profile = cursor.fetchone()
-        
+
         if not profile:
             conn.close()
             # 🔥 AUTO-REFRESH: Player not in DB - queue high priority fetch
             queue_profile_refresh(player_id, priority=True)
-            return jsonify({'error': 'Player not found', 'refresh_queued': True}), 404
-        
+            return jsonify({"error": "Player not found", "refresh_queued": True}), 404
+
         profile_dict = dict(profile)
-        
+
         # 🔥 AUTO-REFRESH: Check if profile is stale and queue refresh
-        last_update = profile_dict.get('last_profile_update')
+        last_update = profile_dict.get("last_profile_update")
         if is_profile_stale(last_update):
             queue_profile_refresh(player_id, priority=True)
-            profile_dict['refresh_queued'] = True
-        
+            profile_dict["refresh_queued"] = True
+
         # Check if currently online
         cutoff = datetime.now() - timedelta(minutes=5)
-        cursor.execute("SELECT 1 FROM online_players WHERE player_id = ? AND detected_online_at >= ?", (player_id, cutoff))
-        profile_dict['is_currently_online'] = cursor.fetchone() is not None
-        
+        cursor.execute(
+            "SELECT 1 FROM online_players WHERE player_id = ? AND detected_online_at >= ?",
+            (player_id, cutoff),
+        )
+        profile_dict["is_currently_online"] = cursor.fetchone() is not None
+
         # Get recent actions (last 7 days)
         cutoff_7d = datetime.now() - timedelta(days=7)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT * FROM actions 
             WHERE (player_id = ? OR target_player_id = ?)
             AND timestamp >= ?
             ORDER BY timestamp DESC
             LIMIT 50
-        """, (player_id, player_id, cutoff_7d))
+        """,
+            (player_id, player_id, cutoff_7d),
+        )
         actions = [_normalize_action(dict(row)) for row in cursor.fetchall()]
-        
+
         # Get recent sessions
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT * FROM login_events 
             WHERE player_id = ?
             ORDER BY timestamp DESC
             LIMIT 20
-        """, (player_id,))
+        """,
+            (player_id,),
+        )
         sessions = [dict(row) for row in cursor.fetchall()]
         for session in sessions:
             login_dt = _parse_timestamp(session.get("login_time"))
             logout_dt = _parse_timestamp(session.get("logout_time"))
-            session["login_time_display"] = _format_timestamp(login_dt) if login_dt else ""
-            session["logout_time_display"] = _format_timestamp(logout_dt) if logout_dt else ""
+            session["login_time_display"] = (
+                _format_timestamp(login_dt) if login_dt else ""
+            )
+            session["logout_time_display"] = (
+                _format_timestamp(logout_dt) if logout_dt else ""
+            )
             session["login_time_ago"] = _time_ago(login_dt) if login_dt else ""
             session["logout_time_ago"] = _time_ago(logout_dt) if logout_dt else ""
-        
+
         conn.close()
-        
-        return jsonify({
-            'profile': profile_dict,
-            'actions': actions,
-            'sessions': sessions
-        })
+
+        return jsonify(
+            {"profile": profile_dict, "actions": actions, "sessions": sessions}
+        )
     except Exception as e:
         logger.error(f"Error getting player {player_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/search')
+
+@app.route("/api/search")
 def api_search():
     """Search players by name"""
     try:
-        query = request.args.get('q', '').strip()
+        query = request.args.get("q", "").strip()
         if len(query) < 2:
-            return jsonify({'error': 'Query must be at least 2 characters'}), 400
-        
+            return jsonify({"error": "Query must be at least 2 characters"}), 400
+
         conn = get_db_connection()
         cursor = conn.cursor()
         cutoff = datetime.now() - timedelta(minutes=5)
-        
-        cursor.execute("""
+
+        cursor.execute(
+            """
             SELECT 
                 p.player_id,
                 p.username,
@@ -806,83 +916,100 @@ def api_search():
             WHERE p.username LIKE ?
             ORDER BY is_currently_online DESC, p.last_seen DESC
             LIMIT 25
-        """, (cutoff, f"%{query}%",))
-        
+        """,
+            (
+                cutoff,
+                f"%{query}%",
+            ),
+        )
+
         players = [dict(row) for row in cursor.fetchall()]
         for player in players:
             player["is_online"] = bool(player.get("is_currently_online"))
         conn.close()
-        
-        return jsonify({
-            'count': len(players),
-            'players': players
-        })
+
+        return jsonify({"count": len(players), "players": players})
     except Exception as e:
         logger.error(f"Error searching: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/refresh-profile/<player_id>', methods=['POST', 'GET'])
+
+@app.route("/api/refresh-profile/<player_id>", methods=["POST", "GET"])
 def api_refresh_profile(player_id):
     """🔥 Manually trigger a profile refresh for a specific player"""
     try:
         if not PROFILE_REFRESH_ENABLED:
-            return jsonify({
-                'success': False,
-                'error': 'Profile refresh system is disabled (scraper not available)'
-            }), 503
-        
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "Profile refresh system is disabled (scraper not available)",
+                    }
+                ),
+                503,
+            )
+
         # Queue the profile for priority refresh
         was_queued = queue_profile_refresh(player_id, priority=True)
-        
+
         if was_queued:
             logger.info(f"🔄 Manual refresh requested for player {player_id}")
-            return jsonify({
-                'success': True,
-                'message': f'Profile refresh queued for player {player_id}',
-                'player_id': player_id,
-                'queued': True
-            })
+            return jsonify(
+                {
+                    "success": True,
+                    "message": f"Profile refresh queued for player {player_id}",
+                    "player_id": player_id,
+                    "queued": True,
+                }
+            )
         else:
-            return jsonify({
-                'success': True,
-                'message': f'Profile {player_id} already in refresh queue or recently refreshed',
-                'player_id': player_id,
-                'queued': False
-            })
+            return jsonify(
+                {
+                    "success": True,
+                    "message": f"Profile {player_id} already in refresh queue or recently refreshed",
+                    "player_id": player_id,
+                    "queued": False,
+                }
+            )
     except Exception as e:
         logger.error(f"Error queuing profile refresh for {player_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/refresh-status')
+
+@app.route("/api/refresh-status")
 def api_refresh_status():
     """🔥 Get status of the profile refresh system"""
     try:
         with REFRESH_LOCK:
             queue_size = len(REFRESH_QUEUE)
             in_progress = len(REFRESH_IN_PROGRESS)
-        
-        return jsonify({
-            'enabled': PROFILE_REFRESH_ENABLED,
-            'scraper_available': SCRAPER_AVAILABLE,
-            'queue_size': queue_size,
-            'in_progress': in_progress,
-            'stale_threshold_hours': PROFILE_STALE_THRESHOLD_HOURS,
-            'max_concurrent_refreshes': MAX_CONCURRENT_REFRESHES
-        })
+
+        return jsonify(
+            {
+                "enabled": PROFILE_REFRESH_ENABLED,
+                "scraper_available": SCRAPER_AVAILABLE,
+                "queue_size": queue_size,
+                "in_progress": in_progress,
+                "stale_threshold_hours": PROFILE_STALE_THRESHOLD_HOURS,
+                "max_concurrent_refreshes": MAX_CONCURRENT_REFRESHES,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting refresh status: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/factions')
+
+@app.route("/api/factions")
 def api_factions():
     """Get all factions with member counts - online count from online_players table"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # 🔥 FIXED: Count online members directly from online_players table (no time filter)
         # The bot keeps this table up-to-date by removing players when they log out
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 p.faction as name,
                 COUNT(DISTINCT p.player_id) as member_count,
@@ -893,28 +1020,28 @@ def api_factions():
             AND p.faction NOT IN ('Civil', 'Fără', 'None', '-', 'N/A')
             GROUP BY p.faction
             ORDER BY member_count DESC
-        """)
-        
+        """
+        )
+
         factions = [dict(row) for row in cursor.fetchall()]
         conn.close()
-        
-        return jsonify({
-            'count': len(factions),
-            'factions': factions
-        })
+
+        return jsonify({"count": len(factions), "factions": factions})
     except Exception as e:
         logger.error(f"Error getting factions: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/faction/<faction_name>')
+
+@app.route("/api/faction/<faction_name>")
 def api_faction(faction_name):
     """Get faction members - online status from online_players table"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # 🔥 FIXED: Check online status by existence in online_players table (no time filter)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 p.*,
                 CASE WHEN o.player_id IS NOT NULL THEN 1 ELSE 0 END as is_currently_online
@@ -922,125 +1049,155 @@ def api_faction(faction_name):
             LEFT JOIN online_players o ON p.player_id = o.player_id
             WHERE p.faction = ?
             ORDER BY is_currently_online DESC, p.faction_rank, p.last_seen DESC
-        """, (faction_name,))
-        
+        """,
+            (faction_name,),
+        )
+
         members = [dict(row) for row in cursor.fetchall()]
         conn.close()
-        
+
         # 🔥 AUTO-REFRESH: Queue stale faction member profiles for refresh
         stale_member_ids = []
         for member in members:
-            if is_profile_stale(member.get('last_profile_update')):
-                stale_member_ids.append(str(member['player_id']))
+            if is_profile_stale(member.get("last_profile_update")):
+                stale_member_ids.append(str(member["player_id"]))
         if stale_member_ids:
-            queue_multiple_profile_refresh(stale_member_ids[:20])  # Limit to 20 at a time
-        
-        return jsonify({
-            'faction': faction_name,
-            'count': len(members),
-            'members': members,
-            'stale_profiles_queued': len(stale_member_ids)
-        })
+            queue_multiple_profile_refresh(
+                stale_member_ids[:20]
+            )  # Limit to 20 at a time
+
+        return jsonify(
+            {
+                "faction": faction_name,
+                "count": len(members),
+                "members": members,
+                "stale_profiles_queued": len(stale_member_ids),
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting faction {faction_name}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/bans')
+
+@app.route("/api/bans")
 def api_bans():
     """Get banned players"""
     try:
         # Support both 'expired' and 'include_expired' param names
-        include_expired = request.args.get('include_expired', '') or request.args.get('expired', 'false')
-        include_expired = include_expired.lower() == 'true'
-        
+        include_expired = request.args.get("include_expired", "") or request.args.get(
+            "expired", "false"
+        )
+        include_expired = include_expired.lower() == "true"
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         if include_expired:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT b.*, p.played_hours, p.faction
                 FROM banned_players b
                 LEFT JOIN player_profiles p ON b.player_id = p.player_id
                 ORDER BY b.detected_at DESC
-            """)
+            """
+            )
         else:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT b.*, p.played_hours, p.faction
                 FROM banned_players b
                 LEFT JOIN player_profiles p ON b.player_id = p.player_id
                 WHERE b.is_active = TRUE
                 ORDER BY b.detected_at DESC
-            """)
-        
+            """
+            )
+
         bans = [dict(row) for row in cursor.fetchall()]
-        
+
         # Get active and expired counts for the template
         cursor.execute("SELECT COUNT(*) FROM banned_players WHERE is_active = TRUE")
         active_count = cursor.fetchone()[0]
-        
+
         cursor.execute("SELECT COUNT(*) FROM banned_players WHERE is_active = FALSE")
         expired_count = cursor.fetchone()[0]
-        
+
         conn.close()
-        
-        return jsonify({
-            'count': len(bans),
-            'active_count': active_count,
-            'expired_count': expired_count,
-            'bans': bans
-        })
+
+        return jsonify(
+            {
+                "count": len(bans),
+                "active_count": active_count,
+                "expired_count": expired_count,
+                "bans": bans,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting bans: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/activity-chart')
+
+@app.route("/api/activity-chart")
 def api_activity_chart():
     """Get hourly activity data for charts (last 24 hours)"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Get hourly action counts for last 24 hours
         data = []
         now = datetime.now()
-        
+
         for i in range(24, 0, -1):
             hour_start = now - timedelta(hours=i)
-            hour_end = now - timedelta(hours=i-1)
-            
-            cursor.execute("""
+            hour_end = now - timedelta(hours=i - 1)
+
+            cursor.execute(
+                """
                 SELECT COUNT(*) FROM actions 
                 WHERE timestamp >= ? AND timestamp < ?
-            """, (hour_start, hour_end))
+            """,
+                (hour_start, hour_end),
+            )
             count = cursor.fetchone()[0]
-            
-            data.append({
-                'hour': hour_start.strftime('%H:%M'),
-                'count': count,
-                'actions': count  # Alias for backwards compatibility
-            })
-        
+
+            data.append(
+                {
+                    "hour": hour_start.strftime("%H:%M"),
+                    "count": count,
+                    "actions": count,  # Alias for backwards compatibility
+                }
+            )
+
         conn.close()
-        
-        return jsonify({'data': data})
+
+        return jsonify({"data": data})
     except Exception as e:
         logger.error(f"Error getting activity chart: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/admin-actions')
+
+@app.route("/api/admin-actions")
 def api_admin_actions():
     """Get recent admin actions (warnings, bans, jails)"""
     try:
-        limit = min(int(request.args.get('limit', 50)), 200)
-        days = min(int(request.args.get('days', 30)), 365)
-        action_type = request.args.get('type', None)
-        
+        limit = min(int(request.args.get("limit", 50)), 200)
+        days = min(int(request.args.get("days", 30)), 365)
+        action_type = request.args.get("type", None)
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        admin_types = ('warning_received', 'ban_received', 'admin_jail', 'admin_unjail', 
-                       'admin_unban', 'mute_received', 'faction_kicked', 'kill_character')
-        placeholders = ','.join('?' * len(admin_types))
+
+        admin_types = (
+            "warning_received",
+            "ban_received",
+            "admin_jail",
+            "admin_unjail",
+            "admin_unban",
+            "mute_received",
+            "faction_kicked",
+            "kill_character",
+        )
+        placeholders = ",".join("?" * len(admin_types))
         cutoff = datetime.now() - timedelta(days=days)
 
         query = f"SELECT * FROM actions WHERE action_type IN ({placeholders}) AND timestamp >= ?"
@@ -1056,29 +1213,27 @@ def api_admin_actions():
         cursor.execute(query, params)
         actions = [_normalize_action(dict(row)) for row in cursor.fetchall()]
         conn.close()
-        
-        return jsonify({
-            'count': len(actions),
-            'days': days,
-            'actions': actions
-        })
+
+        return jsonify({"count": len(actions), "days": days, "actions": actions})
     except Exception as e:
         logger.error(f"Error getting admin actions: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/promotions')
+
+@app.route("/api/promotions")
 def api_promotions():
     """Get recent faction promotions (rank changes)"""
     try:
-        days = min(int(request.args.get('days', 7)), 90)
-        limit = min(int(request.args.get('limit', 100)), 500)
-        
+        days = min(int(request.args.get("days", 7)), 90)
+        limit = min(int(request.args.get("limit", 100)), 500)
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         cutoff = datetime.now() - timedelta(days=days)
-        
-        cursor.execute("""
+
+        cursor.execute(
+            """
             SELECT 
                 p.player_id,
                 p.username as player_name,
@@ -1092,33 +1247,35 @@ def api_promotions():
             AND ph.changed_at >= ?
             ORDER BY ph.changed_at DESC
             LIMIT ?
-        """, (cutoff, limit))
-        
+        """,
+            (cutoff, limit),
+        )
+
         promotions = [_normalize_action(dict(row)) for row in cursor.fetchall()]
         conn.close()
-        
-        return jsonify({
-            'count': len(promotions),
-            'days': days,
-            'promotions': promotions
-        })
+
+        return jsonify(
+            {"count": len(promotions), "days": days, "promotions": promotions}
+        )
     except Exception as e:
         logger.error(f"Error getting promotions: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/heists')
+
+@app.route("/api/heists")
 def api_heists():
     """Get bank heist deliveries with player faction info"""
     try:
-        days = min(int(request.args.get('days', 30)), 90)
-        limit = min(int(request.args.get('limit', 100)), 500)
-        
+        days = min(int(request.args.get("days", 30)), 90)
+        limit = min(int(request.args.get("limit", 100)), 500)
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         cutoff = datetime.now() - timedelta(days=days)
-        
-        cursor.execute("""
+
+        cursor.execute(
+            """
             SELECT 
                 a.player_id,
                 a.player_name,
@@ -1133,99 +1290,118 @@ def api_heists():
             AND a.timestamp >= ?
             ORDER BY a.timestamp DESC
             LIMIT ?
-        """, (cutoff, limit))
-        
+        """,
+            (cutoff, limit),
+        )
+
         heists = [dict(row) for row in cursor.fetchall()]
         heists = [_normalize_action(h) for h in heists]
         conn.close()
-        
-        return jsonify({
-            'count': len(heists),
-            'days': days,
-            'heists': heists
-        })
+
+        return jsonify({"count": len(heists), "days": days, "heists": heists})
     except Exception as e:
         logger.error(f"Error getting heists: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/rank-history/<player_id>')
+
+@app.route("/api/rank-history/<player_id>")
 def api_rank_history(player_id):
     """Get player's faction rank history"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Get rank history
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT * FROM rank_history 
             WHERE player_id = ? 
             ORDER BY rank_obtained DESC
-        """, (player_id,))
-        
+        """,
+            (player_id,),
+        )
+
         history = [dict(row) for row in cursor.fetchall()]
-        
+
         # Get player name
-        cursor.execute("SELECT username FROM player_profiles WHERE player_id = ?", (player_id,))
+        cursor.execute(
+            "SELECT username FROM player_profiles WHERE player_id = ?", (player_id,)
+        )
         row = cursor.fetchone()
-        player_name = row['username'] if row else f"Player_{player_id}"
-        
+        player_name = row["username"] if row else f"Player_{player_id}"
+
         conn.close()
-        
-        return jsonify({
-            'player_id': player_id,
-            'player_name': player_name,
-            'count': len(history),
-            'history': history
-        })
+
+        return jsonify(
+            {
+                "player_id": player_id,
+                "player_name": player_name,
+                "count": len(history),
+                "history": history,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting rank history for {player_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/sessions/<player_id>')
+
+@app.route("/api/sessions/<player_id>")
 def api_sessions(player_id):
     """Get player's detailed session history with first/last login info"""
     try:
-        days = min(int(request.args.get('days', 7)), 90)
-        
+        days = min(int(request.args.get("days", 7)), 90)
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Get player name
-        cursor.execute("SELECT username FROM player_profiles WHERE player_id = ?", (player_id,))
+        cursor.execute(
+            "SELECT username FROM player_profiles WHERE player_id = ?", (player_id,)
+        )
         row = cursor.fetchone()
-        player_name = row['username'] if row else f"Player_{player_id}"
-        
+        player_name = row["username"] if row else f"Player_{player_id}"
+
         # Get first ever login
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT timestamp FROM login_events
             WHERE player_id = ? AND event_type = 'login'
             ORDER BY timestamp ASC
             LIMIT 1
-        """, (player_id,))
+        """,
+            (player_id,),
+        )
         row = cursor.fetchone()
-        first_login = row['timestamp'] if row else None
-        
+        first_login = row["timestamp"] if row else None
+
         # Get last login
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT timestamp FROM login_events
             WHERE player_id = ? AND event_type = 'login'
             ORDER BY timestamp DESC
             LIMIT 1
-        """, (player_id,))
+        """,
+            (player_id,),
+        )
         row = cursor.fetchone()
-        last_login = row['timestamp'] if row else None
-        
+        last_login = row["timestamp"] if row else None
+
         # Count total logins
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) as count FROM login_events
             WHERE player_id = ? AND event_type = 'login'
-        """, (player_id,))
-        total_logins = cursor.fetchone()['count']
-        
+        """,
+            (player_id,),
+        )
+        total_logins = cursor.fetchone()["count"]
+
         # Get recent sessions (login/logout pairs) with duration
         cutoff = datetime.now() - timedelta(days=days)
-        
-        cursor.execute("""
+
+        cursor.execute(
+            """
             WITH ordered_events AS (
                 SELECT 
                     id,
@@ -1266,78 +1442,97 @@ def api_sessions(player_id):
                    AND e.rn < lwp.logout_rn) IS NOT NULL
             ORDER BY lwp.logout_time DESC
             LIMIT 100
-        """, (player_id, cutoff))
-        
+        """,
+            (player_id, cutoff),
+        )
+
         sessions = [dict(row) for row in cursor.fetchall()]
-        
+
         # Format session times for display
         for session in sessions:
-            login_ts = _parse_timestamp(session.get('login_time'))
-            logout_ts = _parse_timestamp(session.get('logout_time'))
-            
-            session['login_time_display'] = _format_timestamp(login_ts) if login_ts else None
-            session['login_time_ago'] = _time_ago(login_ts) if login_ts else None
-            session['logout_time_display'] = _format_timestamp(logout_ts) if logout_ts else None
-            session['logout_time_ago'] = _time_ago(logout_ts) if logout_ts else None
-            
+            login_ts = _parse_timestamp(session.get("login_time"))
+            logout_ts = _parse_timestamp(session.get("logout_time"))
+
+            session["login_time_display"] = (
+                _format_timestamp(login_ts) if login_ts else None
+            )
+            session["login_time_ago"] = _time_ago(login_ts) if login_ts else None
+            session["logout_time_display"] = (
+                _format_timestamp(logout_ts) if logout_ts else None
+            )
+            session["logout_time_ago"] = _time_ago(logout_ts) if logout_ts else None
+
             # Recalculate duration if missing but we have both timestamps
-            if not session.get('session_duration_seconds') and login_ts and logout_ts:
-                session['session_duration_seconds'] = int((logout_ts - login_ts).total_seconds())
-        
+            if not session.get("session_duration_seconds") and login_ts and logout_ts:
+                session["session_duration_seconds"] = int(
+                    (logout_ts - login_ts).total_seconds()
+                )
+
         # Calculate total playtime from sessions
-        total_seconds = sum(s.get('session_duration_seconds', 0) or 0 for s in sessions)
+        total_seconds = sum(s.get("session_duration_seconds", 0) or 0 for s in sessions)
         total_hours = total_seconds / 3600
-        
+
         conn.close()
-        
-        return jsonify({
-            'player_id': player_id,
-            'player_name': player_name,
-            'first_login': first_login,
-            'last_login': last_login,
-            'first_login_display': _format_timestamp(parsed) if (parsed := _parse_timestamp(first_login)) else None,
-            'last_login_display': _format_timestamp(parsed) if (parsed := _parse_timestamp(last_login)) else None,
-            'first_login_ago': _time_ago(parsed) if (parsed := _parse_timestamp(first_login)) else None,
-            'last_login_ago': _time_ago(parsed) if (parsed := _parse_timestamp(last_login)) else None,
-            'total_logins': total_logins,
-            'days': days,
-            'session_count': len(sessions),
-            'total_hours': round(total_hours, 2),
-            'sessions': sessions
-        })
+
+        return jsonify(
+            {
+                "player_id": player_id,
+                "player_name": player_name,
+                "first_login": first_login,
+                "last_login": last_login,
+                "first_login_display": _format_timestamp(parsed)
+                if (parsed := _parse_timestamp(first_login))
+                else None,
+                "last_login_display": _format_timestamp(parsed)
+                if (parsed := _parse_timestamp(last_login))
+                else None,
+                "first_login_ago": _time_ago(parsed)
+                if (parsed := _parse_timestamp(first_login))
+                else None,
+                "last_login_ago": _time_ago(parsed)
+                if (parsed := _parse_timestamp(last_login))
+                else None,
+                "total_logins": total_logins,
+                "days": days,
+                "session_count": len(sessions),
+                "total_hours": round(total_hours, 2),
+                "sessions": sessions,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting sessions for {player_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/faction-actions/<faction_name>')
+
+@app.route("/api/faction-actions/<faction_name>")
 def api_faction_actions(faction_name):
     """Get all actions for players in a specific faction"""
     try:
-        days = min(int(request.args.get('days', 7)), 30)
-        limit = min(int(request.args.get('limit', 200)), 500)
-        
+        days = min(int(request.args.get("days", 7)), 30)
+        limit = min(int(request.args.get("limit", 200)), 500)
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         cutoff = datetime.now() - timedelta(days=days)
-        
+
         # Get all player IDs in this faction
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT player_id FROM player_profiles WHERE faction = ?
-        """, (faction_name,))
-        faction_player_ids = [row['player_id'] for row in cursor.fetchall()]
-        
+        """,
+            (faction_name,),
+        )
+        faction_player_ids = [row["player_id"] for row in cursor.fetchall()]
+
         if not faction_player_ids:
             conn.close()
-            return jsonify({
-                'faction': faction_name,
-                'count': 0,
-                'actions': []
-            })
-        
+            return jsonify({"faction": faction_name, "count": 0, "actions": []})
+
         # Get all actions for these players
-        placeholders = ','.join('?' * len(faction_player_ids))
-        cursor.execute(f"""
+        placeholders = ",".join("?" * len(faction_player_ids))
+        cursor.execute(
+            f"""
             SELECT 
                 a.*,
                 p.faction,
@@ -1348,162 +1543,194 @@ def api_faction_actions(faction_name):
             AND a.timestamp >= ?
             ORDER BY a.timestamp DESC
             LIMIT ?
-        """, (*faction_player_ids, cutoff, limit))
-        
+        """,
+            (*faction_player_ids, cutoff, limit),
+        )
+
         actions = [dict(row) for row in cursor.fetchall()]
         actions = [_normalize_action(a) for a in actions]
         conn.close()
-        
-        return jsonify({
-            'faction': faction_name,
-            'days': days,
-            'member_count': len(faction_player_ids),
-            'count': len(actions),
-            'actions': actions
-        })
+
+        return jsonify(
+            {
+                "faction": faction_name,
+                "days": days,
+                "member_count": len(faction_player_ids),
+                "count": len(actions),
+                "actions": actions,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting faction actions for {faction_name}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/unknown-actions')
+
+@app.route("/api/unknown-actions")
 def api_unknown_actions():
     """Get unrecognized action patterns for analysis"""
     try:
-        limit = min(int(request.args.get('limit', 50)), 500)
-        
+        limit = min(int(request.args.get("limit", 50)), 500)
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Get unique unknown patterns with counts
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT action_type, action_detail, raw_text, COUNT(*) as count
             FROM actions 
             WHERE action_type IN ('unknown', 'other')
             GROUP BY raw_text
             ORDER BY count DESC
             LIMIT ?
-        """, (limit,))
-        
+        """,
+            (limit,),
+        )
+
         patterns = [dict(row) for row in cursor.fetchall()]
-        
+
         # Get total count
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) as total FROM actions 
             WHERE action_type IN ('unknown', 'other')
-        """)
-        total = cursor.fetchone()['total']
-        
+        """
+        )
+        total = cursor.fetchone()["total"]
+
         conn.close()
-        
-        return jsonify({
-            'total_unknown': total,
-            'unique_patterns': len(patterns),
-            'patterns': patterns
-        })
+
+        return jsonify(
+            {
+                "total_unknown": total,
+                "unique_patterns": len(patterns),
+                "patterns": patterns,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting unknown actions: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/reparse-progress')
+
+@app.route("/api/reparse-progress")
 def api_reparse_progress():
     """Check current re-parse progress and remaining unknown patterns"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Count current unknown actions
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) as total FROM actions 
             WHERE action_type IN ('unknown', 'other')
-        """)
-        current_unknown = cursor.fetchone()['total'] or 0
-        
+        """
+        )
+        current_unknown = cursor.fetchone()["total"] or 0
+
         # Count total recognized actions
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) as total FROM actions 
             WHERE action_type NOT IN ('unknown', 'other')
-        """)
-        recognized = cursor.fetchone()['total'] or 0
-        
+        """
+        )
+        recognized = cursor.fetchone()["total"] or 0
+
         # Get last 5 patterns that could be cleaned up
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT action_type, action_detail, raw_text, COUNT(*) as count
             FROM actions 
             WHERE action_type IN ('unknown', 'other')
             GROUP BY raw_text
             ORDER BY count ASC
             LIMIT 5
-        """)
-        
+        """
+        )
+
         remaining = [dict(row) for row in cursor.fetchall()]
-        
+
         conn.close()
-        
+
         total_actions = recognized + current_unknown
-        recognition_rate = (recognized / total_actions * 100) if total_actions > 0 else 0
-        
-        return jsonify({
-            'total_unknown': current_unknown,
-            'total_recognized': recognized,
-            'total_actions': total_actions,
-            'recognition_rate': round(recognition_rate, 2),
-            'remaining_patterns': remaining,
-            'status': 'clean' if current_unknown == 0 else 'needs_review'
-        })
+        recognition_rate = (
+            (recognized / total_actions * 100) if total_actions > 0 else 0
+        )
+
+        return jsonify(
+            {
+                "total_unknown": current_unknown,
+                "total_recognized": recognized,
+                "total_actions": total_actions,
+                "recognition_rate": round(recognition_rate, 2),
+                "remaining_patterns": remaining,
+                "status": "clean" if current_unknown == 0 else "needs_review",
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting reparse progress: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/action-stats')
+
+@app.route("/api/action-stats")
 def api_action_stats():
     """Get action type statistics breakdown"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("""
+
+        cursor.execute(
+            """
             SELECT action_type, COUNT(*) as count
             FROM actions
             GROUP BY action_type
             ORDER BY count DESC
-        """)
-        
+        """
+        )
+
         stats = [dict(row) for row in cursor.fetchall()]
-        total = sum(s['count'] for s in stats)
-        
+        total = sum(s["count"] for s in stats)
+
         # Separate recognized vs unrecognized
-        recognized = [s for s in stats if s['action_type'] not in ('unknown', 'other')]
-        unrecognized = [s for s in stats if s['action_type'] in ('unknown', 'other')]
-        
-        recognized_count = sum(s['count'] for s in recognized)
-        unrecognized_count = sum(s['count'] for s in unrecognized)
-        
+        recognized = [s for s in stats if s["action_type"] not in ("unknown", "other")]
+        unrecognized = [s for s in stats if s["action_type"] in ("unknown", "other")]
+
+        recognized_count = sum(s["count"] for s in recognized)
+        unrecognized_count = sum(s["count"] for s in unrecognized)
+
         conn.close()
-        
-        return jsonify({
-            'total_actions': total,
-            'recognized_count': recognized_count,
-            'unrecognized_count': unrecognized_count,
-            'recognition_rate': round((recognized_count / total * 100), 2) if total > 0 else 0,
-            'by_type': stats
-        })
+
+        return jsonify(
+            {
+                "total_actions": total,
+                "recognized_count": recognized_count,
+                "unrecognized_count": unrecognized_count,
+                "recognition_rate": round((recognized_count / total * 100), 2)
+                if total > 0
+                else 0,
+                "by_type": stats,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting action stats: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/player-leaderboards')
+
+@app.route("/api/player-leaderboards")
 def api_player_leaderboards():
     """Get player leaderboards - most active, money transferred, items given, etc."""
     try:
-        limit = min(int(request.args.get('limit', 10)), 25)
-        
+        limit = min(int(request.args.get("limit", 10)), 25)
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         leaderboards = {}
-        
+
         # 🔥 Most Active Players (total actions as sender)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 a.player_id,
                 COALESCE(p.username, a.player_name) as player_name,
@@ -1514,11 +1741,14 @@ def api_player_leaderboards():
             GROUP BY a.player_id
             ORDER BY action_count DESC
             LIMIT ?
-        """, (limit,))
-        leaderboards['most_active'] = [dict(row) for row in cursor.fetchall()]
-        
+        """,
+            (limit,),
+        )
+        leaderboards["most_active"] = [dict(row) for row in cursor.fetchall()]
+
         # 🔥 Most Actions Received (as target)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 a.target_player_id as player_id,
                 COALESCE(p.username, a.target_player_name) as player_name,
@@ -1529,11 +1759,14 @@ def api_player_leaderboards():
             GROUP BY a.target_player_id
             ORDER BY action_count DESC
             LIMIT ?
-        """, (limit,))
-        leaderboards['most_targeted'] = [dict(row) for row in cursor.fetchall()]
-        
+        """,
+            (limit,),
+        )
+        leaderboards["most_targeted"] = [dict(row) for row in cursor.fetchall()]
+
         # 🔥 Top Money Senders (money_transfer action type)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 a.player_id,
                 COALESCE(p.username, a.player_name) as player_name,
@@ -1559,11 +1792,14 @@ def api_player_leaderboards():
             GROUP BY a.player_id
             ORDER BY transfer_count DESC
             LIMIT ?
-        """, (limit,))
-        leaderboards['top_money_senders'] = [dict(row) for row in cursor.fetchall()]
-        
+        """,
+            (limit,),
+        )
+        leaderboards["top_money_senders"] = [dict(row) for row in cursor.fetchall()]
+
         # 🔥 Top Money Receivers
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 a.target_player_id as player_id,
                 COALESCE(p.username, a.target_player_name) as player_name,
@@ -1575,11 +1811,14 @@ def api_player_leaderboards():
             GROUP BY a.target_player_id
             ORDER BY receive_count DESC
             LIMIT ?
-        """, (limit,))
-        leaderboards['top_money_receivers'] = [dict(row) for row in cursor.fetchall()]
-        
+        """,
+            (limit,),
+        )
+        leaderboards["top_money_receivers"] = [dict(row) for row in cursor.fetchall()]
+
         # 🔥 Top Item Givers
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 a.player_id,
                 COALESCE(p.username, a.player_name) as player_name,
@@ -1592,11 +1831,14 @@ def api_player_leaderboards():
             GROUP BY a.player_id
             ORDER BY items_given DESC
             LIMIT ?
-        """, (limit,))
-        leaderboards['top_item_givers'] = [dict(row) for row in cursor.fetchall()]
-        
+        """,
+            (limit,),
+        )
+        leaderboards["top_item_givers"] = [dict(row) for row in cursor.fetchall()]
+
         # 🔥 Top Item Receivers
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 a.target_player_id as player_id,
                 COALESCE(p.username, a.target_player_name) as player_name,
@@ -1609,11 +1851,14 @@ def api_player_leaderboards():
             GROUP BY a.target_player_id
             ORDER BY items_received DESC
             LIMIT ?
-        """, (limit,))
-        leaderboards['top_item_receivers'] = [dict(row) for row in cursor.fetchall()]
-        
+        """,
+            (limit,),
+        )
+        leaderboards["top_item_receivers"] = [dict(row) for row in cursor.fetchall()]
+
         # 🔥 Most Contracts (vehicle transfers)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 a.player_id,
                 COALESCE(p.username, a.player_name) as player_name,
@@ -1625,11 +1870,14 @@ def api_player_leaderboards():
             GROUP BY a.player_id
             ORDER BY contract_count DESC
             LIMIT ?
-        """, (limit,))
-        leaderboards['top_contractors'] = [dict(row) for row in cursor.fetchall()]
-        
+        """,
+            (limit,),
+        )
+        leaderboards["top_contractors"] = [dict(row) for row in cursor.fetchall()]
+
         # 🔥 Most Warnings Received
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 a.player_id,
                 COALESCE(p.username, a.player_name) as player_name,
@@ -1641,11 +1889,14 @@ def api_player_leaderboards():
             GROUP BY a.player_id
             ORDER BY warning_count DESC
             LIMIT ?
-        """, (limit,))
-        leaderboards['most_warned'] = [dict(row) for row in cursor.fetchall()]
-        
+        """,
+            (limit,),
+        )
+        leaderboards["most_warned"] = [dict(row) for row in cursor.fetchall()]
+
         # 🔥 Most Bans Received
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 a.player_id,
                 COALESCE(p.username, a.player_name) as player_name,
@@ -1657,11 +1908,14 @@ def api_player_leaderboards():
             GROUP BY a.player_id
             ORDER BY ban_count DESC
             LIMIT ?
-        """, (limit,))
-        leaderboards['most_banned'] = [dict(row) for row in cursor.fetchall()]
-        
+        """,
+            (limit,),
+        )
+        leaderboards["most_banned"] = [dict(row) for row in cursor.fetchall()]
+
         # 🔥 Top Gamblers (gambling wins)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 a.player_id,
                 COALESCE(p.username, a.player_name) as player_name,
@@ -1673,11 +1927,14 @@ def api_player_leaderboards():
             GROUP BY a.player_id
             ORDER BY gambling_wins DESC
             LIMIT ?
-        """, (limit,))
-        leaderboards['top_gamblers'] = [dict(row) for row in cursor.fetchall()]
-        
+        """,
+            (limit,),
+        )
+        leaderboards["top_gamblers"] = [dict(row) for row in cursor.fetchall()]
+
         # 🔥 Top Bank Heist Participants
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 a.player_id,
                 COALESCE(p.username, a.player_name) as player_name,
@@ -1689,219 +1946,248 @@ def api_player_leaderboards():
             GROUP BY a.player_id
             ORDER BY heist_count DESC
             LIMIT ?
-        """, (limit,))
-        leaderboards['top_heist_runners'] = [dict(row) for row in cursor.fetchall()]
-        
+        """,
+            (limit,),
+        )
+        leaderboards["top_heist_runners"] = [dict(row) for row in cursor.fetchall()]
+
         conn.close()
-        
-        return jsonify({
-            'leaderboards': leaderboards,
-            'limit': limit
-        })
+
+        return jsonify({"leaderboards": leaderboards, "limit": limit})
     except Exception as e:
         logger.error(f"Error getting player leaderboards: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/scan-progress')
+
+@app.route("/api/scan-progress")
 def api_scan_progress():
     """Get initial scan progress (admin info)"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         cursor.execute("SELECT * FROM scan_progress WHERE id = 1")
         row = cursor.fetchone()
-        
+
         if not row:
             conn.close()
-            return jsonify({'error': 'No scan progress data'}), 404
-        
+            return jsonify({"error": "No scan progress data"}), 404
+
         progress = dict(row)
         conn.close()
-        
+
         return jsonify(progress)
     except Exception as e:
         logger.error(f"Error getting scan progress: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/profile-history/<player_id>')
+
+@app.route("/api/profile-history/<player_id>")
 def api_profile_history(player_id):
     """Get player's profile change history"""
     try:
-        limit = min(int(request.args.get('limit', 50)), 200)
-        
+        limit = min(int(request.args.get("limit", 50)), 200)
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        cursor.execute("""
+
+        cursor.execute(
+            """
             SELECT * FROM profile_history
             WHERE player_id = ?
             ORDER BY changed_at DESC
             LIMIT ?
-        """, (player_id, limit))
-        
+        """,
+            (player_id, limit),
+        )
+
         history = [dict(row) for row in cursor.fetchall()]
-        
+
         # Get player name
-        cursor.execute("SELECT username FROM player_profiles WHERE player_id = ?", (player_id,))
+        cursor.execute(
+            "SELECT username FROM player_profiles WHERE player_id = ?", (player_id,)
+        )
         row = cursor.fetchone()
-        player_name = row['username'] if row else f"Player_{player_id}"
-        
+        player_name = row["username"] if row else f"Player_{player_id}"
+
         conn.close()
-        
-        return jsonify({
-            'player_id': player_id,
-            'player_name': player_name,
-            'count': len(history),
-            'history': history
-        })
+
+        return jsonify(
+            {
+                "player_id": player_id,
+                "player_name": player_name,
+                "count": len(history),
+                "history": history,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting profile history for {player_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/login-activity')
+
+@app.route("/api/login-activity")
 def api_login_activity():
     """Get login/logout activity for specified time period"""
     try:
-        hours = min(int(request.args.get('hours', 24)), 168)  # Max 7 days
-        
+        hours = min(int(request.args.get("hours", 24)), 168)  # Max 7 days
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         cutoff = datetime.now() - timedelta(hours=hours)
-        
+
         # Get hourly login/logout counts
         data = []
         now = datetime.now()
-        
+
         for i in range(hours, 0, -1):
             hour_start = now - timedelta(hours=i)
-            hour_end = now - timedelta(hours=i-1)
-            
-            cursor.execute("""
+            hour_end = now - timedelta(hours=i - 1)
+
+            cursor.execute(
+                """
                 SELECT 
                     SUM(CASE WHEN event_type = 'login' THEN 1 ELSE 0 END) as logins,
                     SUM(CASE WHEN event_type = 'logout' THEN 1 ELSE 0 END) as logouts
                 FROM login_events 
                 WHERE timestamp >= ? AND timestamp < ?
-            """, (hour_start, hour_end))
-            
+            """,
+                (hour_start, hour_end),
+            )
+
             row = cursor.fetchone()
-            data.append({
-                'hour': hour_start.strftime('%Y-%m-%d %H:00'),
-                'logins': row['logins'] or 0,
-                'logouts': row['logouts'] or 0
-            })
-        
+            data.append(
+                {
+                    "hour": hour_start.strftime("%Y-%m-%d %H:00"),
+                    "logins": row["logins"] or 0,
+                    "logouts": row["logouts"] or 0,
+                }
+            )
+
         conn.close()
-        
-        return jsonify({
-            'hours': hours,
-            'data': data
-        })
+
+        return jsonify({"hours": hours, "data": data})
     except Exception as e:
         logger.error(f"Error getting login activity: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/actions-trend')
+
+@app.route("/api/actions-trend")
 def api_actions_trend():
     """Get daily action counts for trend chart"""
     try:
-        days = min(int(request.args.get('days', 30)), 90)
-        
+        days = min(int(request.args.get("days", 30)), 90)
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         data = []
         now = datetime.now()
-        
+
         for i in range(days, 0, -1):
-            day_start = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+            day_start = (now - timedelta(days=i)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
             day_end = day_start + timedelta(days=1)
-            
-            cursor.execute("""
+
+            cursor.execute(
+                """
                 SELECT COUNT(*) as count FROM actions 
                 WHERE timestamp >= ? AND timestamp < ?
-            """, (day_start, day_end))
-            
+            """,
+                (day_start, day_end),
+            )
+
             row = cursor.fetchone()
-            data.append({
-                'date': day_start.strftime('%Y-%m-%d'),
-                'count': row['count'] or 0
-            })
-        
+            data.append(
+                {"date": day_start.strftime("%Y-%m-%d"), "count": row["count"] or 0}
+            )
+
         conn.close()
-        
-        return jsonify({
-            'days': days,
-            'data': data
-        })
+
+        return jsonify({"days": days, "data": data})
     except Exception as e:
         logger.error(f"Error getting actions trend: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/peak-times')
+
+@app.route("/api/peak-times")
 def api_peak_times():
     """Get peak online times heatmap data (hour of day x day of week)"""
     try:
-        days = min(int(request.args.get('days', 14)), 30)
-        
+        days = min(int(request.args.get("days", 14)), 30)
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         cutoff = datetime.now() - timedelta(days=days)
-        
+
         # Get all login events in the period
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT timestamp FROM login_events 
             WHERE event_type = 'login' AND timestamp >= ?
-        """, (cutoff,))
-        
+        """,
+            (cutoff,),
+        )
+
         # Build heatmap: 7 days x 24 hours
         heatmap = [[0 for _ in range(24)] for _ in range(7)]
-        
+
         for row in cursor.fetchall():
-            ts = row['timestamp']
+            ts = row["timestamp"]
             if isinstance(ts, str):
                 try:
                     # Both Pro4Kings panel and dashboard use Romania local time
                     # Just strip 'Z' suffix instead of treating it as UTC
-                    ts = datetime.fromisoformat(ts.rstrip('Z'))
+                    ts = datetime.fromisoformat(ts.rstrip("Z"))
                 except:
                     continue
             if ts:
                 day_of_week = ts.weekday()  # 0=Monday, 6=Sunday
                 hour = ts.hour
                 heatmap[day_of_week][hour] += 1
-        
+
         conn.close()
-        
+
         # Format for frontend
-        days_labels = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        
-        return jsonify({
-            'days': days,
-            'days_labels': days_labels,
-            'hours_labels': [f'{h:02d}:00' for h in range(24)],
-            'heatmap': heatmap
-        })
+        days_labels = [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ]
+
+        return jsonify(
+            {
+                "days": days,
+                "days_labels": days_labels,
+                "hours_labels": [f"{h:02d}:00" for h in range(24)],
+                "heatmap": heatmap,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting peak times: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/faction-history')
+
+@app.route("/api/faction-history")
 def api_faction_history():
     """Get faction member count changes over time"""
     try:
-        days = min(int(request.args.get('days', 30)), 90)
-        faction = request.args.get('faction', '')
-        
+        days = min(int(request.args.get("days", 30)), 90)
+        faction = request.args.get("faction", "")
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Get top factions if none specified
         if not faction:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT faction, COUNT(*) as member_count
                 FROM player_profiles
                 WHERE faction IS NOT NULL AND faction != ''
@@ -1909,133 +2195,154 @@ def api_faction_history():
                 GROUP BY faction
                 ORDER BY member_count DESC
                 LIMIT 10
-            """)
-            top_factions = [row['faction'] for row in cursor.fetchall()]
+            """
+            )
+            top_factions = [row["faction"] for row in cursor.fetchall()]
         else:
             top_factions = [faction]
-        
+
         # For each faction, get current member count
         # (Historical tracking would require additional DB tables - for now show current snapshot)
         faction_data = []
         for f in top_factions:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(*) as count FROM player_profiles WHERE faction = ?
-            """, (f,))
-            count = cursor.fetchone()['count']
-            faction_data.append({
-                'faction': f,
-                'member_count': count
-            })
-        
+            """,
+                (f,),
+            )
+            count = cursor.fetchone()["count"]
+            faction_data.append({"faction": f, "member_count": count})
+
         conn.close()
-        
-        return jsonify({
-            'factions': faction_data
-        })
+
+        return jsonify({"factions": faction_data})
     except Exception as e:
         logger.error(f"Error getting faction history: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/compare-players')
+
+@app.route("/api/compare-players")
 def api_compare_players():
     """Compare two players side-by-side"""
     try:
         # Support both 'id1'/'id2' (frontend) and 'player1'/'player2' (legacy) params
-        player1_id = request.args.get('id1', '') or request.args.get('player1', '')
-        player2_id = request.args.get('id2', '') or request.args.get('player2', '')
-        
+        player1_id = request.args.get("id1", "") or request.args.get("player1", "")
+        player2_id = request.args.get("id2", "") or request.args.get("player2", "")
+
         if not player1_id or not player2_id:
-            return jsonify({'error': 'Both player IDs are required (use id1 and id2 parameters)'}), 400
-        
+            return (
+                jsonify(
+                    {
+                        "error": "Both player IDs are required (use id1 and id2 parameters)"
+                    }
+                ),
+                400,
+            )
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         players = []
         for pid in [player1_id, player2_id]:
             # Get profile
             cursor.execute("SELECT * FROM player_profiles WHERE player_id = ?", (pid,))
             row = cursor.fetchone()
             if not row:
-                players.append({'player_id': pid, 'error': 'Not found'})
+                players.append({"player_id": pid, "error": "Not found"})
                 continue
-            
+
             profile = dict(row)
-            
+
             # Get action count (last 30 days)
             cutoff = datetime.now() - timedelta(days=30)
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(*) as count FROM actions 
                 WHERE (player_id = ? OR target_player_id = ?) AND timestamp >= ?
-            """, (pid, pid, cutoff))
-            profile['actions_30d'] = cursor.fetchone()['count']
-            
+            """,
+                (pid, pid, cutoff),
+            )
+            profile["actions_30d"] = cursor.fetchone()["count"]
+
             # Get session count (last 30 days)
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(*) as count FROM login_events 
                 WHERE player_id = ? AND event_type = 'login' AND timestamp >= ?
-            """, (pid, cutoff))
-            profile['sessions_30d'] = cursor.fetchone()['count']
-            
+            """,
+                (pid, cutoff),
+            )
+            profile["sessions_30d"] = cursor.fetchone()["count"]
+
             # Get total playtime from login events (sum of session durations)
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT SUM(session_duration_seconds) as total FROM login_events
                 WHERE player_id = ? AND event_type = 'logout' AND session_duration_seconds IS NOT NULL
-            """, (pid,))
-            total_seconds = cursor.fetchone()['total'] or 0
-            profile['tracked_hours'] = round(total_seconds / 3600, 1)
-            
+            """,
+                (pid,),
+            )
+            total_seconds = cursor.fetchone()["total"] or 0
+            profile["tracked_hours"] = round(total_seconds / 3600, 1)
+
             players.append(profile)
-        
+
         conn.close()
-        
-        return jsonify({
-            'player1': players[0] if len(players) > 0 else None,
-            'player2': players[1] if len(players) > 1 else None
-        })
+
+        return jsonify(
+            {
+                "player1": players[0] if len(players) > 0 else None,
+                "player2": players[1] if len(players) > 1 else None,
+            }
+        )
     except Exception as e:
         logger.error(f"Error comparing players: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/bot-status')
+
+@app.route("/api/bot-status")
 def api_bot_status():
     """Get bot health status - detects connectivity from recent database activity"""
     try:
         import json
         import psutil
         import tracemalloc
-        
+
         status = {
-            'bot_connected': False,
-            'uptime': None,
-            'memory': {},
-            'cpu': {},
-            'database': {},
-            'config': {},
-            'tasks': {},
-            'last_check': datetime.now().isoformat()
+            "bot_connected": False,
+            "uptime": None,
+            "memory": {},
+            "cpu": {},
+            "database": {},
+            "config": {},
+            "tasks": {},
+            "last_check": datetime.now().isoformat(),
         }
-        
+
         # Get database stats first
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # 🔥 FIXED: Detect bot connectivity using database growth
         # Check if new actions have been added recently by comparing latest timestamp
         # This avoids timezone issues entirely
-        
+
         recent_actions = 0
         recent_logins = 0
         recent_online = 0
         latest_action_ts = None
-        
+
         try:
             # Get the latest action timestamp and count actions in last 10 minutes
             # Using a subquery approach that doesn't depend on timezone
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT MAX(timestamp) as latest, 
                        (SELECT COUNT(*) FROM actions WHERE timestamp >= datetime(MAX(a.timestamp), '-10 minutes')) as recent_count
                 FROM actions a
-            """)
+            """
+            )
             row = cursor.fetchone()
             if row:
                 latest_action_ts = row[0]
@@ -2048,208 +2355,229 @@ def api_bot_status():
                 recent_actions = cursor.fetchone()[0]
             except:
                 pass
-        
+
         try:
             # Check for online players (should always have some if bot is running)
             cursor.execute("SELECT COUNT(*) FROM online_players")
             recent_online = cursor.fetchone()[0]
         except Exception as e:
             logger.warning(f"Error checking online players: {e}")
-        
+
         try:
             # Check for login events in database (any recent ones indicate activity)
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT COUNT(*) FROM login_events 
                 WHERE timestamp >= datetime((SELECT MAX(timestamp) FROM login_events), '-10 minutes')
-            """)
+            """
+            )
             recent_logins = cursor.fetchone()[0]
         except Exception as e:
             logger.warning(f"Error checking recent logins: {e}")
-        
+
         # Bot is connected if there's substantial data (actions exist) AND online players are tracked
         # Or if there are recent login events
-        status['bot_connected'] = (recent_actions > 10 and recent_online > 0) or recent_logins > 0
-        status['recent_activity'] = {
-            'actions_recent': recent_actions,
-            'logins_recent': recent_logins,
-            'online_tracked': recent_online,
-            'latest_action': latest_action_ts
+        status["bot_connected"] = (
+            recent_actions > 10 and recent_online > 0
+        ) or recent_logins > 0
+        status["recent_activity"] = {
+            "actions_recent": recent_actions,
+            "logins_recent": recent_logins,
+            "online_tracked": recent_online,
+            "latest_action": latest_action_ts,
         }
-        
+
         # Also check bot status file if available (secondary check)
-        status_file = os.getenv('BOT_STATUS_FILE', '/data/bot_status.json')
+        status_file = os.getenv("BOT_STATUS_FILE", "/data/bot_status.json")
         if os.path.exists(status_file):
             try:
-                with open(status_file, 'r') as f:
+                with open(status_file, "r") as f:
                     bot_status = json.load(f)
                     status.update(bot_status)
-                    status['bot_connected'] = True  # File exists = definitely connected
+                    status["bot_connected"] = True  # File exists = definitely connected
             except:
                 pass
-        
+
         # 🔥 ENHANCED: Get comprehensive memory info
         try:
             process = psutil.Process(os.getpid())
             mem_info = process.memory_info()
-            
+
             # Get tracemalloc data if available
             try:
                 tracemalloc.start()
             except:
                 pass  # Already started
-            
+
             current_traced, peak_traced = 0, 0
             try:
                 current_traced, peak_traced = tracemalloc.get_traced_memory()
             except:
                 pass
-            
-            status['memory'] = {
-                'current_mb': round(mem_info.rss / 1024 / 1024, 1),
-                'peak_mb': round(peak_traced / 1024 / 1024, 1) if peak_traced > 0 else round(mem_info.rss / 1024 / 1024, 1),
-                'percent': round((mem_info.rss / psutil.virtual_memory().total) * 100, 1),
-                'rss_mb': round(mem_info.rss / 1024 / 1024, 1),
-                'vms_mb': round(mem_info.vms / 1024 / 1024, 1)
+
+            status["memory"] = {
+                "current_mb": round(mem_info.rss / 1024 / 1024, 1),
+                "peak_mb": round(peak_traced / 1024 / 1024, 1)
+                if peak_traced > 0
+                else round(mem_info.rss / 1024 / 1024, 1),
+                "percent": round(
+                    (mem_info.rss / psutil.virtual_memory().total) * 100, 1
+                ),
+                "rss_mb": round(mem_info.rss / 1024 / 1024, 1),
+                "vms_mb": round(mem_info.vms / 1024 / 1024, 1),
             }
-            
+
             # System memory
             sys_mem = psutil.virtual_memory()
-            status['system_memory_percent'] = round(sys_mem.percent, 1)
-            status['system_memory_available_gb'] = round(sys_mem.available / 1024**3, 2)
-            
+            status["system_memory_percent"] = round(sys_mem.percent, 1)
+            status["system_memory_available_gb"] = round(
+                sys_mem.available / 1024**3, 2
+            )
+
         except Exception as e:
             logger.warning(f"Error getting memory info: {e}")
-            status['memory'] = {
-                'current_mb': 0,
-                'peak_mb': 0,
-                'percent': 0
-            }
-        
+            status["memory"] = {"current_mb": 0, "peak_mb": 0, "percent": 0}
+
         # 🔥 NEW: Get CPU usage
         try:
             process = psutil.Process(os.getpid())
             # Get CPU percent over a short interval
             cpu_percent = process.cpu_percent(interval=0.1)
-            
-            status['cpu'] = {
-                'percent': round(cpu_percent, 1),
-                'num_threads': process.num_threads(),
-                'system_cpu_percent': round(psutil.cpu_percent(interval=0.1), 1)
+
+            status["cpu"] = {
+                "percent": round(cpu_percent, 1),
+                "num_threads": process.num_threads(),
+                "system_cpu_percent": round(psutil.cpu_percent(interval=0.1), 1),
             }
         except Exception as e:
             logger.warning(f"Error getting CPU info: {e}")
-            status['cpu'] = {
-                'percent': 0,
-                'num_threads': 0,
-                'system_cpu_percent': 0
-            }
-        
+            status["cpu"] = {"percent": 0, "num_threads": 0, "system_cpu_percent": 0}
+
         # 🔥 ENHANCED: Database statistics
         try:
             cursor.execute("SELECT COUNT(*) as count FROM player_profiles")
-            total_players = cursor.fetchone()['count']
-            
+            total_players = cursor.fetchone()["count"]
+
             cursor.execute("SELECT COUNT(*) as count FROM actions")
-            total_actions = cursor.fetchone()['count']
-            
+            total_actions = cursor.fetchone()["count"]
+
             cursor.execute("SELECT COUNT(*) FROM online_players")
-            online_count = cursor.fetchone()['count']
-            
+            online_count = cursor.fetchone()["count"]
+
             # Get database file size
             db_path = get_db_path()
             db_size_mb = 0
             if os.path.exists(db_path):
                 db_size_mb = round(os.path.getsize(db_path) / 1024 / 1024, 1)
-            
-            status['database'] = {
-                'total_players': total_players,
-                'total_actions': total_actions,
-                'online_count': online_count,
-                'size_mb': db_size_mb,
-                'path': db_path
+
+            status["database"] = {
+                "total_players": total_players,
+                "total_actions": total_actions,
+                "online_count": online_count,
+                "size_mb": db_size_mb,
+                "path": db_path,
             }
-            
+
             # Also set at root level for backward compatibility
-            status['total_players'] = total_players
-            status['total_actions'] = total_actions
-            status['database_size_mb'] = db_size_mb
-            
+            status["total_players"] = total_players
+            status["total_actions"] = total_actions
+            status["database_size_mb"] = db_size_mb
+
         except Exception as e:
             logger.warning(f"Error getting database stats: {e}")
-            status['database'] = {
-                'total_players': 0,
-                'total_actions': 0,
-                'online_count': 0,
-                'size_mb': 0,
-                'path': 'Unknown'
+            status["database"] = {
+                "total_players": 0,
+                "total_actions": 0,
+                "online_count": 0,
+                "size_mb": 0,
+                "path": "Unknown",
             }
-        
+
         # 🔥 NEW: Configuration info from environment/config
         try:
             # Import config to get actual values
-            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            sys.path.insert(
+                0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
             try:
                 from config import Config
-                
-                status['config'] = {
-                    'scraper_workers': Config.SCRAPER_MAX_CONCURRENT,
-                    'rate_limit': Config.SCRAPER_RATE_LIMIT,
-                    'vip_count': len(Config.VIP_PLAYER_IDS),
-                    'actions_interval': Config.SCRAPE_ACTIONS_INTERVAL,
-                    'online_interval': Config.SCRAPE_ONLINE_INTERVAL,
-                    'track_online': Config.TRACK_ONLINE_PLAYERS_PRIORITY,
-                    'vip_interval': Config.VIP_SCAN_INTERVAL,
-                    'update_profiles_interval': Config.UPDATE_PROFILES_INTERVAL,
-                    'check_banned_interval': Config.CHECK_BANNED_INTERVAL
+
+                status["config"] = {
+                    "scraper_workers": Config.SCRAPER_MAX_CONCURRENT,
+                    "rate_limit": Config.SCRAPER_RATE_LIMIT,
+                    "vip_count": len(Config.VIP_PLAYER_IDS),
+                    "actions_interval": Config.SCRAPE_ACTIONS_INTERVAL,
+                    "online_interval": Config.SCRAPE_ONLINE_INTERVAL,
+                    "track_online": Config.TRACK_ONLINE_PLAYERS_PRIORITY,
+                    "vip_interval": Config.VIP_SCAN_INTERVAL,
+                    "update_profiles_interval": Config.UPDATE_PROFILES_INTERVAL,
+                    "check_banned_interval": Config.CHECK_BANNED_INTERVAL,
                 }
             except ImportError:
                 # Fallback if config not available
                 # 🔥 OPTIMIZED: Conservative limits for shared hosting
-                status['config'] = {
-                    'scraper_workers': int(os.getenv('SCRAPER_MAX_CONCURRENT', 5)),
-                    'rate_limit': float(os.getenv('SCRAPER_RATE_LIMIT', 10.0)),  # Reduced from 25
-                    'vip_count': len([p for p in os.getenv('VIP_PLAYER_IDS', '').split(',') if p.strip()]),
-                    'actions_interval': int(os.getenv('SCRAPE_ACTIONS_INTERVAL', 5)),
-                    'online_interval': int(os.getenv('SCRAPE_ONLINE_INTERVAL', 60)),
-                    'track_online': os.getenv('TRACK_ONLINE_PLAYERS_PRIORITY', 'true').lower() == 'true',
-                    'vip_interval': int(os.getenv('VIP_SCAN_INTERVAL', 600)),
-                    'update_profiles_interval': int(os.getenv('UPDATE_PROFILES_INTERVAL', 120)),
-                    'check_banned_interval': int(os.getenv('CHECK_BANNED_INTERVAL', 3600))
+                status["config"] = {
+                    "scraper_workers": int(os.getenv("SCRAPER_MAX_CONCURRENT", 5)),
+                    "rate_limit": float(
+                        os.getenv("SCRAPER_RATE_LIMIT", 10.0)
+                    ),  # Reduced from 25
+                    "vip_count": len(
+                        [
+                            p
+                            for p in os.getenv("VIP_PLAYER_IDS", "").split(",")
+                            if p.strip()
+                        ]
+                    ),
+                    "actions_interval": int(os.getenv("SCRAPE_ACTIONS_INTERVAL", 5)),
+                    "online_interval": int(os.getenv("SCRAPE_ONLINE_INTERVAL", 60)),
+                    "track_online": os.getenv(
+                        "TRACK_ONLINE_PLAYERS_PRIORITY", "true"
+                    ).lower()
+                    == "true",
+                    "vip_interval": int(os.getenv("VIP_SCAN_INTERVAL", 600)),
+                    "update_profiles_interval": int(
+                        os.getenv("UPDATE_PROFILES_INTERVAL", 120)
+                    ),
+                    "check_banned_interval": int(
+                        os.getenv("CHECK_BANNED_INTERVAL", 3600)
+                    ),
                 }
         except Exception as e:
             logger.warning(f"Error getting config: {e}")
-            status['config'] = {}
-        
+            status["config"] = {}
+
         conn.close()
-        
+
         return jsonify(status)
     except Exception as e:
         logger.error(f"Error getting bot status: {e}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/vip-events')
+
+@app.route("/api/vip-events")
 def api_vip_events():
     """Get recent VIP player login/logout events for toast notifications"""
     try:
-        minutes = min(int(request.args.get('minutes', 5)), 30)
-        
+        minutes = min(int(request.args.get("minutes", 5)), 30)
+
         # VIP player IDs from environment
-        vip_ids_str = os.getenv('VIP_PLAYER_IDS', '')
+        vip_ids_str = os.getenv("VIP_PLAYER_IDS", "")
         if not vip_ids_str:
-            return jsonify({'events': []})
-        
-        vip_ids = [pid.strip() for pid in vip_ids_str.split(',') if pid.strip()]
-        
+            return jsonify({"events": []})
+
+        vip_ids = [pid.strip() for pid in vip_ids_str.split(",") if pid.strip()]
+
         if not vip_ids:
-            return jsonify({'events': []})
-        
+            return jsonify({"events": []})
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         cutoff = datetime.now() - timedelta(minutes=minutes)
-        
-        placeholders = ','.join('?' * len(vip_ids))
-        cursor.execute(f"""
+
+        placeholders = ",".join("?" * len(vip_ids))
+        cursor.execute(
+            f"""
             SELECT le.*, pp.username, pp.faction
             FROM login_events le
             LEFT JOIN player_profiles pp ON le.player_id = pp.player_id
@@ -2257,67 +2585,76 @@ def api_vip_events():
             AND le.timestamp >= ?
             ORDER BY le.timestamp DESC
             LIMIT 20
-        """, (*vip_ids, cutoff))
-        
+        """,
+            (*vip_ids, cutoff),
+        )
+
         events = [dict(row) for row in cursor.fetchall()]
         conn.close()
-        
-        return jsonify({
-            'events': events,
-            'vip_count': len(vip_ids)
-        })
+
+        return jsonify({"events": events, "vip_count": len(vip_ids)})
     except Exception as e:
         logger.error(f"Error getting VIP events: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
+
 
 # ============================================================================
 # NEW PAGE ROUTES
 # ============================================================================
 
-@app.route('/analytics')
+
+@app.route("/analytics")
 def page_analytics():
     """Analytics dashboard with charts and trends"""
-    return render_template('analytics.html')
+    return render_template("analytics.html")
 
-@app.route('/favorites')
+
+@app.route("/favorites")
 def page_favorites():
     """User's starred/favorite players (client-side storage)"""
-    return render_template('favorites.html')
+    return render_template("favorites.html")
 
-@app.route('/compare')
+
+@app.route("/compare")
 def page_compare():
     """Compare two players side-by-side"""
-    return render_template('compare.html')
+    return render_template("compare.html")
 
-@app.route('/bot-status')
+
+@app.route("/bot-status")
 def page_bot_status():
     """Bot health and status monitoring (admin view)"""
-    return render_template('bot_status.html')
+    return render_template("bot_status.html")
+
 
 # ============================================================================
 # ADMIN: LOGIN EVENTS CLEANUP API
 # ============================================================================
 
-@app.route('/api/admin/login-stats')
+
+@app.route("/api/admin/login-stats")
 def api_admin_login_stats():
     """Get login/logout event statistics for cleanup analysis"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Get total counts
-        cursor.execute("SELECT event_type, COUNT(*) FROM login_events GROUP BY event_type")
+        cursor.execute(
+            "SELECT event_type, COUNT(*) FROM login_events GROUP BY event_type"
+        )
         counts = dict(cursor.fetchall())
-        
-        login_count = counts.get('login', 0)
-        logout_count = counts.get('logout', 0)
-        
+
+        login_count = counts.get("login", 0)
+        logout_count = counts.get("logout", 0)
+
         # Get unique players
         cursor.execute("SELECT COUNT(DISTINCT player_id) FROM login_events")
         unique_players = cursor.fetchone()[0]
-        
+
         # Count duplicate LOGOUTs (consecutive logouts)
-        cursor.execute("""
+        cursor.execute(
+            """
             WITH ordered_events AS (
                 SELECT 
                     event_type,
@@ -2326,11 +2663,13 @@ def api_admin_login_stats():
             )
             SELECT COUNT(*) FROM ordered_events
             WHERE event_type = 'logout' AND prev_event = 'logout'
-        """)
+        """
+        )
         duplicate_logouts = cursor.fetchone()[0]
-        
+
         # Count duplicate LOGINs (consecutive logins)
-        cursor.execute("""
+        cursor.execute(
+            """
             WITH ordered_events AS (
                 SELECT 
                     event_type,
@@ -2339,55 +2678,67 @@ def api_admin_login_stats():
             )
             SELECT COUNT(*) FROM ordered_events
             WHERE event_type = 'login' AND next_event = 'login'
-        """)
+        """
+        )
         duplicate_logins = cursor.fetchone()[0]
-        
+
         conn.close()
-        
-        return jsonify({
-            'login_count': login_count,
-            'logout_count': logout_count,
-            'unique_players': unique_players,
-            'duplicate_logouts': duplicate_logouts,
-            'duplicate_logins': duplicate_logins,
-            'total_duplicates': duplicate_logouts + duplicate_logins,
-            'ratio': round(logout_count / login_count, 2) if login_count > 0 else 0,
-            'healthy': logout_count <= login_count * 1.1 if login_count > 0 else False
-        })
+
+        return jsonify(
+            {
+                "login_count": login_count,
+                "logout_count": logout_count,
+                "unique_players": unique_players,
+                "duplicate_logouts": duplicate_logouts,
+                "duplicate_logins": duplicate_logins,
+                "total_duplicates": duplicate_logouts + duplicate_logins,
+                "ratio": round(logout_count / login_count, 2) if login_count > 0 else 0,
+                "healthy": logout_count <= login_count * 1.1
+                if login_count > 0
+                else False,
+            }
+        )
     except Exception as e:
         logger.error(f"Error getting login stats: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/admin/cleanup-login-events', methods=['POST'])
+
+@app.route("/api/admin/cleanup-login-events", methods=["POST"])
 def api_admin_cleanup_login_events():
     """
     Cleanup duplicate login/logout events.
-    
+
     POST body (JSON):
     - dry_run: bool (default: true) - Preview only, don't delete
     - confirm: bool (default: false) - Required to be true for actual deletion
-    
+
     Rules:
     1. Consecutive LOGOUTs: Keep first, delete rest
     2. Consecutive LOGINs: Keep last, delete earlier ones
     """
     try:
         data = request.get_json() or {}
-        dry_run = data.get('dry_run', True)
-        confirm = data.get('confirm', False)
-        
+        dry_run = data.get("dry_run", True)
+        confirm = data.get("confirm", False)
+
         # Safety check
         if not dry_run and not confirm:
-            return jsonify({
-                'error': 'Must set confirm=true to actually delete data',
-                'dry_run': True
-            }), 400
-        
+            return (
+                jsonify(
+                    {
+                        "error": "Must set confirm=true to actually delete data",
+                        "dry_run": True,
+                    }
+                ),
+                400,
+            )
+
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Find duplicate LOGOUTs
-        cursor.execute("""
+        cursor.execute(
+            """
             WITH ordered_events AS (
                 SELECT 
                     id,
@@ -2399,11 +2750,13 @@ def api_admin_cleanup_login_events():
             )
             SELECT id FROM ordered_events
             WHERE event_type = 'logout' AND prev_event = 'logout'
-        """)
+        """
+        )
         logout_ids = [row[0] for row in cursor.fetchall()]
-        
+
         # Find duplicate LOGINs
-        cursor.execute("""
+        cursor.execute(
+            """
             WITH ordered_events AS (
                 SELECT 
                     id,
@@ -2415,41 +2768,47 @@ def api_admin_cleanup_login_events():
             )
             SELECT id FROM ordered_events
             WHERE event_type = 'login' AND next_event = 'login'
-        """)
+        """
+        )
         login_ids = [row[0] for row in cursor.fetchall()]
-        
+
         all_ids = list(set(logout_ids + login_ids))
-        
+
         result = {
-            'duplicate_logouts': len(logout_ids),
-            'duplicate_logins': len(login_ids),
-            'total_to_delete': len(all_ids),
-            'dry_run': dry_run
+            "duplicate_logouts": len(logout_ids),
+            "duplicate_logins": len(login_ids),
+            "total_to_delete": len(all_ids),
+            "dry_run": dry_run,
         }
-        
+
         if not all_ids:
             conn.close()
-            result['message'] = 'No duplicates found - data is already clean!'
+            result["message"] = "No duplicates found - data is already clean!"
             return jsonify(result)
-        
+
         if dry_run:
             conn.close()
-            result['message'] = f'Found {len(all_ids):,} duplicates. Set dry_run=false and confirm=true to delete.'
+            result[
+                "message"
+            ] = f"Found {len(all_ids):,} duplicates. Set dry_run=false and confirm=true to delete."
             return jsonify(result)
-        
+
         # Actually delete
         deleted = 0
         batch_size = 10000
-        
+
         for i in range(0, len(all_ids), batch_size):
-            batch = all_ids[i:i + batch_size]
+            batch = all_ids[i : i + batch_size]
             placeholders = ",".join("?" * len(batch))
-            cursor.execute(f"DELETE FROM login_events WHERE id IN ({placeholders})", batch)
+            cursor.execute(
+                f"DELETE FROM login_events WHERE id IN ({placeholders})", batch
+            )
             deleted += cursor.rowcount
             conn.commit()
-        
+
         # Recalculate session durations
-        cursor.execute("""
+        cursor.execute(
+            """
             UPDATE login_events
             SET session_duration_seconds = (
                 SELECT CAST((julianday(login_events.timestamp) - julianday(prev_login.timestamp)) * 86400 AS INTEGER)
@@ -2461,34 +2820,38 @@ def api_admin_cleanup_login_events():
                 LIMIT 1
             )
             WHERE event_type = 'logout'
-        """)
+        """
+        )
         durations_updated = cursor.rowcount
         conn.commit()
-        
+
         # Get new counts
-        cursor.execute("SELECT event_type, COUNT(*) FROM login_events GROUP BY event_type")
+        cursor.execute(
+            "SELECT event_type, COUNT(*) FROM login_events GROUP BY event_type"
+        )
         new_counts = dict(cursor.fetchall())
-        
+
         conn.close()
-        
-        result['deleted'] = deleted
-        result['durations_recalculated'] = durations_updated
-        result['new_login_count'] = new_counts.get('login', 0)
-        result['new_logout_count'] = new_counts.get('logout', 0)
-        result['message'] = f'Successfully deleted {deleted:,} duplicate events!'
-        
+
+        result["deleted"] = deleted
+        result["durations_recalculated"] = durations_updated
+        result["new_login_count"] = new_counts.get("login", 0)
+        result["new_logout_count"] = new_counts.get("logout", 0)
+        result["message"] = f"Successfully deleted {deleted:,} duplicate events!"
+
         logger.info(f"🧹 Cleaned up {deleted:,} duplicate login events")
-        
+
         return jsonify(result)
-        
+
     except Exception as e:
         logger.error(f"Error cleaning up login events: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/cleanup-reparsed-patterns')
+
+@app.route("/api/cleanup-reparsed-patterns")
 def api_cleanup_reparsed():
     """Cleanup patterns that have all been re-parsed (no longer 'unknown')
-    
+
     This endpoint detects patterns where all instances have been successfully
     re-parsed to recognized action types and removes them from the unknown
     actions display.
@@ -2496,74 +2859,98 @@ def api_cleanup_reparsed():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Get patterns that are no longer unknown (cleanup success)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT DISTINCT raw_text
             FROM actions
             WHERE action_type IN ('unknown', 'other')
-        """)
-        
-        unknown_patterns = set(row['raw_text'] for row in cursor.fetchall() if row['raw_text'])
-        
+        """
+        )
+
+        unknown_patterns = set(
+            row["raw_text"] for row in cursor.fetchall() if row["raw_text"]
+        )
+
         cleaned_count = 0
         cleanup_details = []
-        
+
         # For each pattern, check if there are any recognized versions
         for pattern in unknown_patterns:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT action_type, COUNT(*) as count
                 FROM actions
                 WHERE raw_text = ?
                 GROUP BY action_type
-            """, (pattern,))
-            
-            types = {row['action_type']: row['count'] for row in cursor.fetchall()}
-            
+            """,
+                (pattern,),
+            )
+
+            types = {row["action_type"]: row["count"] for row in cursor.fetchall()}
+
             # If this pattern exists in both unknown AND recognized types,
             # some instances have been successfully re-parsed
-            unknown_count = sum(count for action_type, count in types.items() 
-                               if action_type in ('unknown', 'other'))
-            recognized_count = sum(count for action_type, count in types.items() 
-                                  if action_type not in ('unknown', 'other'))
-            
+            unknown_count = sum(
+                count
+                for action_type, count in types.items()
+                if action_type in ("unknown", "other")
+            )
+            recognized_count = sum(
+                count
+                for action_type, count in types.items()
+                if action_type not in ("unknown", "other")
+            )
+
             if recognized_count > 0 and unknown_count > 0:
                 cleaned_count += 1
-                cleaned_types = [t for t in types.keys() if t not in ('unknown', 'other')]
-                cleanup_details.append({
-                    'pattern': pattern[:100] if pattern else 'empty',
-                    'previously_unknown': unknown_count,
-                    'now_recognized': recognized_count,
-                    'recognized_types': cleaned_types
-                })
-        
+                cleaned_types = [
+                    t for t in types.keys() if t not in ("unknown", "other")
+                ]
+                cleanup_details.append(
+                    {
+                        "pattern": pattern[:100] if pattern else "empty",
+                        "previously_unknown": unknown_count,
+                        "now_recognized": recognized_count,
+                        "recognized_types": cleaned_types,
+                    }
+                )
+
         conn.close()
-        
-        return jsonify({
-            'patterns_partially_cleaned': cleaned_count,
-            'cleanup_details': cleanup_details[:10],  # Top 10
-            'message': f'{cleaned_count} patterns have been partially re-parsed'
-        })
+
+        return jsonify(
+            {
+                "patterns_partially_cleaned": cleaned_count,
+                "cleanup_details": cleanup_details[:10],  # Top 10
+                "message": f"{cleaned_count} patterns have been partially re-parsed",
+            }
+        )
     except Exception as e:
         logger.error(f"Error cleaning up re-parsed patterns: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
+
 
 # ============================================================================
 # MAIN
 # ============================================================================
 
-if __name__ == '__main__':
-    port = int(os.getenv('DASHBOARD_PORT', 5000))
-    debug = os.getenv('DASHBOARD_DEBUG', 'false').lower() == 'true'
-    
+if __name__ == "__main__":
+    port = int(os.getenv("DASHBOARD_PORT", 5000))
+    debug = os.getenv("DASHBOARD_DEBUG", "false").lower() == "true"
+
     logger.info(f"🌐 Starting Pro4Kings Web Dashboard on port {port}")
     logger.info(f"📁 Database: {get_db_path()}")
-    
+
     # 🔥 Start background profile refresh queue processor
     if PROFILE_REFRESH_ENABLED:
         start_refresh_queue_processor()
-        logger.info(f"🔄 Profile Auto-Refresh System enabled (stale threshold: {PROFILE_STALE_THRESHOLD_HOURS}h)")
+        logger.info(
+            f"🔄 Profile Auto-Refresh System enabled (stale threshold: {PROFILE_STALE_THRESHOLD_HOURS}h)"
+        )
     else:
-        logger.warning("⚠️ Profile Auto-Refresh System disabled (scraper not available)")
-    
-    app.run(host='0.0.0.0', port=port, debug=debug)
+        logger.warning(
+            "⚠️ Profile Auto-Refresh System disabled (scraper not available)"
+        )
+
+    app.run(host="0.0.0.0", port=port, debug=debug)

@@ -20,10 +20,13 @@ import re
 # 🔥 NEW: Cloudscraper for JavaScript challenge bypass (Cloudflare, etc.)
 try:
     import cloudscraper
+
     CLOUDSCRAPER_AVAILABLE = True
 except ImportError:
     CLOUDSCRAPER_AVAILABLE = False
-    logging.warning("⚠️ Cloudscraper not installed - banlist scraping may fail on protected pages")
+    logging.warning(
+        "⚠️ Cloudscraper not installed - banlist scraping may fail on protected pages"
+    )
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -101,7 +104,7 @@ class TokenBucketRateLimiter:
 
 class Pro4KingsScraper:
     """Ultra-safe scraper with TokenBucket rate limiting - supports 1-50 workers
-    
+
     🔥 OPTIMIZED for panel.pro4kings.ro shared hosting:
     - Server has 30 connection limit (shared with other users)
     - Tests showed 5 workers at ~20 req/s sustained works
@@ -124,8 +127,14 @@ class Pro4KingsScraper:
 
         # TokenBucket: Smooth request distribution
         # 🔥 OPTIMIZED: Conservative defaults for shared hosting
-        effective_rate = rate_limit if rate_limit is not None else min(10.0, self.max_concurrent * 2)
-        effective_capacity = burst_capacity if burst_capacity is not None else min(20, self.max_concurrent * 4)
+        effective_rate = (
+            rate_limit if rate_limit is not None else min(10.0, self.max_concurrent * 2)
+        )
+        effective_capacity = (
+            burst_capacity
+            if burst_capacity is not None
+            else min(20, self.max_concurrent * 4)
+        )
         effective_rate = max(0.1, float(effective_rate))
         effective_capacity = max(1, int(effective_capacity))
         self.rate_limiter = TokenBucketRateLimiter(
@@ -157,10 +166,12 @@ class Pro4KingsScraper:
     async def __aenter__(self):
         """Async context manager entry"""
         timeout = aiohttp.ClientTimeout(total=15, connect=5)
-        
+
         # 🔥 ENHANCED: Use CookieJar to persist cookies across requests (for challenge bypass)
-        cookie_jar = aiohttp.CookieJar(unsafe=True)  # unsafe=True allows cookies for all domains
-        
+        cookie_jar = aiohttp.CookieJar(
+            unsafe=True
+        )  # unsafe=True allows cookies for all domains
+
         connector = aiohttp.TCPConnector(
             limit=max(10, self.max_concurrent * 2),
             limit_per_host=max(10, self.max_concurrent * 2),
@@ -170,10 +181,10 @@ class Pro4KingsScraper:
         )
 
         self.client = aiohttp.ClientSession(
-            connector=connector, 
-            timeout=timeout, 
+            connector=connector,
+            timeout=timeout,
             headers=self.headers,
-            cookie_jar=cookie_jar  # 🔥 Enable cookie persistence
+            cookie_jar=cookie_jar,  # 🔥 Enable cookie persistence
         )
 
         logger.info(
@@ -189,7 +200,7 @@ class Pro4KingsScraper:
 
     async def fetch_page(self, url: str, retries: int = 3) -> Optional[str]:
         """Fetch page with TokenBucket rate limiting and adaptive throttling
-        
+
         🔥 ENHANCED: Handles "Un moment, vă rog..." JavaScript challenge by waiting and retrying
         """
         if self.client is None:
@@ -219,18 +230,24 @@ class Pro4KingsScraper:
 
                         if response.status == 200:
                             html = await response.text()
-                            
+
                             # 🔥 DETECT JAVASCRIPT CHALLENGE: "Un moment, vă rog..."
                             if "Un moment, vă rog" in html or "Un moment" in html[:500]:
                                 if attempt < retries - 1:
-                                    wait_time = 7  # Wait 7 seconds (page says 5, add buffer)
-                                    logger.info(f"🔄 Challenge page detected, waiting {wait_time}s...")
+                                    wait_time = (
+                                        7  # Wait 7 seconds (page says 5, add buffer)
+                                    )
+                                    logger.info(
+                                        f"🔄 Challenge page detected, waiting {wait_time}s..."
+                                    )
                                     await asyncio.sleep(wait_time)
                                     continue  # Retry the request
                                 else:
-                                    logger.warning(f"⚠️ Challenge page still present after {retries} attempts")
+                                    logger.warning(
+                                        f"⚠️ Challenge page still present after {retries} attempts"
+                                    )
                                     return None
-                            
+
                             self.consecutive_503 = 0
                             self.success_count += 1
 
@@ -661,7 +678,7 @@ class Pro4KingsScraper:
 
     async def get_latest_actions(self, limit: int = 200) -> List[PlayerAction]:
         """🔥 REWRITTEN: Get latest actions using precise Pro4Kings HTML structure.
-        
+
         The Pro4Kings homepage has a specific structure:
         - Card with h4 "Ultimele acțiuni"
         - div.list-group.list-group-custom containing action items
@@ -681,29 +698,33 @@ class Pro4KingsScraper:
         seen_raw_texts = set()  # Dedupe within same scrape
 
         # 🔥 METHOD 1: Find the "Ultimele acțiuni" card directly
-        actions_header = soup.find("h4", text=re.compile(r"Ultimele\s*acț", re.IGNORECASE))
+        actions_header = soup.find(
+            "h4", text=re.compile(r"Ultimele\s*acț", re.IGNORECASE)
+        )
         if actions_header:
             # Find the parent card
             card = actions_header.find_parent("div", class_="card")
             if card:
                 # Find all list-group-item elements
                 action_items = card.find_all("div", class_="list-group-item")
-                logger.info(f"Found {len(action_items)} action items in Ultimele acțiuni card")
-                
+                logger.info(
+                    f"Found {len(action_items)} action items in Ultimele acțiuni card"
+                )
+
                 for item in action_items:
                     # Extract action text from p.mb-1
                     p_tag = item.find("p", class_="mb-1")
                     if not p_tag:
                         continue
                     action_text = p_tag.get_text(strip=True)
-                    
+
                     # Extract timestamp from small > div
                     timestamp = None
                     small_tag = item.find("small")
                     if small_tag:
                         time_match = re.search(
                             r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
-                            small_tag.get_text()
+                            small_tag.get_text(),
                         )
                         if time_match:
                             try:
@@ -712,39 +733,41 @@ class Pro4KingsScraper:
                                 )
                             except ValueError:
                                 timestamp = datetime.now()
-                    
+
                     if not timestamp:
                         timestamp = datetime.now()
-                    
+
                     # Dedupe by raw text within this scrape
                     if action_text in seen_raw_texts:
                         continue
                     seen_raw_texts.add(action_text)
-                    
+
                     # Parse the action
                     action = self._parse_action_text(action_text, timestamp)
                     if action:
                         actions.append(action)
-        
+
         # 🔥 METHOD 2: Fallback - find list-group-custom directly
         if not actions:
             list_group = soup.find("div", class_="list-group-custom")
             if list_group:
                 action_items = list_group.find_all("div", class_="list-group-item")
-                logger.info(f"Fallback: Found {len(action_items)} items in list-group-custom")
-                
+                logger.info(
+                    f"Fallback: Found {len(action_items)} items in list-group-custom"
+                )
+
                 for item in action_items:
                     p_tag = item.find("p", class_="mb-1")
                     if not p_tag:
                         continue
                     action_text = p_tag.get_text(strip=True)
-                    
+
                     timestamp = None
                     small_tag = item.find("small")
                     if small_tag:
                         time_match = re.search(
                             r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})",
-                            small_tag.get_text()
+                            small_tag.get_text(),
                         )
                         if time_match:
                             try:
@@ -753,20 +776,22 @@ class Pro4KingsScraper:
                                 )
                             except ValueError:
                                 timestamp = datetime.now()
-                    
+
                     if not timestamp:
                         timestamp = datetime.now()
-                    
+
                     if action_text in seen_raw_texts:
                         continue
                     seen_raw_texts.add(action_text)
-                    
+
                     action = self._parse_action_text(action_text, timestamp)
                     if action:
                         actions.append(action)
 
         if not actions:
-            logger.warning("No actions found with precise selectors, page structure may have changed")
+            logger.warning(
+                "No actions found with precise selectors, page structure may have changed"
+            )
         else:
             logger.info(f"✅ Scraped {len(actions)} unique actions from homepage")
 
@@ -774,10 +799,12 @@ class Pro4KingsScraper:
         self.action_scraping_stats["total_actions_found"] += len(actions)
 
         return actions[:limit]
-    
-    def _parse_action_text(self, text: str, timestamp: datetime) -> Optional[PlayerAction]:
+
+    def _parse_action_text(
+        self, text: str, timestamp: datetime
+    ) -> Optional[PlayerAction]:
         """🔥 COMPREHENSIVE: Parse action text into PlayerAction with ALL patterns.
-        
+
         Patterns supported:
         1. Money deposit - "a depozitat suma de X$ (taxa Y$)"
         2. Money withdrawal - "a retras suma de X$ (taxa Y$)"
@@ -798,13 +825,17 @@ class Pro4KingsScraper:
         """
         if not text or len(text) < 10:
             return None
-        
+
         # Clean up text
         text = " ".join(text.split())
-        
+
         # 🔥 DETECT LEGACY MULTI-ACTION: Old scraper captured multiple actions concatenated
         # Pattern: "Ultimele acțiuniJucatorul..." or multiple "Jucatorul...ProfilJucatorul..."
-        if "Ultimele acțiuni" in text or text.count("Jucatorul") > 1 or "ProfilJucatorul" in text:
+        if (
+            "Ultimele acțiuni" in text
+            or text.count("Jucatorul") > 1
+            or "ProfilJucatorul" in text
+        ):
             # This is legacy garbage - mark as such but still save it
             first_id_match = re.search(r"\((\d+)\)", text)
             return PlayerAction(
@@ -815,16 +846,17 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # ============================================================================
         # ID-ONLY PATTERNS: Handle "Jucatorul (ID)" with no name
         # These must be checked BEFORE regular patterns
         # ============================================================================
-        
+
         # 🔥 ID-ONLY PATTERN A: Chest deposit - "Jucatorul (ID) a pus in chest..."
         chest_deposit_idonly = re.search(
             r"Jucatorul\s+\((\d+)\)\s+a\s+pus\s+in\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if chest_deposit_idonly:
             return PlayerAction(
@@ -837,11 +869,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 ID-ONLY PATTERN B: Chest withdraw - "Jucatorul (ID) a retras din chest..."
         chest_withdraw_idonly = re.search(
             r"Jucatorul\s+\((\d+)\)\s+a\s+retras\s+din\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if chest_withdraw_idonly:
             return PlayerAction(
@@ -854,11 +887,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 ID-ONLY PATTERN C: Item given - "Jucatorul (ID) ia dat lui Name(ID) Nx Item"
         gave_idonly = re.search(
             r"Jucatorul\s+\((\d+)\)\s+i?a\s+dat\s+lui\s+(.+?)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if gave_idonly:
             return PlayerAction(
@@ -873,11 +907,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 ID-ONLY PATTERN D: Money withdrawal - "Jucatorul (ID) a retras suma de X$ (taxa Y$)"
         withdraw_idonly = re.search(
             r"Jucatorul\s+\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\$\s*\(taxa\s+([\d.,]+)\$\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if withdraw_idonly:
             return PlayerAction(
@@ -888,22 +923,31 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # ============================================================================
         # FLEXIBLE PATTERNS: Handle names with no space, emails, brackets, etc.
         # These use .+? to match ANY name format
         # ============================================================================
-        
+
         # 🔥 FLEXIBLE PATTERN A: Chest deposit/withdraw - handles ALL name formats including no-space emails
         # Matches: "Jucatorul[email protected](ID)", "Jucatorul Name(ID)", "Jucatorul Dark (tag)(ID)"
         chest_flexible = re.search(
             r"Jucatorul\s*(.+?)\((\d+)\)\s+a\s+(pus\s+in|retras\s+din)\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if chest_flexible:
-            action_type = "chest_deposit" if "pus" in chest_flexible.group(3) else "chest_withdraw"
+            action_type = (
+                "chest_deposit"
+                if "pus" in chest_flexible.group(3)
+                else "chest_withdraw"
+            )
             action_verb = "Pus in" if "pus" in chest_flexible.group(3) else "Retras din"
-            player_name = chest_flexible.group(1).strip() if chest_flexible.group(1).strip() else None
+            player_name = (
+                chest_flexible.group(1).strip()
+                if chest_flexible.group(1).strip()
+                else None
+            )
             return PlayerAction(
                 player_id=chest_flexible.group(2),
                 player_name=player_name,
@@ -914,14 +958,19 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 FLEXIBLE PATTERN B: Item given - handles ALL name formats
         gave_flexible = re.search(
             r"Jucatorul\s*(.+?)\((\d+)\)\s+i?a\s+dat\s+lui\s+(.+?)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if gave_flexible:
-            sender_name = gave_flexible.group(1).strip() if gave_flexible.group(1).strip() else None
+            sender_name = (
+                gave_flexible.group(1).strip()
+                if gave_flexible.group(1).strip()
+                else None
+            )
             return PlayerAction(
                 player_id=gave_flexible.group(2),
                 player_name=sender_name,
@@ -934,11 +983,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 FLEXIBLE PATTERN C: Item sold - "[ID]name" format with no space before "a vandut"
         item_sold_flexible = re.search(
             r"Jucatorul\s+\[(\d+)\](.+?)a\s+vandut\s+x?(\d+)\s+(.+?)\s+pentru\s+suma\s+de\s+\$?([\d.,]+)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if item_sold_flexible:
             return PlayerAction(
@@ -951,15 +1001,16 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # ============================================================================
         # ADMIN ACTION PATTERNS
         # ============================================================================
-        
+
         # 🔥 ADMIN PATTERN A: Kill Character - "Administratorul Name(ID) ia dat KILL CHARACTER jucatorului Name(ID)"
         kill_char_match = re.search(
             r"Administratorul\s+(.+?)\((\d+)\)\s+i?a\s+dat\s+KILL\s+CHARACTER\s+jucatorului\s+(.+?)\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if kill_char_match:
             return PlayerAction(
@@ -972,11 +1023,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 ADMIN PATTERN B: Deban - "a fost debanat de catre administratorul Name(ID)"
         deban_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+fost\s+debanat\s+de\s+catre\s+administratorul\s+(.+?)\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if deban_match:
             return PlayerAction(
@@ -989,11 +1041,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 ADMIN PATTERN C: Ban alt format - handles "(de)" in duration like "30 (de) zi(le)"
         ban_alt_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+fost\s+banat\s+de\s+catre\s+admin(?:ul)?\s+(.+?)\((\d+)\)\s*,\s*durata\s+(.+?)\s*,\s*motiv\s+['\"]?(.+?)['\"]?(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if ban_alt_match:
             return PlayerAction(
@@ -1007,15 +1060,16 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # ============================================================================
         # REGULAR PATTERNS: "Jucatorul Name(ID)" format
         # ============================================================================
-        
+
         # 🔥 PATTERN 1: Money deposit - "a depozitat suma de X$ (taxa Y$)" (now handles "(de)" in amount)
         deposit_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if deposit_match:
             amount = deposit_match.group(3)
@@ -1028,11 +1082,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 2: Money withdrawal - "a retras suma de X$ (taxa Y$)" (now handles "(de)" in amount)
         withdraw_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if withdraw_match:
             amount = withdraw_match.group(3)
@@ -1045,11 +1100,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 3: Money transfer - "ia transferat suma de X$ lui Player(ID)" (now handles "(de)" in amount)
         transfer_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s+([^(]+)\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if transfer_match:
             return PlayerAction(
@@ -1062,12 +1118,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 ID-ONLY DEPOSIT PATTERN: "Jucatorul (ID) a depozitat..." with no name
         # Example: "Jucatorul (221001) a depozitat suma de 2.781.647$ (taxa 27.816$)."
         deposit_idonly = re.search(
             r"Jucatorul\s+\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if deposit_idonly:
             return PlayerAction(
@@ -1078,12 +1135,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 FLEXIBLE PATTERN FOR DEPOSIT: Handles names with spaces/tags/parentheses like "sasuke (192)"
         # Example: "Jucatorul sasuke (192)(209261) a depozitat suma de 131.000.000$ (taxa 1.310.000$)."
         deposit_flexible = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if deposit_flexible:
             amount = deposit_flexible.group(3)
@@ -1096,12 +1154,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 FLEXIBLE PATTERN FOR WITHDRAWAL: Handles names with spaces/tags/parentheses
         # Example: "Jucatorul Some Name (tag)(123) a retras suma de X$ (taxa Y$)."
         withdraw_flexible = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if withdraw_flexible:
             amount = withdraw_flexible.group(3)
@@ -1114,12 +1173,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
-        
+
         # 🔥 PATTERN 4: Chest deposit - "a pus in chest(id X), Nx Item"
         chest_deposit_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+pus\s+in\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if chest_deposit_match:
             return PlayerAction(
@@ -1132,11 +1191,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 5: Chest withdraw - "a retras din chest(id X), Nx Item"
         chest_withdraw_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+din\s+chest\s*\(id\s+([^)]+)\)\s*,\s*(\d+)x\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if chest_withdraw_match:
             return PlayerAction(
@@ -1149,11 +1209,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 6: Item given - "ia dat lui" Player(ID) items (flexible: handles Nx items or just items)
         gave_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+i?a\s+dat\s+lui\s+([^(]+)\((\d+)\)\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if gave_match:
             items_text = gave_match.group(5).strip().rstrip(".")
@@ -1161,7 +1222,7 @@ class Pro4KingsScraper:
             qty_match = re.match(r"(\d+)x\s+(.+)", items_text)
             item_qty = int(qty_match.group(1)) if qty_match else None
             item_name = qty_match.group(2) if qty_match else items_text
-            
+
             return PlayerAction(
                 player_id=gave_match.group(2),
                 player_name=gave_match.group(1).strip(),
@@ -1174,11 +1235,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 7: Item received - "a primit de la Player(ID) Nx Item"
         received_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+de\s+la\s+([^(]+)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if received_match:
             return PlayerAction(
@@ -1193,11 +1255,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 8: Contract with arrow - "Contract Player1(ID) -> Player2(ID)"
         contract_arrow_match = re.search(
             r"Contract\s+([^(]+)\((\d+)\)\s*(?:->|→)\s*([^(]+)\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if contract_arrow_match:
             # Try to extract vehicle info after the last parenthesis
@@ -1214,12 +1277,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 9: Contract with exchange details - "Contract Player1(ID) Player2(ID). ('ID1' [Item], 'ID2' [Money$"
         # Example: "Contract Cozeix(153455) anq790(222483). ('153455' [Brioso, ], '222483' [10.000.000$"
         contract_exchange_match = re.search(
             r"Contract\s+([^(]+)\((\d+)\)\s+([^(]+)\((\d+)\)\s*\.\s*\('(\d+)'\s*\[([^\]]*)\],?\s*'(\d+)'\s*\[([^\]]*)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if contract_exchange_match:
             player1_name = contract_exchange_match.group(1).strip()
@@ -1230,7 +1294,7 @@ class Pro4KingsScraper:
             offer1_items = contract_exchange_match.group(6).strip().rstrip(", ")
             offer2_id = contract_exchange_match.group(7)
             offer2_items = contract_exchange_match.group(8).strip().rstrip(", $")
-            
+
             # Determine who gave what
             if offer1_id == player1_id:
                 player1_gave = offer1_items or "items"
@@ -1238,7 +1302,7 @@ class Pro4KingsScraper:
             else:
                 player1_gave = offer2_items or "items"
                 player1_received = offer1_items or "items"
-            
+
             return PlayerAction(
                 player_id=player1_id,
                 player_name=player1_name,
@@ -1250,15 +1314,14 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 9b: Simpler contract format - "Contract Player1(ID) Player2(ID)."
         contract_simple_match = re.search(
-            r"Contract\s+([^(]+)\((\d+)\)\s+([^(]+)\((\d+)\)",
-            text, re.IGNORECASE
+            r"Contract\s+([^(]+)\((\d+)\)\s+([^(]+)\((\d+)\)", text, re.IGNORECASE
         )
         if contract_simple_match:
             # Try to extract any details after
-            remainder = text[contract_simple_match.end():].strip()
+            remainder = text[contract_simple_match.end() :].strip()
             detail = remainder[:100] if remainder else "Vehicle transfer"
             return PlayerAction(
                 player_id=contract_simple_match.group(2),
@@ -1270,11 +1333,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 10: Warning received
         warning_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+(?:un\s+)?avertisment.*?(?:administratorul|admin)\s+([^(]+)\((\d+)\).*?motiv:\s*(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if warning_match:
             return PlayerAction(
@@ -1288,11 +1352,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 11: Trade completed - "Tradeul dintre jucatorii Player1(ID) si Player2(ID) a fost finalizat"
         trade_match = re.search(
             r"Tradeul\s+dintre\s+jucatorii\s+([^(]+)\((\d+)\)\s+si\s+([^(]+)\((\d+)\)\s+a\s+fost\s+finalizat\.?\s*\(([^)]+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if trade_match:
             trade_details = trade_match.group(5)
@@ -1306,14 +1371,19 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 12: Property bought/sold
         property_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(casa|afacere|proprietate)\s*(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if property_match:
-            action_type = "property_bought" if "cumparat" in property_match.group(3).lower() else "property_sold"
+            action_type = (
+                "property_bought"
+                if "cumparat" in property_match.group(3).lower()
+                else "property_sold"
+            )
             return PlayerAction(
                 player_id=property_match.group(2),
                 player_name=property_match.group(1).strip(),
@@ -1322,14 +1392,19 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 13: Vehicle bought/sold (generic)
         vehicle_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+(cumparat|vandut)\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if vehicle_match:
-            action_type = "vehicle_bought" if "cumparat" in vehicle_match.group(3).lower() else "vehicle_sold"
+            action_type = (
+                "vehicle_bought"
+                if "cumparat" in vehicle_match.group(3).lower()
+                else "vehicle_sold"
+            )
             return PlayerAction(
                 player_id=vehicle_match.group(2),
                 player_name=vehicle_match.group(1).strip(),
@@ -1339,11 +1414,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 14: Mute received - "a primit mute de la administratorul..."
         mute_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+primit\s+mute\s+de\s+la\s+administratorul\s+([^(]+)\((\d+)\)\s*,\s*motiv\s+(.+?)(?:,\s*timp|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if mute_match:
             return PlayerAction(
@@ -1357,11 +1433,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 15: Ban received - "a fost banat de catre adminul..."
         ban_match = re.search(
             r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+fost\s+banat\s+de\s+catre\s+admin(?:ul)?\s+([^(]+)\((\d+)\)\s*,\s*durata\s+(.+?)\s*,\s*motiv\s+['\"]?(.+?)['\"]?(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if ban_match:
             return PlayerAction(
@@ -1375,12 +1452,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 16: Bank heist delivery - "a livrat bani de la banca(Bank (Location)) jefuita si a primit..."
         # Bank names have nested parentheses like "Fleeca Bank (Alta)" so we match up to "))"
         heist_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\((.+?)\)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if heist_match:
             return PlayerAction(
@@ -1391,26 +1469,27 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 17: License plate sale - "Vanzarea de placute dintre jucatorii Player1(ID) si Player2(ID) a fost finalizata..."
         # More flexible pattern to handle various name formats
         plate_sale_match = re.search(
             r"Vanzarea\s+de\s+placute\s+dintre\s+jucatorii\s+(.+?)\((\d+)\)\s+si\s+(.+?)\((\d+)\)\s+a\s+fost\s+finalizata",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if plate_sale_match:
             player1_name = plate_sale_match.group(1).strip()
             player1_id = plate_sale_match.group(2)
             player2_name = plate_sale_match.group(3).strip()
             player2_id = plate_sale_match.group(4)
-            
+
             # Try to extract plate number and vehicle from the rest of text
             plate_match = re.search(r"inmatriculare\s+\(([^)]+)\)", text)
             plate_number = plate_match.group(1) if plate_match else "?"
-            
+
             vehicle_match = re.search(r"pe\s+vehiculul\s+([^,]+)", text)
             vehicle = vehicle_match.group(1).strip() if vehicle_match else "vehicul"
-            
+
             # Find who gave the plate (the one mentioned in "[ID] Name a oferit")
             giver_match = re.search(r"\[(\d+)\]\s+([^\s]+)\s+a\s+oferit", text)
             if giver_match and giver_match.group(1) == player1_id:
@@ -1419,7 +1498,7 @@ class Pro4KingsScraper:
             else:
                 giver_id, giver_name = player2_id, player2_name
                 receiver_id, receiver_name = player1_id, player1_name
-            
+
             return PlayerAction(
                 player_id=giver_id,
                 player_name=giver_name,
@@ -1431,11 +1510,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 18: Admin jail - "a primit admin jail X (de) checkpointuri de la administratorul..."
         jail_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+primit\s+admin\s+jail\s+(\d+)\s*(?:\(de\))?\s*checkpointuri\s+de\s+la\s+administratorul\s+(.+?)\((\d+)\)\s*,\s*motiv\s+['\"]?(.+?)['\"]?(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if jail_match:
             return PlayerAction(
@@ -1449,11 +1529,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 19: Gambling win - "a castigat impotriva lui Player meciul de barbut/slots/etc"
         gambling_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+castigat\s+(?:impotriva\s+lui\s+)?(.+?)\((\d+)\)\s+(?:meciul\s+de\s+)?(\w+)[\s,]+(\d[\d.,]*)\$?",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if gambling_match:
             game_type = gambling_match.group(5)
@@ -1468,11 +1549,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 20: House safe withdrawal - "a retras suma de X$ din seiful casei nr. Y"
         house_safe_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\$\s*din\s+seiful\s+casei\s+nr\.\s*(\d+)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if house_safe_match:
             return PlayerAction(
@@ -1483,11 +1565,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 21: House safe deposit - "a depozitat suma de X$ in seiful casei nr. Y"
         house_safe_deposit_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\$\s*in\s+seiful\s+casei\s+nr\.\s*(\d+)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if house_safe_deposit_match:
             return PlayerAction(
@@ -1498,11 +1581,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 22: Item sold (marketplace) - "[ID] Name a vandut xN Item pentru suma de $X"
         item_sold_match = re.search(
             r"\[(\d+)\]\s+([^\[]+?)\s+a\s+vandut\s+x?(\d+)\s+(.+?)\s+pentru\s+suma\s+de\s+\$?([\d.,]+)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if item_sold_match:
             return PlayerAction(
@@ -1515,11 +1599,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 23: Money transfer to "jucatorului" (different format) - "ia transferat suma de X$ jucatorului Name (ID)"
         transfer_alt_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*\$?\s*jucatorului\s+(.+?)\s+\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if transfer_alt_match:
             return PlayerAction(
@@ -1532,11 +1617,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 24: Money transfer alt format 2 - "jucatorului Name(ID)" (no space before paren)
         transfer_alt2_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*\$?\s*jucatorului\s+(.+?)\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if transfer_alt2_match:
             return PlayerAction(
@@ -1549,11 +1635,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 25: Vehicle scrapped/remated - "a dat la remat masina Vehicle(ID) pentru suma de X$"
         remat_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+dat\s+la\s+remat\s+masina\s+(.+?)\((\d+)\)\s+pentru\s+suma\s+de\s+([\d.,]+)\$",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if remat_match:
             return PlayerAction(
@@ -1565,11 +1652,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 26: Kicked from faction - "a fost dat afara de catre Admin(ID), motiv..."
         kicked_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+fost\s+dat\s+afara\s+de\s+catre\s+(.+?)\((\d+)\)\s*,\s*motiv\s+['\"]?(.+?)['\"]?(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if kicked_match:
             return PlayerAction(
@@ -1583,11 +1671,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 27: Unjail - "a primit unjail de la administratorul Admin(ID)"
         unjail_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+primit\s+unjail\s+de\s+la\s+administratorul\s+(.+?)\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if unjail_match:
             return PlayerAction(
@@ -1600,11 +1689,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 28: Warning alt format - "a primit un avertisment (X/3), de la administratorul"
         warning_alt_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+primit\s+un\s+avertisment\s+\((\d+)/3\)\s*,\s*de\s+la\s+administratorul\s+(.+?)\((\d+)\)\s*,\s*motiv\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if warning_alt_match:
             return PlayerAction(
@@ -1619,11 +1709,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 29: Item given to ID only (no name) - "ia dat lui (ID) Nx Item"
         gave_id_only_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+i?a\s+dat\s+lui\s+\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if gave_id_only_match:
             return PlayerAction(
@@ -1637,12 +1728,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 30: Item given with nested parentheses in name - handles "! Name (tag)(ID)"
         # Example: "ia dat lui ! Montana (585)(160273) 2x Armura"
         gave_nested_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+i?a\s+dat\s+lui\s+(.+?)\((\d+)\)\s+(\d+)x\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if gave_nested_match:
             return PlayerAction(
@@ -1657,16 +1749,17 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # ============================================================================
         # NEW PATTERNS: Handle edge cases from /unknownactions report
         # ============================================================================
-        
+
         # 🔥 NEW PATTERN A: Bank heist with SIMPLE bank name (no nested parens)
         # Example: "Jucatorul iBuyPower Aleksey(152166) a livrat bani de la banca(Blaine County Savings) jefuita si a primit 14.728.305 bani murdari si 1x Moneda sindicat."
         heist_simple_match = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\(([^)]+)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)\s*bani\s+murdari",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if heist_simple_match:
             return PlayerAction(
@@ -1677,13 +1770,14 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN B: Money withdrawal with nested parentheses in name
         # Example: "Jucatorul King pt voi ! (fotomodelu)(218539) a retras suma de 422.779$ (taxa 4.227$)."
         # The key is to match the LAST (ID) before " a retras"
         withdraw_nested_name = re.search(
             r"Jucatorul\s+(.+)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\$\s*\(taxa\s+([\d.,]+)\$\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if withdraw_nested_name:
             return PlayerAction(
@@ -1694,12 +1788,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN C: ID-only ban - "Jucatorul (ID) a fost banat..."
         # Example: "Jucatorul (224833) a fost banat de catre adminul Fane(300), durata 1 (de) zi(le), motiv 'Blacklist'."
         ban_id_only_match = re.search(
             r"Jucatorul\s+\((\d+)\)\s+a\s+fost\s+banat\s+de\s+catre\s+admin(?:ul)?\s+(.+?)\((\d+)\)\s*,\s*durata\s+(.+?)\s*,\s*motiv\s+['\"]?(.+?)['\"]?(?:\.|$)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if ban_id_only_match:
             return PlayerAction(
@@ -1713,12 +1808,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN D: Admin warning removal - "Administratorul Name(ID) ia scos un avertisment jucatorului Name(ID)"
         # Example: "Administratorul Tipic(184) ia scos un avertisment jucatorului defuse (199104)."
         warning_removal_match = re.search(
             r"Administratorul\s+(.+?)\((\d+)\)\s+i?a\s+scos\s+un\s+avertisment\s+jucatorului\s+(.+?)\s*\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if warning_removal_match:
             return PlayerAction(
@@ -1731,13 +1827,14 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN E: Money transfer with fancy names (tags in parens) - NO "Jucatorul" prefix
         # Example: "King pt voi ! (fotomodelu) (218539) ia transferat suma de 500.000 (de) $ lui Alina (126059) [IN MANA]"
         # Handles both with space and without space after "lui" for email-like targets
         transfer_fancy_name = re.search(
             r"^(.+?)\s+\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s*([^\s(]+(?:\s+[^(]*)?|[^\s(]+@[^\s(]+)\s*\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if transfer_fancy_name:
             target_name = transfer_fancy_name.group(4).strip()
@@ -1751,12 +1848,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN E: Money transfer with ID-ONLY sender - "(ID) ia transferat..."
         # Example: "(76985) ia transferat suma de 94.226 (de) $ lui VARZARU (223077) [IN MANA]"
         transfer_id_only_sender = re.search(
             r"^\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s+(.+?)\s*\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if transfer_id_only_sender:
             return PlayerAction(
@@ -1769,16 +1867,17 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # ============================================================================
         # FALLBACK PATTERNS - Moved to end so specific patterns are checked first
         # ============================================================================
-        
+
         # 🔥 NEW PATTERN F: Contract with email-like names - handles "email@domain(ID)" format
         # Example: "Contract[email protected](137592) Mihai(137922). ('137592' [Bravado Harger 69, ], '137922' [])"
         contract_email_name = re.search(
             r"Contract\s+([^\s(]+@[^\s(]+)\((\d+)\)\s+(.+?)\((\d+)\)\.",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if contract_email_name:
             return PlayerAction(
@@ -1791,12 +1890,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN G: Bank heist with fancy player names (with tags)
         # Example: "Jucatorul King pt voi ! (fotomodelu)(218539) a livrat bani de la banca(Blaine County Savings)"
         heist_fancy_name = re.search(
             r"Jucatorul\s+(.+)\((\d+)\)\s+a\s+livrat\s+bani\s+de\s+la\s+banca\s*\(([^)]+)\)\s*jefuita\s+si\s+a\s+primit\s+([\d.,]+)\s*bani\s+murdari",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if heist_fancy_name:
             return PlayerAction(
@@ -1807,12 +1907,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN H: Money deposit by email-like username (no space before paren)
         # Example: "Jucatorul[email protected](137592) a depozitat suma de 61.000.000$ (taxa 610.000$)."
         deposit_email = re.search(
             r"Jucatorul\s*([^\s(]+@[^\s(]+)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\$\s*\(taxa\s+([\d.,]+)\$\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if deposit_email:
             return PlayerAction(
@@ -1823,16 +1924,19 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN I: Money transfer with email-like username
         # Handles both bracketed [email@protected] and normal email@protected formats
         # Example: "Mihai (137922) ia transferat suma de 7.500.000 (de) $ lui[email protected](137592) [IN MANA]"
         transfer_email_target = re.search(
             r"^(.+?)\s+\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s*(\[[^\]]+\]|[^\s(]+@[^\s(]+)\s*\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if transfer_email_target:
-            email_name = transfer_email_target.group(4).strip('[]')  # Remove brackets if present
+            email_name = transfer_email_target.group(4).strip(
+                "[]"
+            )  # Remove brackets if present
             return PlayerAction(
                 player_id=transfer_email_target.group(2),
                 player_name=transfer_email_target.group(1).strip(),
@@ -1843,19 +1947,24 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN J: Trade with detailed exchange info (already somewhat covered but with better parsing)
         # Example: "Tradeul dintre jucatorii Chirila(373) si (136629) a fost finalizat. ('373' [1x Sandwich Cu Sunca, ], '136629' [90.000.000$, ])"
         trade_detailed = re.search(
             r"Tradeul\s+dintre\s+jucatorii\s+([^(]+)\((\d+)\)\s+si\s+([^(]*)\((\d+)\)\s+a\s+fost\s+finalizat",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if trade_detailed:
             player1_name = trade_detailed.group(1).strip()
             player1_id = trade_detailed.group(2)
-            player2_name = trade_detailed.group(3).strip() if trade_detailed.group(3).strip() else None
+            player2_name = (
+                trade_detailed.group(3).strip()
+                if trade_detailed.group(3).strip()
+                else None
+            )
             player2_id = trade_detailed.group(4)
-            
+
             # Extract what was exchanged from the detail part if present
             exchange_detail = ""
             exchange_match = re.findall(r"'(\d+)'\s*\[([^\]]+)\]", text)
@@ -1864,7 +1973,7 @@ class Pro4KingsScraper:
                     if ex_id == player1_id:
                         exchange_detail = f"Gave: {ex_items.strip().rstrip(', ')}"
                         break
-            
+
             return PlayerAction(
                 player_id=player1_id,
                 player_name=player1_name,
@@ -1875,12 +1984,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN E: Money transfer with ID-ONLY sender - "(ID) ia transferat..."
         # Example: "(76985) ia transferat suma de 94.226 (de) $ lui VARZARU (223077) [IN MANA]"
         transfer_id_only_sender = re.search(
             r"^\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s+(.+?)\s*\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if transfer_id_only_sender:
             return PlayerAction(
@@ -1893,12 +2003,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN K: House/Property purchase
         # Example: "Jucatorul Ioan Glont(56894) a achizictionat Casa Nr. 95 de la jucatorul cu ID 173608 pentru suma de 500.000.000$."
         property_purchase = re.search(
             r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+achizit?ionat\s+(.+?)\s+de\s+la\s+jucatorul\s+cu\s+ID\s+(\d+)\s+pentru\s+suma\s+de\s+([\d.,]+)\$",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if property_purchase:
             return PlayerAction(
@@ -1910,12 +2021,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN L: Faction kick/expulsion
         # Example: "Jucatorul (149788) a fost dat afara de catre NepotuP4K(2446), motiv 'schimba numele'."
         faction_kick = re.search(
             r"Jucatorul\s+(?:(.+?)\s+)?\((\d+)\)\s+a\s+fost\s+dat\s+afara\s+de\s+catre\s+(.+?)\((\d+)\)\s*,\s*motiv\s+['\"]([^'\"]+)['\"]",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if faction_kick:
             return PlayerAction(
@@ -1929,12 +2041,13 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN M: Admin warning removal (slightly different format)
         # Example: "Administratorul Tipic(184) ia scos un avertisment jucatorului defuse (199104)."
         admin_warning = re.search(
             r"Administratorul\s+(.+?)\((\d+)\)\s+i?a\s+scos\s+un\s+avertisment\s+jucatorului\s+(.+?)\s*\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if admin_warning:
             return PlayerAction(
@@ -1947,12 +2060,11 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN N: Vehicle contract - simple format
         # Example: "Contract Mihai(137922) (137592). ('137922' [], '137592' [Bravado Harger 69, ])"
         contract_simple = re.search(
-            r"Contract\s+(.+?)\((\d+)\)\s+\((\d+)\)\.",
-            text, re.IGNORECASE
+            r"Contract\s+(.+?)\((\d+)\)\s+\((\d+)\)\.", text, re.IGNORECASE
         )
         if contract_simple:
             return PlayerAction(
@@ -1964,22 +2076,23 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN O: Trade with minimal info (player IDs only)
         # Example: "Tradeul dintre jucatorii D4N1(202518) si sasuke (192)(209261) a fost finalizat..."
         # This handles cases where second player has a tag like "sasuke (192)"
         trade_with_tag = re.search(
             r"Tradeul\s+dintre\s+jucatorii\s+([^(]+)\((\d+)\)\s+si\s+([^(]+)\s*(?:\(\d+\))?\s*\((\d+)\)\s+a\s+fost\s+finalizat",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if trade_with_tag:
             player1_name = trade_with_tag.group(1).strip()
             player1_id = trade_with_tag.group(2)
             player2_name_raw = trade_with_tag.group(3).strip()
             # Remove any trailing tag like " (192)" from player2 name
-            player2_name = re.sub(r'\s*\(\d+\)\s*$', '', player2_name_raw).strip()
+            player2_name = re.sub(r"\s*\(\d+\)\s*$", "", player2_name_raw).strip()
             player2_id = trade_with_tag.group(4)
-            
+
             return PlayerAction(
                 player_id=player1_id,
                 player_name=player1_name,
@@ -1990,18 +2103,21 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # This pattern is now handled by the improved transfer_fancy_name pattern above
-        
+
         # 🔥 NEW PATTERN Q: Deposit with email-style username (no space before parenthesis)
         # Handles both bracketed [email@protected] and normal email@protected formats
         # Example: "Jucatorul[email protected](137592) a depozitat suma de 61.000.000$ (taxa 610.000$)."
         deposit_email_nospace = re.search(
             r"Jucatorul\s*(\[[^\]]+\]|[^\s(]+@[^\s(]+)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if deposit_email_nospace:
-            email_name = deposit_email_nospace.group(1).strip('[]')  # Remove brackets if present
+            email_name = deposit_email_nospace.group(1).strip(
+                "[]"
+            )  # Remove brackets if present
             return PlayerAction(
                 player_id=deposit_email_nospace.group(2),
                 player_name=email_name,
@@ -2010,27 +2126,32 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN R: Contract with email-style player name (simpler approach)
         # Handles both: "Contract[email protected](ID) Name(ID)" and "Contract Name(ID)[email@domain](ID)"
         #  Also handles bracketed [email@domain], normal email@domain, and regular names
         # Example: "Contract[email protected](137592) Mihai(137922)." or "Contract Mihai(137922)[email protected](137592)."
         contract_email_simple = re.search(
             r"Contract\s*(.+?)\((\d+)\)\s*(\[[^\]]+\]|[^\s(]+@[^\s(]+|[\w\s]+)?\s*\((\d+)\)",
-            text, re.IGNORECASE
+            text,
+            re.IGNORECASE,
         )
         if contract_email_simple:
-            player1_name = contract_email_simple.group(1).strip().strip('[]') if contract_email_simple.group(1) else None
+            player1_name = (
+                contract_email_simple.group(1).strip().strip("[]")
+                if contract_email_simple.group(1)
+                else None
+            )
             player1_id = contract_email_simple.group(2)
             player2_name_or_email = contract_email_simple.group(3)
             player2_id = contract_email_simple.group(4)
-            
+
             # If player2_name_or_email is None, it might be just "(ID)" after player1
             if player2_name_or_email:
-                player2_name = player2_name_or_email.strip().strip('[]')
+                player2_name = player2_name_or_email.strip().strip("[]")
             else:
                 player2_name = None
-            
+
             return PlayerAction(
                 player_id=player1_id,
                 player_name=player1_name,
@@ -2041,23 +2162,24 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 NEW PATTERN S: Contract with ID-only first player
         # Example: "Contract (131960) Crissu(168172). ('131960' [Issi Weeny XC, ], '168172' [])"
         contract_idonly_first = re.search(
-            r"Contract\s+\((\d+)\)\s+(.+?)\((\d+)\)(?:\.|$)",
-            text, re.IGNORECASE
+            r"Contract\s+\((\d+)\)\s+(.+?)\((\d+)\)(?:\.|$)", text, re.IGNORECASE
         )
         if contract_idonly_first:
             # Extract exchange details if present
             exchange_detail = ""
             exchange_match = re.findall(r"'(\d+)'\s*\[([^\]]*)\]", text)
-            if exchange_match and contract_idonly_first.group(1) in [ex[0] for ex in exchange_match]:
+            if exchange_match and contract_idonly_first.group(1) in [
+                ex[0] for ex in exchange_match
+            ]:
                 for ex_id, ex_items in exchange_match:
                     if ex_id == contract_idonly_first.group(1):
                         exchange_detail = f"Gave: {ex_items.strip().rstrip(', ')}"
                         break
-            
+
             return PlayerAction(
                 player_id=contract_idonly_first.group(1),
                 player_name=None,
@@ -2068,13 +2190,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 31: Any "Jucatorul" action not matched above - use GREEDY name match
         # This is now placed AFTER all specific patterns so they have priority
         # Changed from [^(]+ to .+ to handle names with parentheses like "King pt voi ! (tag)"
         generic_match = re.search(
-            r"Jucatorul\s+(.+)\((\d+)\)\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
+            r"Jucatorul\s+(.+)\((\d+)\)\s+(.+?)(?:\.|$)", text, re.IGNORECASE
         )
         if generic_match:
             action_text = generic_match.group(3).strip()
@@ -2086,10 +2207,12 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         # 🔥 PATTERN 34: CATCH-ALL - Save ANY action text even if no patterns match
         if len(text) >= 10:
-            logger.debug(f"⚠️ Unrecognized action pattern saved as 'unknown': {text[:80]}...")
+            logger.debug(
+                f"⚠️ Unrecognized action pattern saved as 'unknown': {text[:80]}..."
+            )
             return PlayerAction(
                 player_id=None,
                 player_name=None,
@@ -2098,7 +2221,7 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
-        
+
         return None
 
     def parse_action_entry(self, entry) -> Optional[PlayerAction]:
@@ -2565,146 +2688,170 @@ class Pro4KingsScraper:
 
     async def get_banned_players_all_pages(self) -> List[Dict]:
         """🆕 Get ALL banned players from ALL pages with played_hours and faction
-        
+
         🔥 ENHANCED: Uses cloudscraper to bypass JavaScript challenge on banlist pages
-        
+
         Iterates through https://panel.pro4kings.ro/banlist?pageBanList=1,2,3...
         until an empty page is found.
         """
         if not CLOUDSCRAPER_AVAILABLE:
-            logger.error("❌ Cloudscraper not available - cannot scrape banlist (install with: pip install cloudscraper)")
+            logger.error(
+                "❌ Cloudscraper not available - cannot scrape banlist (install with: pip install cloudscraper)"
+            )
             return []
-        
+
         all_bans = []
         page = 1
         max_pages = 100  # Safety limit
-        
+
         logger.info("🔍 Starting full banlist scrape with cloudscraper...")
-        
+
         # Create cloudscraper session (handles JavaScript challenges automatically)
         scraper = cloudscraper.create_scraper(
-            browser={
-                'browser': 'chrome',
-                'platform': 'windows',
-                'mobile': False
-            }
+            browser={"browser": "chrome", "platform": "windows", "mobile": False}
         )
-        
+
         try:
             while page <= max_pages:
                 url = f"{self.base_url}/banlist?pageBanList={page}&search="
                 logger.info(f"📄 Fetching banlist page {page}...")
-                
+
                 try:
                     # Use cloudscraper's sync get method in an executor to make it async
                     def fetch_with_cloudscraper():
                         response = scraper.get(url, timeout=30)
                         return response.text if response.status_code == 200 else None
-                    
+
                     # Run in executor to avoid blocking
-                    html = await asyncio.get_event_loop().run_in_executor(None, fetch_with_cloudscraper)
-                    
+                    html = await asyncio.get_event_loop().run_in_executor(
+                        None, fetch_with_cloudscraper
+                    )
+
                     if not html:
                         logger.warning(f"Failed to fetch page {page}, stopping")
                         break
-                    
+
                     # Check if still getting challenge page
                     if "Un moment" in html:
-                        logger.warning(f"⚠️ Challenge still present on page {page}, retrying...")
+                        logger.warning(
+                            f"⚠️ Challenge still present on page {page}, retrying..."
+                        )
                         await asyncio.sleep(5)  # Wait longer
-                        html = await asyncio.get_event_loop().run_in_executor(None, fetch_with_cloudscraper)
-                        
+                        html = await asyncio.get_event_loop().run_in_executor(
+                            None, fetch_with_cloudscraper
+                        )
+
                         if not html or "Un moment" in html:
-                            logger.warning(f"Failed to bypass challenge on page {page}, stopping")
+                            logger.warning(
+                                f"Failed to bypass challenge on page {page}, stopping"
+                            )
                             break
-                    
+
                     soup = BeautifulSoup(html, "lxml")
-                    
+
                     # Find the ban table
                     ban_table = soup.select_one("table")
                     if not ban_table:
                         logger.info(f"No table found on page {page}, stopping")
                         break
-                    
+
                     ban_rows = ban_table.select("tr")
                     if len(ban_rows) <= 1:  # Only header row
                         logger.info(f"No data rows on page {page}, stopping")
                         break
-                    
+
                     page_bans = []
                     for row in ban_rows[1:]:  # Skip header
                         try:
                             cells = row.select("td")
                             if len(cells) < 6:
                                 continue
-                            
+
                             # Extract player ID and name from link
                             player_link = cells[1].select_one('a[href*="/profile/"]')
                             player_id = None
                             player_name = cells[1].get_text(strip=True)
-                            
+
                             if player_link:
                                 href = player_link.get("href", "")
                                 id_match = re.search(r"/profile/(\d+)", str(href))
                                 if id_match:
                                     player_id = id_match.group(1)
-                            
+
                             # Try to get player_id from first cell if not in link
                             if not player_id:
                                 first_cell_text = cells[0].get_text(strip=True)
                                 if first_cell_text.isdigit():
                                     player_id = first_cell_text
-                            
+
                             ban_data = {
                                 "player_id": player_id,
                                 "player_name": player_name,
-                                "admin": cells[2].get_text(strip=True) if len(cells) > 2 else None,
-                                "reason": cells[3].get_text(strip=True) if len(cells) > 3 else None,
-                                "duration": cells[4].get_text(strip=True) if len(cells) > 4 else None,
-                                "ban_date": cells[5].get_text(strip=True) if len(cells) > 5 else None,
-                                "expiry_date": cells[6].get_text(strip=True) if len(cells) > 6 else None,
+                                "admin": cells[2].get_text(strip=True)
+                                if len(cells) > 2
+                                else None,
+                                "reason": cells[3].get_text(strip=True)
+                                if len(cells) > 3
+                                else None,
+                                "duration": cells[4].get_text(strip=True)
+                                if len(cells) > 4
+                                else None,
+                                "ban_date": cells[5].get_text(strip=True)
+                                if len(cells) > 5
+                                else None,
+                                "expiry_date": cells[6].get_text(strip=True)
+                                if len(cells) > 6
+                                else None,
                             }
-                            
+
                             page_bans.append(ban_data)
-                            
+
                         except Exception as e:
                             logger.error(f"Error parsing ban row on page {page}: {e}")
                             continue
-                    
+
                     if not page_bans:
                         logger.info(f"No bans parsed on page {page}, stopping")
                         break
-                    
+
                     all_bans.extend(page_bans)
-                    logger.info(f"✅ Page {page}: Found {len(page_bans)} bans (total: {len(all_bans)})")
-                    
+                    logger.info(
+                        f"✅ Page {page}: Found {len(page_bans)} bans (total: {len(all_bans)})"
+                    )
+
                     # Check for next page link in the HTML
                     next_link = soup.select_one(f'a[href*="pageBanList={page + 1}"]')
                     if not next_link:
-                        logger.info(f"No next page link found after page {page}, stopping")
+                        logger.info(
+                            f"No next page link found after page {page}, stopping"
+                        )
                         break
-                    
+
                     page += 1
                     await asyncio.sleep(2)  # Rate limiting between pages
-                
+
                 except Exception as e:
                     logger.error(f"Error fetching page {page}: {e}")
                     break
-        
+
         finally:
             # Close cloudscraper session
             scraper.close()
-        
-        logger.info(f"🏁 Banlist scrape complete: {len(all_bans)} total bans from {page} pages")
-        
+
+        logger.info(
+            f"🏁 Banlist scrape complete: {len(all_bans)} total bans from {page} pages"
+        )
+
         # Now fetch played_hours and faction for each banned player using regular scraper
         if all_bans:
             player_ids = [b["player_id"] for b in all_bans if b.get("player_id")]
             logger.info(f"🔄 Fetching profiles for {len(player_ids)} banned players...")
-            
+
             # Batch fetch profiles to get played_hours and faction
-            profiles = await self.batch_get_profiles(player_ids[:500])  # Limit to 500 to avoid timeout
-            
+            profiles = await self.batch_get_profiles(
+                player_ids[:500]
+            )  # Limit to 500 to avoid timeout
+
             # Create lookup dict
             profile_lookup = {}
             for profile in profiles:
@@ -2713,19 +2860,21 @@ class Pro4KingsScraper:
                         "played_hours": profile.played_hours,
                         "faction": profile.faction,
                     }
-            
+
             # Enrich ban data with profile info
             for ban in all_bans:
                 player_id = ban.get("player_id")
                 if player_id and player_id in profile_lookup:
-                    ban["played_hours"] = profile_lookup[player_id].get("played_hours", 0)
+                    ban["played_hours"] = profile_lookup[player_id].get(
+                        "played_hours", 0
+                    )
                     ban["faction"] = profile_lookup[player_id].get("faction")
                 else:
                     ban["played_hours"] = None
                     ban["faction"] = None
-            
+
             logger.info(f"✅ Enriched {len(profile_lookup)} bans with profile data")
-        
+
         return all_bans
 
 

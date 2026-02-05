@@ -235,7 +235,9 @@ async def get_or_recreate_scraper(max_concurrent=None):
         scraper = None
 
     if scraper is None:
-        concurrent = min(max_concurrent if max_concurrent else Config.SCRAPER_MAX_CONCURRENT, 5)
+        concurrent = min(
+            max_concurrent if max_concurrent else Config.SCRAPER_MAX_CONCURRENT, 5
+        )
         logger.info(f"🔄 Creating new scraper instance (max_concurrent={concurrent})...")
         scraper = Pro4KingsScraper(
             max_concurrent=concurrent,
@@ -251,7 +253,9 @@ async def get_or_recreate_scraper(max_concurrent=None):
             await scraper.__aexit__(None, None, None)
         except:
             pass
-        concurrent = min(max_concurrent if max_concurrent else Config.SCRAPER_MAX_CONCURRENT, 5)
+        concurrent = min(
+            max_concurrent if max_concurrent else Config.SCRAPER_MAX_CONCURRENT, 5
+        )
         scraper = Pro4KingsScraper(
             max_concurrent=concurrent,
             rate_limit=Config.SCRAPER_RATE_LIMIT,
@@ -698,22 +702,31 @@ async def scrape_actions():
                 # 🔥 Server kick (faction_kicked) = kicked from FiveM server by admin
                 # This should trigger a logout for the affected player
                 if action.action_type == "faction_kicked" and action.player_id:
-                    await db.save_logout(action.player_id, action.timestamp or datetime.now())
-                    logger.info(f"🚫 Server kick detected: {action.player_name}({action.player_id}) - triggering logout")
+                    await db.save_logout(
+                        action.player_id, action.timestamp or datetime.now()
+                    )
+                    logger.info(
+                        f"🚫 Server kick detected: {action.player_name}({action.player_id}) - triggering logout"
+                    )
 
                 # 🔥 NEW: Ban detection - auto-add to banned_players table when ban action detected
                 if action.action_type == "ban_received" and action.player_id:
                     ban_data = {
                         "player_id": action.player_id,
-                        "player_name": action.player_name or f"Player_{action.player_id}",
+                        "player_name": action.player_name
+                        or f"Player_{action.player_id}",
                         "admin": action.admin_name,
                         "reason": action.reason,
                         "duration": None,  # Duration not always in action detail
-                        "ban_date": (action.timestamp or datetime.now()).strftime("%Y-%m-%d %H:%M:%S"),
+                        "ban_date": (action.timestamp or datetime.now()).strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        ),
                         "expiry_date": None,
                     }
                     await db.save_banned_player(ban_data)
-                    logger.info(f"🔨 Ban detected from action: {action.player_name}({action.player_id}) by {action.admin_name}")
+                    logger.info(
+                        f"🔨 Ban detected from action: {action.player_name}({action.player_id}) by {action.admin_name}"
+                    )
 
                 if action.player_id:
                     player_name = action.player_name or f"Player_{action.player_id}"
@@ -818,22 +831,31 @@ async def scrape_vip_actions():
 
                     # 🔥 Server kick detection for VIP players
                     if action.action_type == "faction_kicked" and action.player_id:
-                        await db.save_logout(action.player_id, action.timestamp or datetime.now())
-                        logger.info(f"🚫 VIP Server kick: {action.player_name}({action.player_id}) - triggering logout")
+                        await db.save_logout(
+                            action.player_id, action.timestamp or datetime.now()
+                        )
+                        logger.info(
+                            f"🚫 VIP Server kick: {action.player_name}({action.player_id}) - triggering logout"
+                        )
 
                     # 🔥 NEW: Ban detection for VIP players
                     if action.action_type == "ban_received" and action.player_id:
                         ban_data = {
                             "player_id": action.player_id,
-                            "player_name": action.player_name or f"Player_{action.player_id}",
+                            "player_name": action.player_name
+                            or f"Player_{action.player_id}",
                             "admin": action.admin_name,
                             "reason": action.reason,
                             "duration": None,
-                            "ban_date": (action.timestamp or datetime.now()).strftime("%Y-%m-%d %H:%M:%S"),
+                            "ban_date": (action.timestamp or datetime.now()).strftime(
+                                "%Y-%m-%d %H:%M:%S"
+                            ),
                             "expiry_date": None,
                         }
                         await db.save_banned_player(ban_data)
-                        logger.info(f"🔨 VIP Ban detected: {action.player_name}({action.player_id}) by {action.admin_name}")
+                        logger.info(
+                            f"🔨 VIP Ban detected: {action.player_name}({action.player_id}) by {action.admin_name}"
+                        )
 
                     if action.player_id:
                         player_name = action.player_name or f"Player_{action.player_id}"
@@ -1009,7 +1031,9 @@ async def scrape_online_players():
         logouts = previous_ids - current_ids
         for player_id in logouts:
             await db.save_logout(player_id, current_time)
-            await db.remove_from_online_players(player_id)  # 🔥 Remove from online_players table immediately
+            await db.remove_from_online_players(
+                player_id
+            )  # 🔥 Remove from online_players table immediately
             logger.info(f"🔴 Logout detected: Player {player_id}")
 
         await db.update_online_players(online_players)
