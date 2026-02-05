@@ -2,6 +2,8 @@
 
 🤖 Advanced Discord bot for monitoring and tracking Pro4Kings Roleplay server data
 
+⚠️ **IMPORTANT:** Pro4Kings panel has anti-bot JavaScript protection. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for deployment requirements.
+
 ## Features
 
 ✅ **Player Monitoring**
@@ -35,6 +37,7 @@ sqlite3
 discord.py
 httpx
 beautifulsoup4
+cloudscraper  # For challenge bypass
 ```
 
 ### Setup

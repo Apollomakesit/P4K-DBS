@@ -8,6 +8,9 @@ discord.py>=2.3.2
 beautifulsoup4>=4.12.0
 lxml>=5.1.0
 
+#🔥 JavaScript challenge bypass (for banlist and protected pages)
+cloudscraper>=1.2.71
+
 # System Monitoring
 psutil>=5.9.0
 

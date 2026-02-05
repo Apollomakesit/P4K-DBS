@@ -2,6 +2,8 @@
 """
 Pro4Kings Scraper - ULTRA SAFE Version with TokenBucket Rate Limiter
 Minimum 1 worker support for maximum 503 error protection
+
+🔥 ENHANCED: Now supports JavaScript-protected pages using cloudscraper
 """
 
 import asyncio
@@ -14,6 +16,14 @@ import time
 import random
 from dataclasses import dataclass, field
 import re
+
+# 🔥 NEW: Cloudscraper for JavaScript challenge bypass (Cloudflare, etc.)
+try:
+    import cloudscraper
+    CLOUDSCRAPER_AVAILABLE = True
+except ImportError:
+    CLOUDSCRAPER_AVAILABLE = False
+    logging.warning("⚠️ Cloudscraper not installed - banlist scraping may fail on protected pages")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -147,6 +157,10 @@ class Pro4KingsScraper:
     async def __aenter__(self):
         """Async context manager entry"""
         timeout = aiohttp.ClientTimeout(total=15, connect=5)
+        
+        # 🔥 ENHANCED: Use CookieJar to persist cookies across requests (for challenge bypass)
+        cookie_jar = aiohttp.CookieJar(unsafe=True)  # unsafe=True allows cookies for all domains
+        
         connector = aiohttp.TCPConnector(
             limit=max(10, self.max_concurrent * 2),
             limit_per_host=max(10, self.max_concurrent * 2),
@@ -156,7 +170,10 @@ class Pro4KingsScraper:
         )
 
         self.client = aiohttp.ClientSession(
-            connector=connector, timeout=timeout, headers=self.headers
+            connector=connector, 
+            timeout=timeout, 
+            headers=self.headers,
+            cookie_jar=cookie_jar  # 🔥 Enable cookie persistence
         )
 
         logger.info(
@@ -171,7 +188,10 @@ class Pro4KingsScraper:
             await asyncio.sleep(0.1)
 
     async def fetch_page(self, url: str, retries: int = 3) -> Optional[str]:
-        """Fetch page with TokenBucket rate limiting and adaptive throttling"""
+        """Fetch page with TokenBucket rate limiting and adaptive throttling
+        
+        🔥 ENHANCED: Handles "Un moment, vă rog..." JavaScript challenge by waiting and retrying
+        """
         if self.client is None:
             logger.error("HTTP client not initialized! Call __aenter__ first.")
             return None
@@ -198,6 +218,19 @@ class Pro4KingsScraper:
                             self.request_times.pop(0)
 
                         if response.status == 200:
+                            html = await response.text()
+                            
+                            # 🔥 DETECT JAVASCRIPT CHALLENGE: "Un moment, vă rog..."
+                            if "Un moment, vă rog" in html or "Un moment" in html[:500]:
+                                if attempt < retries - 1:
+                                    wait_time = 7  # Wait 7 seconds (page says 5, add buffer)
+                                    logger.info(f"🔄 Challenge page detected, waiting {wait_time}s...")
+                                    await asyncio.sleep(wait_time)
+                                    continue  # Retry the request
+                                else:
+                                    logger.warning(f"⚠️ Challenge page still present after {retries} attempts")
+                                    return None
+                            
                             self.consecutive_503 = 0
                             self.success_count += 1
 
@@ -206,7 +239,7 @@ class Pro4KingsScraper:
                                 self.adaptive_delay = max(0, self.adaptive_delay * 0.9)
                                 self.success_count = 0
 
-                            return await response.text()
+                            return html
 
                         elif response.status == 404:
                             return None
@@ -2533,96 +2566,138 @@ class Pro4KingsScraper:
     async def get_banned_players_all_pages(self) -> List[Dict]:
         """🆕 Get ALL banned players from ALL pages with played_hours and faction
         
+        🔥 ENHANCED: Uses cloudscraper to bypass JavaScript challenge on banlist pages
+        
         Iterates through https://panel.pro4kings.ro/banlist?pageBanList=1,2,3...
         until an empty page is found.
         """
+        if not CLOUDSCRAPER_AVAILABLE:
+            logger.error("❌ Cloudscraper not available - cannot scrape banlist (install with: pip install cloudscraper)")
+            return []
+        
         all_bans = []
         page = 1
         max_pages = 100  # Safety limit
         
-        logger.info("🔍 Starting full banlist scrape...")
+        logger.info("🔍 Starting full banlist scrape with cloudscraper...")
         
-        while page <= max_pages:
-            url = f"{self.base_url}/banlist?pageBanList={page}&search="
-            logger.info(f"📄 Fetching banlist page {page}...")
-            
-            html = await self.fetch_page(url)
-            if not html:
-                logger.warning(f"Failed to fetch page {page}, stopping")
-                break
-            
-            soup = BeautifulSoup(html, "lxml")
-            
-            # Find the ban table
-            ban_table = soup.select_one("table")
-            if not ban_table:
-                logger.info(f"No table found on page {page}, stopping")
-                break
-            
-            ban_rows = ban_table.select("tr")
-            if len(ban_rows) <= 1:  # Only header row
-                logger.info(f"No data rows on page {page}, stopping")
-                break
-            
-            page_bans = []
-            for row in ban_rows[1:]:  # Skip header
+        # Create cloudscraper session (handles JavaScript challenges automatically)
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'mobile': False
+            }
+        )
+        
+        try:
+            while page <= max_pages:
+                url = f"{self.base_url}/banlist?pageBanList={page}&search="
+                logger.info(f"📄 Fetching banlist page {page}...")
+                
                 try:
-                    cells = row.select("td")
-                    if len(cells) < 6:
-                        continue
+                    # Use cloudscraper's sync get method in an executor to make it async
+                    def fetch_with_cloudscraper():
+                        response = scraper.get(url, timeout=30)
+                        return response.text if response.status_code == 200 else None
                     
-                    # Extract player ID and name from link
-                    player_link = cells[1].select_one('a[href*="/profile/"]')
-                    player_id = None
-                    player_name = cells[1].get_text(strip=True)
+                    # Run in executor to avoid blocking
+                    html = await asyncio.get_event_loop().run_in_executor(None, fetch_with_cloudscraper)
                     
-                    if player_link:
-                        href = player_link.get("href", "")
-                        id_match = re.search(r"/profile/(\d+)", str(href))
-                        if id_match:
-                            player_id = id_match.group(1)
+                    if not html:
+                        logger.warning(f"Failed to fetch page {page}, stopping")
+                        break
                     
-                    # Try to get player_id from first cell if not in link
-                    if not player_id:
-                        first_cell_text = cells[0].get_text(strip=True)
-                        if first_cell_text.isdigit():
-                            player_id = first_cell_text
+                    # Check if still getting challenge page
+                    if "Un moment" in html:
+                        logger.warning(f"⚠️ Challenge still present on page {page}, retrying...")
+                        await asyncio.sleep(5)  # Wait longer
+                        html = await asyncio.get_event_loop().run_in_executor(None, fetch_with_cloudscraper)
+                        
+                        if not html or "Un moment" in html:
+                            logger.warning(f"Failed to bypass challenge on page {page}, stopping")
+                            break
                     
-                    ban_data = {
-                        "player_id": player_id,
-                        "player_name": player_name,
-                        "admin": cells[2].get_text(strip=True) if len(cells) > 2 else None,
-                        "reason": cells[3].get_text(strip=True) if len(cells) > 3 else None,
-                        "duration": cells[4].get_text(strip=True) if len(cells) > 4 else None,
-                        "ban_date": cells[5].get_text(strip=True) if len(cells) > 5 else None,
-                        "expiry_date": cells[6].get_text(strip=True) if len(cells) > 6 else None,
-                    }
+                    soup = BeautifulSoup(html, "lxml")
                     
-                    page_bans.append(ban_data)
+                    # Find the ban table
+                    ban_table = soup.select_one("table")
+                    if not ban_table:
+                        logger.info(f"No table found on page {page}, stopping")
+                        break
                     
+                    ban_rows = ban_table.select("tr")
+                    if len(ban_rows) <= 1:  # Only header row
+                        logger.info(f"No data rows on page {page}, stopping")
+                        break
+                    
+                    page_bans = []
+                    for row in ban_rows[1:]:  # Skip header
+                        try:
+                            cells = row.select("td")
+                            if len(cells) < 6:
+                                continue
+                            
+                            # Extract player ID and name from link
+                            player_link = cells[1].select_one('a[href*="/profile/"]')
+                            player_id = None
+                            player_name = cells[1].get_text(strip=True)
+                            
+                            if player_link:
+                                href = player_link.get("href", "")
+                                id_match = re.search(r"/profile/(\d+)", str(href))
+                                if id_match:
+                                    player_id = id_match.group(1)
+                            
+                            # Try to get player_id from first cell if not in link
+                            if not player_id:
+                                first_cell_text = cells[0].get_text(strip=True)
+                                if first_cell_text.isdigit():
+                                    player_id = first_cell_text
+                            
+                            ban_data = {
+                                "player_id": player_id,
+                                "player_name": player_name,
+                                "admin": cells[2].get_text(strip=True) if len(cells) > 2 else None,
+                                "reason": cells[3].get_text(strip=True) if len(cells) > 3 else None,
+                                "duration": cells[4].get_text(strip=True) if len(cells) > 4 else None,
+                                "ban_date": cells[5].get_text(strip=True) if len(cells) > 5 else None,
+                                "expiry_date": cells[6].get_text(strip=True) if len(cells) > 6 else None,
+                            }
+                            
+                            page_bans.append(ban_data)
+                            
+                        except Exception as e:
+                            logger.error(f"Error parsing ban row on page {page}: {e}")
+                            continue
+                    
+                    if not page_bans:
+                        logger.info(f"No bans parsed on page {page}, stopping")
+                        break
+                    
+                    all_bans.extend(page_bans)
+                    logger.info(f"✅ Page {page}: Found {len(page_bans)} bans (total: {len(all_bans)})")
+                    
+                    # Check for next page link in the HTML
+                    next_link = soup.select_one(f'a[href*="pageBanList={page + 1}"]')
+                    if not next_link:
+                        logger.info(f"No next page link found after page {page}, stopping")
+                        break
+                    
+                    page += 1
+                    await asyncio.sleep(2)  # Rate limiting between pages
+                
                 except Exception as e:
-                    logger.error(f"Error parsing ban row on page {page}: {e}")
-                    continue
-            
-            if not page_bans:
-                logger.info(f"No bans parsed on page {page}, stopping")
-                break
-            
-            all_bans.extend(page_bans)
-            logger.info(f"✅ Page {page}: Found {len(page_bans)} bans (total: {len(all_bans)})")
-            
-            # Check for next page link
-            next_link = soup.select_one(f'a[href*="pageBanList={page + 1}"]')
-            if not next_link:
-                logger.info(f"No next page link found after page {page}, stopping")
-                break
-            
-            page += 1
-            await asyncio.sleep(0.3)  # Rate limiting
+                    logger.error(f"Error fetching page {page}: {e}")
+                    break
+        
+        finally:
+            # Close cloudscraper session
+            scraper.close()
         
         logger.info(f"🏁 Banlist scrape complete: {len(all_bans)} total bans from {page} pages")
         
-        # Now fetch played_hours and faction for each banned player
+        # Now fetch played_hours and faction for each banned player using regular scraper
         if all_bans:
             player_ids = [b["player_id"] for b in all_bans if b.get("player_id")]
             logger.info(f"🔄 Fetching profiles for {len(player_ids)} banned players...")
