@@ -7,9 +7,18 @@ text11 = "Contract Mihai(137922)[email protected](137592). ('137922' [], '137592
 
 # Try different contract patterns
 patterns = [
-    ("Complex alternation", r"Contract\s*(?:(\[[^\]]+\]|[^\s(]+@[^\s(]+)\((\d+)\)|(.+?)\((\d+)\))\s+(?:(\[[^\]]+\]|[^\s(]+@[^\s(]+)\((\d+)\)|(.+?)\((\d+)\))(?:\.|$)"),
-    ("Simple two parts", r"Contract\s+(.+?)\((\d+)\)\s*(\[[^\]]+\]|[^\s(]+@[^\s(]+)\((\d+)\)"),
-    ("Name OR email for both", r"Contract\s+(?:(.+?)|(\[[^\]]+\]|[^\s(]+@[^\s(]+))\((\d+)\)\s+(?:(.+?)|(\[[^\]]+\]|[^\s(]+@[^\s(]+))\((\d+)\)"),
+    (
+        "Complex alternation",
+        r"Contract\s*(?:(\[[^\]]+\]|[^\s(]+@[^\s(]+)\((\d+)\)|(.+?)\((\d+)\))\s+(?:(\[[^\]]+\]|[^\s(]+@[^\s(]+)\((\d+)\)|(.+?)\((\d+)\))(?:\.|$)",
+    ),
+    (
+        "Simple two parts",
+        r"Contract\s+(.+?)\((\d+)\)\s*(\[[^\]]+\]|[^\s(]+@[^\s(]+)\((\d+)\)",
+    ),
+    (
+        "Name OR email for both",
+        r"Contract\s+(?:(.+?)|(\[[^\]]+\]|[^\s(]+@[^\s(]+))\((\d+)\)\s+(?:(.+?)|(\[[^\]]+\]|[^\s(]+@[^\s(]+))\((\d+)\)",
+    ),
     ("Greedy approach", r"Contract\s+(.+)\((\d+)\)(.+?)\((\d+)\)"),
 ]
 

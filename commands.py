@@ -181,7 +181,7 @@ class ActionsPaginationView(discord.ui.View):
         self, action: dict, viewing_player_id: str
     ) -> Dict[str, str | List[str]]:
         """Format action for display with emojis and proper categorization.
-        
+
         🔥 ENHANCED: Shows bidirectional actions with full Name(ID) format for all parties.
 
         Returns dict with 'emoji', 'type_label', 'detail_lines'
@@ -205,8 +205,14 @@ class ActionsPaginationView(discord.ui.View):
                 target_player_name = extracted_name or target_player_name
 
         # Format player references as Name(ID)
-        sender_ref = self._format_player_ref(player_name, player_id) if player_id else "Unknown"
-        receiver_ref = self._format_player_ref(target_player_name, target_player_id) if target_player_id else ""
+        sender_ref = (
+            self._format_player_ref(player_name, player_id) if player_id else "Unknown"
+        )
+        receiver_ref = (
+            self._format_player_ref(target_player_name, target_player_id)
+            if target_player_id
+            else ""
+        )
 
         # Check if viewing player is sender or receiver
         is_sender = player_id == viewing_player_id
@@ -328,7 +334,10 @@ class ActionsPaginationView(discord.ui.View):
         # ============================================================================
         # CONTRACTS / VEHICLE TRANSFERS
         # ============================================================================
-        if action_type in ("contract", "vehicle_contract") or "contract" in detail.lower():
+        if (
+            action_type in ("contract", "vehicle_contract")
+            or "contract" in detail.lower()
+        ):
             vehicle = item_name or "Vehicle"
 
             if is_sender:
@@ -384,7 +393,13 @@ class ActionsPaginationView(discord.ui.View):
         # ADMIN ACTIONS (warnings, bans, jails)
         # ============================================================================
         if action_type == "warning_received" or "avertisment" in detail.lower():
-            admin_ref = self._format_player_ref(action.get("admin_name"), action.get("admin_id", "")) if action.get("admin_id") else "Admin"
+            admin_ref = (
+                self._format_player_ref(
+                    action.get("admin_name"), action.get("admin_id", "")
+                )
+                if action.get("admin_id")
+                else "Admin"
+            )
             reason = action.get("reason", "")
             return {
                 "emoji": "⚠️",
@@ -396,7 +411,13 @@ class ActionsPaginationView(discord.ui.View):
             }
 
         if action_type == "ban_received":
-            admin_ref = self._format_player_ref(action.get("admin_name"), action.get("admin_id", "")) if action.get("admin_id") else "Admin"
+            admin_ref = (
+                self._format_player_ref(
+                    action.get("admin_name"), action.get("admin_id", "")
+                )
+                if action.get("admin_id")
+                else "Admin"
+            )
             reason = action.get("reason", "")
             return {
                 "emoji": "🔨",
@@ -408,7 +429,13 @@ class ActionsPaginationView(discord.ui.View):
             }
 
         if action_type == "admin_jail":
-            admin_ref = self._format_player_ref(action.get("admin_name"), action.get("admin_id", "")) if action.get("admin_id") else "Admin"
+            admin_ref = (
+                self._format_player_ref(
+                    action.get("admin_name"), action.get("admin_id", "")
+                )
+                if action.get("admin_id")
+                else "Admin"
+            )
             return {
                 "emoji": "🔒",
                 "type_label": "ADMIN JAIL",
@@ -416,7 +443,13 @@ class ActionsPaginationView(discord.ui.View):
             }
 
         if action_type == "admin_unjail":
-            admin_ref = self._format_player_ref(action.get("admin_name"), action.get("admin_id", "")) if action.get("admin_id") else "Admin"
+            admin_ref = (
+                self._format_player_ref(
+                    action.get("admin_name"), action.get("admin_id", "")
+                )
+                if action.get("admin_id")
+                else "Admin"
+            )
             return {
                 "emoji": "🔓",
                 "type_label": "UNJAIL",
@@ -485,7 +518,11 @@ class ActionsPaginationView(discord.ui.View):
             return {
                 "emoji": "🎰",
                 "type_label": "GAMBLING WIN",
-                "detail_lines": [f"{sender_ref} vs {receiver_ref}: {detail}" if receiver_ref else f"{sender_ref}: {detail}"],
+                "detail_lines": [
+                    f"{sender_ref} vs {receiver_ref}: {detail}"
+                    if receiver_ref
+                    else f"{sender_ref}: {detail}"
+                ],
             }
 
         if action_type == "bank_heist_delivery":
@@ -499,7 +536,11 @@ class ActionsPaginationView(discord.ui.View):
             return {
                 "emoji": "🔢",
                 "type_label": "LICENSE PLATE SALE",
-                "detail_lines": [f"{sender_ref} → {receiver_ref}: {detail}" if receiver_ref else f"{sender_ref}: {detail}"],
+                "detail_lines": [
+                    f"{sender_ref} → {receiver_ref}: {detail}"
+                    if receiver_ref
+                    else f"{sender_ref}: {detail}"
+                ],
             }
 
         if action_type == "house_safe_withdraw":
@@ -548,7 +589,7 @@ class ActionsPaginationView(discord.ui.View):
                 "type_label": type_label,
                 "detail_lines": [f"{sender_ref}: {detail}"],
             }
-        
+
         return {
             "emoji": "📋",
             "type_label": type_label,
@@ -933,7 +974,7 @@ class AdminHistoryPaginationView(discord.ui.View):
         filter_label = ""
         if self.action_type_filter:
             filter_label = f" ({self.TYPE_LABELS.get(self.action_type_filter, self.action_type_filter.replace('_', ' ').title())})"
-        
+
         embed = discord.Embed(
             title=f"👮 Admin Actions Log{filter_label}",
             description=f"**Total:** {len(self.actions):,} admin actions in last {self.days} days",
@@ -945,17 +986,21 @@ class AdminHistoryPaginationView(discord.ui.View):
             action_type = action.get("action_type", "unknown")
             emoji = self.TYPE_EMOJIS.get(action_type, "📋")
             # Use custom label if exists, otherwise format from action_type
-            type_label = self.TYPE_LABELS.get(action_type, action_type.replace("_", " ").title())
-            
+            type_label = self.TYPE_LABELS.get(
+                action_type, action_type.replace("_", " ").title()
+            )
+
             # Get player info (the one who RECEIVED the action)
-            player_name = action.get("player_name") or f"ID:{action.get('player_id', '?')}"
+            player_name = (
+                action.get("player_name") or f"ID:{action.get('player_id', '?')}"
+            )
             player_id = action.get("player_id", "?")
-            
+
             # Get admin info
             admin_name = action.get("admin_name") or "Unknown Admin"
             admin_id = action.get("admin_id", "")
             admin_display = f"{admin_name}({admin_id})" if admin_id else admin_name
-            
+
             # Get timestamp
             timestamp = action.get("timestamp")
             if isinstance(timestamp, str):
@@ -964,11 +1009,11 @@ class AdminHistoryPaginationView(discord.ui.View):
                 except:
                     timestamp = None
             time_str = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else "?"
-            
+
             # 🔥 ENHANCED: Use action_detail for full info (contains CP for jails)
             action_detail = action.get("action_detail", "")
             reason = action.get("reason", "")
-            
+
             # Build detail string - prefer action_detail as it has more context (CP, etc)
             if action_detail:
                 detail_str = action_detail
@@ -976,7 +1021,7 @@ class AdminHistoryPaginationView(discord.ui.View):
                 detail_str = reason
             else:
                 detail_str = "No details"
-            
+
             # Truncate if too long
             if len(detail_str) > 100:
                 detail_str = detail_str[:97] + "..."
@@ -1165,9 +1210,7 @@ class BansPaginationView(discord.ui.View):
         self.items_per_page = items_per_page
         self.current_page = 0
         self.total_pages = (
-            (len(self.bans) + items_per_page - 1) // items_per_page
-            if self.bans
-            else 1
+            (len(self.bans) + items_per_page - 1) // items_per_page if self.bans else 1
         )
         self.message: Optional[discord.Message] = None
         self.update_buttons()
@@ -1182,7 +1225,7 @@ class BansPaginationView(discord.ui.View):
         page_bans = self.bans[start_idx:end_idx]
 
         active_count = sum(1 for b in self.bans if b.get("is_active", True))
-        
+
         embed = discord.Embed(
             title="🚫 Banned Players",
             description=f"**Total:** {len(self.bans)} ban(s) • **Active:** {active_count}",
@@ -1207,7 +1250,7 @@ class BansPaginationView(discord.ui.View):
 
             status = "🔴 Active" if is_active else "⚪ Expired"
             hours_str = f"{played_hours:.1f}h" if played_hours else "N/A"
-            
+
             embed.add_field(
                 name=f"{status} {player_name} ({player_id})",
                 value=(
@@ -1326,14 +1369,16 @@ class SessionsPaginationView(discord.ui.View):
         if self.current_page == 0:
             first_login = self.first_last.get("first_login")
             total_logins = self.first_last.get("total_sessions", 0)
-            
+
             if first_login:
                 if isinstance(first_login, str):
                     first_login = datetime.fromisoformat(first_login)
-                first_login_str = first_login.strftime("%Y-%m-%d %H:%M") if first_login else "Never"
+                first_login_str = (
+                    first_login.strftime("%Y-%m-%d %H:%M") if first_login else "Never"
+                )
             else:
                 first_login_str = "Never (no logins recorded)"
-            
+
             embed.add_field(
                 name="📅 First Detected Login",
                 value=f"**{first_login_str}**\nTotal logins: {total_logins:,}",
@@ -1345,7 +1390,7 @@ class SessionsPaginationView(discord.ui.View):
 
         for i, session in enumerate(page_sessions):
             session_num = total_sessions - (start_idx + i)
-            
+
             login_time = session.get("login_time")
             logout_time = session.get("logout_time")
             duration = session.get("session_duration_seconds", 0)
@@ -1355,8 +1400,12 @@ class SessionsPaginationView(discord.ui.View):
             if isinstance(logout_time, str):
                 logout_time = datetime.fromisoformat(logout_time)
 
-            login_str = login_time.strftime("%Y-%m-%d %H:%M") if login_time else "Unknown"
-            logout_str = logout_time.strftime("%H:%M") if logout_time else "Still online"
+            login_str = (
+                login_time.strftime("%Y-%m-%d %H:%M") if login_time else "Unknown"
+            )
+            logout_str = (
+                logout_time.strftime("%H:%M") if logout_time else "Still online"
+            )
             duration_str = self._format_duration(duration)
 
             embed.add_field(
@@ -1450,7 +1499,9 @@ class HeistsPaginationView(discord.ui.View):
         )
 
         for heist in page_heists:
-            player_name = heist.get("player_name") or f"ID:{heist.get('player_id', '?')}"
+            player_name = (
+                heist.get("player_name") or f"ID:{heist.get('player_id', '?')}"
+            )
             player_id = heist.get("player_id", "?")
             faction = heist.get("faction") or "No Faction"
             faction_rank = heist.get("faction_rank") or "Unknown"
@@ -1471,16 +1522,21 @@ class HeistsPaginationView(discord.ui.View):
             if action_detail:
                 # Try to extract bank name
                 import re
+
                 bank_match = re.search(r"de la (.+?):", action_detail)
                 if bank_match:
                     bank_name = bank_match.group(1).strip()
-                
+
                 # Try to extract amount
                 amount_match = re.search(r":\s*([\d.,]+)", action_detail)
                 if amount_match:
                     loot = f"{amount_match.group(1)} bani murdari"
                 else:
-                    loot = action_detail.split(":")[-1].strip() if ":" in action_detail else action_detail
+                    loot = (
+                        action_detail.split(":")[-1].strip()
+                        if ":" in action_detail
+                        else action_detail
+                    )
 
             embed.add_field(
                 name=f"💰 {time_str}",
@@ -1598,7 +1654,9 @@ class FactionActionsPaginationView(discord.ui.View):
         for action in page_actions:
             action_type = action.get("action_type", "unknown")
             emoji = type_emojis.get(action_type, "📋")
-            player_name = action.get("player_name") or f"ID:{action.get('player_id', '?')}"
+            player_name = (
+                action.get("player_name") or f"ID:{action.get('player_id', '?')}"
+            )
             player_id = action.get("player_id", "?")
             action_detail = action.get("action_detail", "No details")
             timestamp = action.get("timestamp")
@@ -2777,14 +2835,14 @@ def setup_commands(bot, db, scraper_getter):
         try:
             # Get dashboard URL from environment or use default
             dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:5000")
-            
+
             embed = discord.Embed(
                 title="🌐 Web Dashboard",
                 description="Access the P4K-DBS Web Dashboard for database browsing, analytics, and management",
                 color=discord.Color.blue(),
                 timestamp=datetime.now(),
             )
-            
+
             embed.add_field(
                 name="Dashboard Features",
                 value=(
@@ -2801,13 +2859,13 @@ def setup_commands(bot, db, scraper_getter):
                 ),
                 inline=False,
             )
-            
+
             embed.add_field(
                 name="📍 Access Link",
                 value=f"**[Click here to open dashboard]({dashboard_url})**",
                 inline=False,
             )
-            
+
             embed.add_field(
                 name="💡 Tips",
                 value=(
@@ -2817,9 +2875,11 @@ def setup_commands(bot, db, scraper_getter):
                 ),
                 inline=False,
             )
-            
-            embed.set_footer(text="Dashboard provides web-based access to all P4K-DBS features")
-            
+
+            embed.set_footer(
+                text="Dashboard provides web-based access to all P4K-DBS features"
+            )
+
             await interaction.followup.send(embed=embed)
             logger.info(f"Dashboard link provided to {interaction.user}")
 
@@ -3038,14 +3098,18 @@ def setup_commands(bot, db, scraper_getter):
                 # Show first ever detected login (important for tracking)
                 first_login = first_last.get("first_login")
                 total_logins = first_last.get("total_sessions", 0)
-                
+
                 if first_login:
                     if isinstance(first_login, str):
                         first_login = datetime.fromisoformat(first_login)
-                    first_login_str = first_login.strftime("%Y-%m-%d %H:%M") if first_login else "Never"
+                    first_login_str = (
+                        first_login.strftime("%Y-%m-%d %H:%M")
+                        if first_login
+                        else "Never"
+                    )
                 else:
                     first_login_str = "Never (no logins recorded)"
-                
+
                 embed.add_field(
                     name="📅 First Detected Login",
                     value=f"**{first_login_str}**\nTotal logins: {total_logins:,}",
@@ -3155,7 +3219,7 @@ def setup_commands(bot, db, scraper_getter):
         current: str,
     ) -> List[app_commands.Choice[str]]:
         """Autocomplete for faction names from database
-        
+
         Handles 37+ factions with Discord's 25-choice limit by:
         1. Prioritizing exact prefix matches first
         2. Then showing partial matches
@@ -3164,28 +3228,35 @@ def setup_commands(bot, db, scraper_getter):
         try:
             # Get all faction names from database
             all_factions = await db.get_all_faction_names()
-            
+
             if current:
                 current_lower = current.lower()
                 # Prioritize factions that START with the search term
-                prefix_matches = [f for f in all_factions if f.lower().startswith(current_lower)]
+                prefix_matches = [
+                    f for f in all_factions if f.lower().startswith(current_lower)
+                ]
                 # Then factions that CONTAIN the search term (but don't start with it)
-                contains_matches = [f for f in all_factions if current_lower in f.lower() and not f.lower().startswith(current_lower)]
+                contains_matches = [
+                    f
+                    for f in all_factions
+                    if current_lower in f.lower()
+                    and not f.lower().startswith(current_lower)
+                ]
                 # Combine: prefix matches first, then contains matches
                 filtered = prefix_matches + contains_matches
             else:
                 # No input yet - sort alphabetically so user can scroll A-Z
                 filtered = sorted(all_factions)
-            
+
             # Build choices (max 25 due to Discord limit)
             choices = []
             for faction in filtered[:25]:
                 choices.append(app_commands.Choice(name=faction, value=faction))
-            
+
             # If there are more factions than shown, user needs to type to filter
             # The sorted alphabetical list helps them know what to type
             return choices
-            
+
         except Exception as e:
             logger.error(f"Error in faction autocomplete: {e}")
             return []
@@ -3329,7 +3400,9 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in faction list command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
-    @bot.tree.command(name="promotions", description="Recent faction promotions with pagination")
+    @bot.tree.command(
+        name="promotions", description="Recent faction promotions with pagination"
+    )
     @app_commands.describe(days="Days to look back (default: 7, max: 30)")
     @app_commands.checks.cooldown(1, 30)
     async def promotions_command(interaction: discord.Interaction, days: int = 7):
@@ -3365,7 +3438,9 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in promotions command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
-    @bot.tree.command(name="heists", description="🆕 View bank heist history with faction info")
+    @bot.tree.command(
+        name="heists", description="🆕 View bank heist history with faction info"
+    )
     @app_commands.describe(days="Days to look back (default: 30, max: 90)")
     @app_commands.checks.cooldown(1, 30)
     async def heists_command(interaction: discord.Interaction, days: int = 30):
@@ -3401,17 +3476,17 @@ def setup_commands(bot, db, scraper_getter):
             logger.error(f"Error in heists command: {e}", exc_info=True)
             await interaction.followup.send(f"❌ **Error:** {str(e)}")
 
-    @bot.tree.command(name="factionactions", description="🆕 View all actions for a faction's members")
+    @bot.tree.command(
+        name="factionactions", description="🆕 View all actions for a faction's members"
+    )
     @app_commands.describe(
         faction_name="Name of faction (select from list)",
-        days="Days to look back (default: 7, max: 30)"
+        days="Days to look back (default: 7, max: 30)",
     )
     @app_commands.autocomplete(faction_name=faction_autocomplete)
     @app_commands.checks.cooldown(1, 30)
     async def factionactions_command(
-        interaction: discord.Interaction,
-        faction_name: str,
-        days: int = 7
+        interaction: discord.Interaction, faction_name: str, days: int = 7
     ):
         """View all actions for players within a specific faction"""
         await interaction.response.defer()
@@ -3453,13 +3528,13 @@ def setup_commands(bot, db, scraper_getter):
     @bot.tree.command(name="bans", description="View banned players with pagination")
     @app_commands.describe(
         show_expired="Include expired bans (default: false)",
-        refresh="Fetch fresh ban data from website (default: false)"
+        refresh="Fetch fresh ban data from website (default: false)",
     )
     @app_commands.checks.cooldown(1, 30)
     async def bans_command(
-        interaction: discord.Interaction, 
+        interaction: discord.Interaction,
         show_expired: Optional[bool] = False,
-        refresh: Optional[bool] = False
+        refresh: Optional[bool] = False,
     ):
         """View banned players with pagination, played hours, and faction info"""
         await interaction.response.defer()
@@ -3467,14 +3542,16 @@ def setup_commands(bot, db, scraper_getter):
         try:
             # Optionally refresh ban data from website
             if refresh:
-                await interaction.followup.send("🔄 Fetching fresh ban data from all pages...")
+                await interaction.followup.send(
+                    "🔄 Fetching fresh ban data from all pages..."
+                )
                 scraper = await scraper_getter()
                 fresh_bans = await scraper.get_banned_players_all_pages()
-                
+
                 # Save to database
                 for ban_data in fresh_bans:
                     await db.save_banned_player(ban_data)
-                
+
                 logger.info(f"✅ Refreshed {len(fresh_bans)} bans from website")
 
             bans = await db.get_banned_players_with_details(show_expired)
@@ -3917,7 +3994,7 @@ def setup_commands(bot, db, scraper_getter):
     )
     @app_commands.describe(
         limit="Max number of patterns to show (default: 20, max: 100)",
-        export="Export all patterns to a text file (default: false)"
+        export="Export all patterns to a text file (default: false)",
     )
     @app_commands.checks.cooldown(1, 30)
     async def unknown_actions_command(
@@ -3936,7 +4013,7 @@ def setup_commands(bot, db, scraper_getter):
         try:
             # Clamp limit to reasonable range
             limit = max(1, min(limit, 500))
-            
+
             # Query unknown/other actions from database
             def _get_unknown_patterns():
                 with db.get_connection() as conn:
@@ -3976,31 +4053,31 @@ def setup_commands(bot, db, scraper_getter):
             # If export requested, create a text file
             if export:
                 import io
-                
+
                 content = f"UNRECOGNIZED ACTION PATTERNS REPORT\n"
                 content += f"Generated: {datetime.now()}\n"
                 content += f"Total unrecognized: {total_unknown:,}\n"
                 content += f"Unique patterns shown: {len(patterns)}\n"
                 content += "=" * 80 + "\n\n"
-                
+
                 for i, pattern in enumerate(patterns, 1):
                     raw_text = pattern.get("raw_text", "")
                     count = pattern.get("count", 0)
                     action_type = pattern.get("action_type", "unknown")
-                    
+
                     content += f"[{i}] Type: {action_type} | Count: {count}\n"
                     content += f"    Raw: {raw_text}\n"
                     content += "-" * 80 + "\n"
-                
+
                 # Create file attachment
                 file = discord.File(
-                    io.BytesIO(content.encode('utf-8')), 
-                    filename=f"unknown_patterns_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                    io.BytesIO(content.encode("utf-8")),
+                    filename=f"unknown_patterns_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                 )
-                
+
                 await interaction.followup.send(
                     f"📄 **Exported {len(patterns)} patterns** ({total_unknown:,} total unrecognized actions)",
-                    file=file
+                    file=file,
                 )
                 return
 
@@ -4018,7 +4095,9 @@ def setup_commands(bot, db, scraper_getter):
 
                 embed.add_field(
                     name=f"{i}. [{action_type}] ×{count}",
-                    value=f"```{raw_text}...```" if len(pattern.get("raw_text", "")) > 100 else f"```{raw_text}```",
+                    value=f"```{raw_text}...```"
+                    if len(pattern.get("raw_text", "")) > 100
+                    else f"```{raw_text}```",
                     inline=False,
                 )
 
@@ -4042,6 +4121,7 @@ def setup_commands(bot, db, scraper_getter):
         await interaction.response.defer()
 
         try:
+
             def _get_action_stats():
                 with db.get_connection() as conn:
                     cursor = conn.cursor()
@@ -4082,7 +4162,10 @@ def setup_commands(bot, db, scraper_getter):
             # Recognized actions
             if recognized:
                 rec_text = "\n".join(
-                    [f"• **{s['action_type']}**: {s['count']:,}" for s in recognized[:12]]
+                    [
+                        f"• **{s['action_type']}**: {s['count']:,}"
+                        for s in recognized[:12]
+                    ]
                 )
                 embed.add_field(
                     name=f"✅ Recognized ({sum(s['count'] for s in recognized):,})",
@@ -4127,23 +4210,25 @@ def setup_commands(bot, db, scraper_getter):
     )
     @app_commands.describe(
         days="Days to look back (default: 30, max: 365)",
-        action_type="Filter by action type (optional)"
+        action_type="Filter by action type (optional)",
     )
-    @app_commands.choices(action_type=[
-        app_commands.Choice(name="⚠️ Warnings", value="warning_received"),
-        app_commands.Choice(name="🔨 Bans", value="ban_received"),
-        app_commands.Choice(name="🔒 Admin Jail", value="admin_jail"),
-        app_commands.Choice(name="🔓 Admin Unjail", value="admin_unjail"),
-        app_commands.Choice(name="✅ Unbans", value="admin_unban"),
-        app_commands.Choice(name="🔇 Mutes", value="mute_received"),
-        app_commands.Choice(name="� Server Kicks", value="faction_kicked"),
-        app_commands.Choice(name="💀 Kill Character", value="kill_character"),
-    ])
+    @app_commands.choices(
+        action_type=[
+            app_commands.Choice(name="⚠️ Warnings", value="warning_received"),
+            app_commands.Choice(name="🔨 Bans", value="ban_received"),
+            app_commands.Choice(name="🔒 Admin Jail", value="admin_jail"),
+            app_commands.Choice(name="🔓 Admin Unjail", value="admin_unjail"),
+            app_commands.Choice(name="✅ Unbans", value="admin_unban"),
+            app_commands.Choice(name="🔇 Mutes", value="mute_received"),
+            app_commands.Choice(name="� Server Kicks", value="faction_kicked"),
+            app_commands.Choice(name="💀 Kill Character", value="kill_character"),
+        ]
+    )
     @app_commands.checks.cooldown(1, 10)
     async def admin_history_command(
-        interaction: discord.Interaction, 
+        interaction: discord.Interaction,
         days: int = 30,
-        action_type: Optional[str] = None
+        action_type: Optional[str] = None,
     ):
         """View all admin actions (warnings, bans, jails, mutes, etc.) across ALL players"""
         await interaction.response.defer()
@@ -4155,41 +4240,55 @@ def setup_commands(bot, db, scraper_getter):
 
             # All admin action types
             admin_action_types = (
-                'warning_received', 'ban_received', 'admin_jail', 'admin_unjail',
-                'admin_unban', 'mute_received', 'faction_kicked', 'kill_character'
+                "warning_received",
+                "ban_received",
+                "admin_jail",
+                "admin_unjail",
+                "admin_unban",
+                "mute_received",
+                "faction_kicked",
+                "kill_character",
             )
 
             def _get_all_admin_actions():
                 with db.get_connection() as conn:
                     cursor = conn.cursor()
                     cutoff = datetime.now() - timedelta(days=days)
-                    
+
                     if action_type:
                         # Filter by specific action type
-                        cursor.execute("""
+                        cursor.execute(
+                            """
                             SELECT * FROM actions
                             WHERE action_type = ?
                             AND timestamp >= ?
                             ORDER BY timestamp DESC
                             LIMIT 500
-                        """, (action_type, cutoff))
+                        """,
+                            (action_type, cutoff),
+                        )
                     else:
                         # All admin action types
                         type_placeholders = ",".join("?" * len(admin_action_types))
-                        cursor.execute(f"""
+                        cursor.execute(
+                            f"""
                             SELECT * FROM actions
                             WHERE action_type IN ({type_placeholders})
                             AND timestamp >= ?
                             ORDER BY timestamp DESC
                             LIMIT 500
-                        """, (*admin_action_types, cutoff))
-                    
+                        """,
+                            (*admin_action_types, cutoff),
+                        )
+
                     return [dict(row) for row in cursor.fetchall()]
 
             admin_actions = await asyncio.to_thread(_get_all_admin_actions)
 
             if not admin_actions:
-                filter_text = f" of type '{action_type.replace('_', ' ')}'" if action_type else ""
+                filter_text = (
+                    f" of type '{action_type.replace('_', ' ')}'" if action_type else ""
+                )
                 await interaction.followup.send(
                     f"✅ **No admin actions found{filter_text} in the last {days} days!**"
                 )
@@ -4222,13 +4321,13 @@ def setup_commands(bot, db, scraper_getter):
     )
     @app_commands.describe(
         limit="Max entries to show (default: 20, max: 100)",
-        player_id="Filter by player ID (optional)"
+        player_id="Filter by player ID (optional)",
     )
     @app_commands.checks.cooldown(1, 30)
     async def legacy_actions_command(
         interaction: discord.Interaction,
         limit: int = 20,
-        player_id: Optional[str] = None
+        player_id: Optional[str] = None,
     ):
         """View legacy_multi_action entries - these are old concatenated actions"""
         if not is_admin(interaction.user.id):
@@ -4242,29 +4341,35 @@ def setup_commands(bot, db, scraper_getter):
 
         try:
             limit = max(1, min(limit, 100))
-            
+
             def _get_legacy_actions():
                 with db.get_connection() as conn:
                     cursor = conn.cursor()
-                    
+
                     if player_id:
-                        cursor.execute("""
+                        cursor.execute(
+                            """
                             SELECT id, player_id, raw_text, timestamp
                             FROM actions 
                             WHERE action_type = 'legacy_multi_action'
                             AND player_id = ?
                             ORDER BY timestamp DESC
                             LIMIT ?
-                        """, (player_id, limit))
+                        """,
+                            (player_id, limit),
+                        )
                     else:
-                        cursor.execute("""
+                        cursor.execute(
+                            """
                             SELECT id, player_id, raw_text, timestamp
                             FROM actions 
                             WHERE action_type = 'legacy_multi_action'
                             ORDER BY timestamp DESC
                             LIMIT ?
-                        """, (limit,))
-                    
+                        """,
+                            (limit,),
+                        )
+
                     return [dict(row) for row in cursor.fetchall()]
 
             def _get_total_count():
@@ -4300,16 +4405,18 @@ def setup_commands(bot, db, scraper_getter):
             for i, action in enumerate(legacy_actions[:10], 1):
                 raw_text = action.get("raw_text", "")[:150]
                 pid = action.get("player_id", "?")
-                
+
                 embed.add_field(
                     name=f"#{i} - Player {pid}",
-                    value=f"```{raw_text}...```" if len(action.get("raw_text", "")) > 150 else f"```{raw_text}```",
+                    value=f"```{raw_text}...```"
+                    if len(action.get("raw_text", "")) > 150
+                    else f"```{raw_text}```",
                     inline=False,
                 )
 
             embed.set_footer(
                 text="💡 These entries are from the old scraper and cannot be automatically split. "
-                     "They're preserved for manual reference if needed."
+                "They're preserved for manual reference if needed."
             )
 
             await interaction.followup.send(embed=embed)
@@ -4326,13 +4433,10 @@ def setup_commands(bot, db, scraper_getter):
         name="deletelegacy",
         description="🗑️ Delete legacy_multi_action entries from database (Admin only)",
     )
-    @app_commands.describe(
-        confirm="Type 'DELETE' to confirm deletion"
-    )
+    @app_commands.describe(confirm="Type 'DELETE' to confirm deletion")
     @app_commands.checks.cooldown(1, 300)
     async def delete_legacy_command(
-        interaction: discord.Interaction,
-        confirm: str = ""
+        interaction: discord.Interaction, confirm: str = ""
     ):
         """Delete all legacy_multi_action entries - they're garbage data anyway"""
         if not is_admin(interaction.user.id):
@@ -4345,6 +4449,7 @@ def setup_commands(bot, db, scraper_getter):
         await interaction.response.defer()
 
         try:
+
             def _get_count():
                 with db.get_connection() as conn:
                     cursor = conn.cursor()
@@ -4388,7 +4493,9 @@ def setup_commands(bot, db, scraper_getter):
                 f"✅ **Deleted {deleted:,} legacy_multi_action entries!**\n\n"
                 f"Database has been cleaned of garbage concatenated data."
             )
-            logger.info(f"🗑️ Admin {interaction.user} deleted {deleted:,} legacy_multi_action entries")
+            logger.info(
+                f"🗑️ Admin {interaction.user} deleted {deleted:,} legacy_multi_action entries"
+            )
 
         except Exception as e:
             logger.error(f"Error in delete_legacy command: {e}", exc_info=True)
@@ -4404,13 +4511,11 @@ def setup_commands(bot, db, scraper_getter):
     )
     @app_commands.describe(
         dry_run="Preview without deleting (default: true)",
-        confirm="Set to true to actually delete (required if dry_run=false)"
+        confirm="Set to true to actually delete (required if dry_run=false)",
     )
     @app_commands.checks.cooldown(1, 60)
     async def cleanup_logins_command(
-        interaction: discord.Interaction,
-        dry_run: bool = True,
-        confirm: bool = False
+        interaction: discord.Interaction, dry_run: bool = True, confirm: bool = False
     ):
         """Remove duplicate consecutive login events that clutter session history"""
         if not is_admin(interaction.user.id):
@@ -4470,18 +4575,25 @@ def setup_commands(bot, db, scraper_getter):
                     color=discord.Color.green(),
                     timestamp=datetime.now(),
                 )
-                logger.info(f"🧹 Admin {interaction.user} cleaned {total_dups:,} duplicate logins")
+                logger.info(
+                    f"🧹 Admin {interaction.user} cleaned {total_dups:,} duplicate logins"
+                )
 
             # Show top affected players
             if top_players:
-                top_list = "\n".join([f"• Player {pid}: {count} duplicates" for pid, count in list(top_players.items())[:5]])
+                top_list = "\n".join(
+                    [
+                        f"• Player {pid}: {count} duplicates"
+                        for pid, count in list(top_players.items())[:5]
+                    ]
+                )
                 embed.add_field(
-                    name="📊 Top Affected Players",
-                    value=top_list,
-                    inline=False
+                    name="📊 Top Affected Players", value=top_list, inline=False
                 )
 
-            embed.set_footer(text="Duplicates occur when bot restarts and re-detects online players")
+            embed.set_footer(
+                text="Duplicates occur when bot restarts and re-detects online players"
+            )
 
             await interaction.followup.send(embed=embed)
 
@@ -4499,13 +4611,11 @@ def setup_commands(bot, db, scraper_getter):
     )
     @app_commands.describe(
         dry_run="Preview without deleting (default: true)",
-        confirm="Set to true to actually delete (required if dry_run=false)"
+        confirm="Set to true to actually delete (required if dry_run=false)",
     )
     @app_commands.checks.cooldown(1, 60)
     async def cleanup_logouts_command(
-        interaction: discord.Interaction,
-        dry_run: bool = True,
-        confirm: bool = False
+        interaction: discord.Interaction, dry_run: bool = True, confirm: bool = False
     ):
         """Remove duplicate consecutive logout events that inflate logout counts"""
         if not is_admin(interaction.user.id):
@@ -4565,18 +4675,25 @@ def setup_commands(bot, db, scraper_getter):
                     color=discord.Color.green(),
                     timestamp=datetime.now(),
                 )
-                logger.info(f"🧹 Admin {interaction.user} cleaned {total_dups:,} duplicate logouts")
+                logger.info(
+                    f"🧹 Admin {interaction.user} cleaned {total_dups:,} duplicate logouts"
+                )
 
             # Show top affected players
             if top_players:
-                top_list = "\n".join([f"• Player {pid}: {count} duplicates" for pid, count in list(top_players.items())[:5]])
+                top_list = "\n".join(
+                    [
+                        f"• Player {pid}: {count} duplicates"
+                        for pid, count in list(top_players.items())[:5]
+                    ]
+                )
                 embed.add_field(
-                    name="📊 Top Affected Players",
-                    value=top_list,
-                    inline=False
+                    name="📊 Top Affected Players", value=top_list, inline=False
                 )
 
-            embed.set_footer(text="Duplicate logouts occur when same logout event is recorded multiple times")
+            embed.set_footer(
+                text="Duplicate logouts occur when same logout event is recorded multiple times"
+            )
 
             await interaction.followup.send(embed=embed)
 
@@ -4596,20 +4713,24 @@ def setup_commands(bot, db, scraper_getter):
         action_type="Filter by action type (optional)",
         dry_run="Preview without updating (default: true)",
         confirm="Set to true to actually update (required if dry_run=false)",
-        limit="Max actions to process (default: 1000, max: 10000)"
+        limit="Max actions to process (default: 1000, max: 10000)",
     )
-    @app_commands.choices(action_type=[
-        app_commands.Choice(name="Unknown", value="unknown"),
-        app_commands.Choice(name="Other", value="other"),
-        app_commands.Choice(name="Legacy Multi-Action", value="legacy_multi_action"),
-    ])
+    @app_commands.choices(
+        action_type=[
+            app_commands.Choice(name="Unknown", value="unknown"),
+            app_commands.Choice(name="Other", value="other"),
+            app_commands.Choice(
+                name="Legacy Multi-Action", value="legacy_multi_action"
+            ),
+        ]
+    )
     @app_commands.checks.cooldown(1, 60)
     async def reparse_unknown_command(
         interaction: discord.Interaction,
         dry_run: bool = True,
         confirm: bool = False,
         action_type: Optional[str] = None,
-        limit: int = 1000
+        limit: int = 1000,
     ):
         """🔄 Re-parse unknown actions with updated scraper patterns"""
         if not is_admin(interaction.user.id):
@@ -4643,9 +4764,10 @@ def setup_commands(bot, db, scraper_getter):
             def _get_unknown_actions():
                 with db.get_connection() as conn:
                     cursor = conn.cursor()
-                    
+
                     if action_type:
-                        cursor.execute("""
+                        cursor.execute(
+                            """
                             SELECT id, player_id, player_name, action_type, action_detail,
                                    timestamp, raw_text, item_name, item_quantity,
                                    target_player_id, target_player_name,
@@ -4654,9 +4776,12 @@ def setup_commands(bot, db, scraper_getter):
                             WHERE action_type = ?
                             ORDER BY timestamp DESC
                             LIMIT ?
-                        """, (action_type, limit))
+                        """,
+                            (action_type, limit),
+                        )
                     else:
-                        cursor.execute("""
+                        cursor.execute(
+                            """
                             SELECT id, player_id, player_name, action_type, action_detail,
                                    timestamp, raw_text, item_name, item_quantity,
                                    target_player_id, target_player_name,
@@ -4665,8 +4790,10 @@ def setup_commands(bot, db, scraper_getter):
                             WHERE action_type IN ('unknown', 'other', 'legacy_multi_action')
                             ORDER BY timestamp DESC
                             LIMIT ?
-                        """, (limit,))
-                    
+                        """,
+                            (limit,),
+                        )
+
                     return [dict(row) for row in cursor.fetchall()]
 
             unknown_actions = await asyncio.to_thread(_get_unknown_actions)
@@ -4726,21 +4853,23 @@ def setup_commands(bot, db, scraper_getter):
                     by_new_type[new_type] = by_new_type.get(new_type, 0) + 1
 
                     # Store update data
-                    updates_to_apply.append({
-                        "id": action["id"],
-                        "new_type": new_type,
-                        "player_id": parsed.player_id,
-                        "player_name": parsed.player_name,
-                        "action_detail": parsed.action_detail,
-                        "item_name": parsed.item_name,
-                        "item_quantity": parsed.item_quantity,
-                        "target_player_id": parsed.target_player_id,
-                        "target_player_name": parsed.target_player_name,
-                        "admin_id": parsed.admin_id,
-                        "admin_name": parsed.admin_name,
-                        "warning_count": parsed.warning_count,
-                        "reason": parsed.reason,
-                    })
+                    updates_to_apply.append(
+                        {
+                            "id": action["id"],
+                            "new_type": new_type,
+                            "player_id": parsed.player_id,
+                            "player_name": parsed.player_name,
+                            "action_detail": parsed.action_detail,
+                            "item_name": parsed.item_name,
+                            "item_quantity": parsed.item_quantity,
+                            "target_player_id": parsed.target_player_id,
+                            "target_player_name": parsed.target_player_name,
+                            "admin_id": parsed.admin_id,
+                            "admin_name": parsed.admin_name,
+                            "warning_count": parsed.warning_count,
+                            "reason": parsed.reason,
+                        }
+                    )
 
                 except Exception as e:
                     logger.error(f"Error re-parsing action {action.get('id')}: {e}")
@@ -4748,11 +4877,13 @@ def setup_commands(bot, db, scraper_getter):
 
             # Apply updates if not dry run
             if not dry_run and updates_to_apply:
+
                 def _apply_updates():
                     with db.get_connection() as conn:
                         cursor = conn.cursor()
                         for update in updates_to_apply:
-                            cursor.execute("""
+                            cursor.execute(
+                                """
                                 UPDATE actions
                                 SET action_type = ?,
                                     player_id = ?,
@@ -4767,27 +4898,31 @@ def setup_commands(bot, db, scraper_getter):
                                     warning_count = ?,
                                     reason = ?
                                 WHERE id = ?
-                            """, (
-                                update["new_type"],
-                                update["player_id"],
-                                update["player_name"],
-                                update["action_detail"],
-                                update["item_name"],
-                                update["item_quantity"],
-                                update["target_player_id"],
-                                update["target_player_name"],
-                                update["admin_id"],
-                                update["admin_name"],
-                                update["warning_count"],
-                                update["reason"],
-                                update["id"],
-                            ))
+                            """,
+                                (
+                                    update["new_type"],
+                                    update["player_id"],
+                                    update["player_name"],
+                                    update["action_detail"],
+                                    update["item_name"],
+                                    update["item_quantity"],
+                                    update["target_player_id"],
+                                    update["target_player_name"],
+                                    update["admin_id"],
+                                    update["admin_name"],
+                                    update["warning_count"],
+                                    update["reason"],
+                                    update["id"],
+                                ),
+                            )
                         conn.commit()
 
                 await asyncio.to_thread(_apply_updates)
 
             # Build result embed
-            recognition_rate = (re_parsed_count / len(unknown_actions) * 100) if unknown_actions else 0
+            recognition_rate = (
+                (re_parsed_count / len(unknown_actions) * 100) if unknown_actions else 0
+            )
 
             if dry_run:
                 embed = discord.Embed(
@@ -4815,19 +4950,23 @@ def setup_commands(bot, db, scraper_getter):
                     color=discord.Color.green(),
                     timestamp=datetime.now(),
                 )
-                logger.info(f"🔄 Admin {interaction.user} re-parsed {re_parsed_count:,} unknown actions")
+                logger.info(
+                    f"🔄 Admin {interaction.user} re-parsed {re_parsed_count:,} unknown actions"
+                )
 
             # Show breakdown by new type
             if by_new_type:
-                type_breakdown = "\n".join([
-                    f"• **{action_type}**: {count:,}"
-                    for action_type, count in sorted(by_new_type.items(), key=lambda x: x[1], reverse=True)
-                ][:10])  # Show top 10
-                
+                type_breakdown = "\n".join(
+                    [
+                        f"• **{action_type}**: {count:,}"
+                        for action_type, count in sorted(
+                            by_new_type.items(), key=lambda x: x[1], reverse=True
+                        )
+                    ][:10]
+                )  # Show top 10
+
                 embed.add_field(
-                    name="📊 Re-categorized By Type",
-                    value=type_breakdown,
-                    inline=False
+                    name="📊 Re-categorized By Type", value=type_breakdown, inline=False
                 )
 
             embed.set_footer(

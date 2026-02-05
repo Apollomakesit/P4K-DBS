@@ -3,6 +3,7 @@
 
 import re
 
+
 def test_pattern(name, pattern, text):
     match = re.search(pattern, text, re.IGNORECASE)
     if match:
@@ -11,6 +12,7 @@ def test_pattern(name, pattern, text):
     else:
         print(f"❌ {name}")
         return False
+
 
 test_text = "Jucatorul[email protected](137592) a depozitat suma de 61.000.000$ (taxa 610.000$)."
 
@@ -30,6 +32,5 @@ test_pattern("Email part (no brackets)", r"[^\s(]+@[^\s(]+", test_text_no_bracke
 print(f"\nCharacter analysis of bracket area:")
 bracket_start = test_text.find("[")
 bracket_end = test_text.find("]")
-print(f"Bracket content bytes: {test_text[bracket_start:bracket_end+1]}"       )
+print(f"Bracket content bytes: {test_text[bracket_start:bracket_end+1]}")
 print(f"Repr: {repr(test_text[bracket_start:bracket_end+1])}")
-

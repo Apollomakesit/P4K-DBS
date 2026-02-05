@@ -245,13 +245,17 @@ class UnknownActionsReparser:
                         logger.info(
                             f"✅ Re-parsed: {update_data['old_type']} → {update_data['new_type']}"
                         )
-                        logger.info(f"   Detail: {update_data['action_detail'][:80]}...")
+                        logger.info(
+                            f"   Detail: {update_data['action_detail'][:80]}..."
+                        )
                 else:
                     self.stats["still_unknown"] += 1
 
             # Apply updates if not dry run
             if not dry_run and updates_to_apply:
-                logger.info(f"\n🔄 Applying {len(updates_to_apply)} updates to database...")
+                logger.info(
+                    f"\n🔄 Applying {len(updates_to_apply)} updates to database..."
+                )
 
                 for update_data in updates_to_apply:
                     await self.update_action_in_db(update_data)
