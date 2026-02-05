@@ -979,9 +979,9 @@ class Pro4KingsScraper:
         # REGULAR PATTERNS: "Jucatorul Name(ID)" format
         # ============================================================================
         
-        # 🔥 PATTERN 1: Money deposit - "a depozitat suma de X$ (taxa Y$)"
+        # 🔥 PATTERN 1: Money deposit - "a depozitat suma de X$ (taxa Y$)" (now handles "(de)" in amount)
         deposit_match = re.search(
-            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\$\s*\(taxa\s+([\d.,]+)\$\)",
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
             text, re.IGNORECASE
         )
         if deposit_match:
@@ -996,9 +996,9 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 2: Money withdrawal - "a retras suma de X$ (taxa Y$)"
+        # 🔥 PATTERN 2: Money withdrawal - "a retras suma de X$ (taxa Y$)" (now handles "(de)" in amount)
         withdraw_match = re.search(
-            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\$\s*\(taxa\s+([\d.,]+)\$\)",
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
             text, re.IGNORECASE
         )
         if withdraw_match:
@@ -1013,9 +1013,9 @@ class Pro4KingsScraper:
                 raw_text=text,
             )
         
-        # 🔥 PATTERN 3: Money transfer - "ia transferat suma de X$ lui Player(ID)"
+        # 🔥 PATTERN 3: Money transfer - "ia transferat suma de X$ lui Player(ID)" (now handles "(de)" in amount)
         transfer_match = re.search(
-            r"Jucatorul\s+([^(]+)\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*\$?\s*lui\s+([^(]+)\((\d+)\)",
+            r"Jucatorul\s+([^(]+)\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s+([^(]+)\((\d+)\)",
             text, re.IGNORECASE
         )
         if transfer_match:
@@ -1029,6 +1029,59 @@ class Pro4KingsScraper:
                 timestamp=timestamp,
                 raw_text=text,
             )
+        
+        # 🔥 ID-ONLY DEPOSIT PATTERN: "Jucatorul (ID) a depozitat..." with no name
+        # Example: "Jucatorul (221001) a depozitat suma de 2.781.647$ (taxa 27.816$)."
+        deposit_idonly = re.search(
+            r"Jucatorul\s+\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
+            text, re.IGNORECASE
+        )
+        if deposit_idonly:
+            return PlayerAction(
+                player_id=deposit_idonly.group(1),
+                player_name=None,
+                action_type="money_deposit",
+                action_detail=f"Depozitat {deposit_idonly.group(2)}$ (taxa {deposit_idonly.group(3)}$)",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 FLEXIBLE PATTERN FOR DEPOSIT: Handles names with spaces/tags/parentheses like "sasuke (192)"
+        # Example: "Jucatorul sasuke (192)(209261) a depozitat suma de 131.000.000$ (taxa 1.310.000$)."
+        deposit_flexible = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
+            text, re.IGNORECASE
+        )
+        if deposit_flexible:
+            amount = deposit_flexible.group(3)
+            tax = deposit_flexible.group(4)
+            return PlayerAction(
+                player_id=deposit_flexible.group(2),
+                player_name=deposit_flexible.group(1).strip(),
+                action_type="money_deposit",
+                action_detail=f"Depozitat {amount}$ (taxa {tax}$)",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 FLEXIBLE PATTERN FOR WITHDRAWAL: Handles names with spaces/tags/parentheses
+        # Example: "Jucatorul Some Name (tag)(123) a retras suma de X$ (taxa Y$)."
+        withdraw_flexible = re.search(
+            r"Jucatorul\s+(.+?)\((\d+)\)\s+a\s+retras\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
+            text, re.IGNORECASE
+        )
+        if withdraw_flexible:
+            amount = withdraw_flexible.group(3)
+            tax = withdraw_flexible.group(4)
+            return PlayerAction(
+                player_id=withdraw_flexible.group(2),
+                player_name=withdraw_flexible.group(1).strip(),
+                action_type="money_withdraw",
+                action_detail=f"Retras {amount}$ (taxa {tax}$)",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
         
         # 🔥 PATTERN 4: Chest deposit - "a pus in chest(id X), Nx Item"
         chest_deposit_match = re.search(
@@ -1638,7 +1691,7 @@ class Pro4KingsScraper:
             return PlayerAction(
                 player_id=warning_removal_match.group(4),
                 player_name=warning_removal_match.group(3).strip(),
-                action_type="other",  # Warning removal is not a standard action type
+                action_type="warning_removed",
                 action_detail=f"Avertisment scos de {warning_removal_match.group(1).strip()}",
                 admin_id=warning_removal_match.group(2),
                 admin_name=warning_removal_match.group(1).strip(),
@@ -1648,18 +1701,20 @@ class Pro4KingsScraper:
         
         # 🔥 NEW PATTERN E: Money transfer with fancy names (tags in parens) - NO "Jucatorul" prefix
         # Example: "King pt voi ! (fotomodelu) (218539) ia transferat suma de 500.000 (de) $ lui Alina (126059) [IN MANA]"
+        # Handles both with space and without space after "lui" for email-like targets
         transfer_fancy_name = re.search(
-            r"^(.+?)\s+\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s+(.+?)\s*\((\d+)\)",
+            r"^(.+?)\s+\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s*([^\s(]+(?:\s+[^(]*)?|[^\s(]+@[^\s(]+)\s*\((\d+)\)",
             text, re.IGNORECASE
         )
         if transfer_fancy_name:
+            target_name = transfer_fancy_name.group(4).strip()
             return PlayerAction(
                 player_id=transfer_fancy_name.group(2),
                 player_name=transfer_fancy_name.group(1).strip(),
                 action_type="money_transfer",
-                action_detail=f"Transferat {transfer_fancy_name.group(3)}$ lui {transfer_fancy_name.group(4).strip()}",
+                action_detail=f"Transferat {transfer_fancy_name.group(3)}$ lui {target_name}",
                 target_player_id=transfer_fancy_name.group(5),
-                target_player_name=transfer_fancy_name.group(4).strip(),
+                target_player_name=target_name,
                 timestamp=timestamp,
                 raw_text=text,
             )
@@ -1683,25 +1738,8 @@ class Pro4KingsScraper:
             )
         
         # ============================================================================
-        # FALLBACK PATTERNS
+        # FALLBACK PATTERNS - Moved to end so specific patterns are checked first
         # ============================================================================
-        
-        # 🔥 PATTERN 31: Any "Jucatorul" action not matched above - use GREEDY name match
-        # Changed from [^(]+ to .+ to handle names with parentheses like "King pt voi ! (tag)"
-        generic_match = re.search(
-            r"Jucatorul\s+(.+)\((\d+)\)\s+(.+?)(?:\.|$)",
-            text, re.IGNORECASE
-        )
-        if generic_match:
-            action_text = generic_match.group(3).strip()
-            return PlayerAction(
-                player_id=generic_match.group(2),
-                player_name=generic_match.group(1).strip(),
-                action_type="other",
-                action_detail=action_text[:200],
-                timestamp=timestamp,
-                raw_text=text,
-            )
         
         # 🔥 NEW PATTERN F: Contract with email-like names - handles "email@domain(ID)" format
         # Example: "Contract[email protected](137592) Mihai(137922). ('137592' [Bravado Harger 69, ], '137922' [])"
@@ -1754,19 +1792,21 @@ class Pro4KingsScraper:
             )
         
         # 🔥 NEW PATTERN I: Money transfer with email-like username
+        # Handles both bracketed [email@protected] and normal email@protected formats
         # Example: "Mihai (137922) ia transferat suma de 7.500.000 (de) $ lui[email protected](137592) [IN MANA]"
         transfer_email_target = re.search(
-            r"^(.+?)\s+\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s*([^\s(]+@[^\s(]+)\((\d+)\)",
+            r"^(.+?)\s+\((\d+)\)\s+i?a\s+transferat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$?\s*lui\s*(\[[^\]]+\]|[^\s(]+@[^\s(]+)\s*\((\d+)\)",
             text, re.IGNORECASE
         )
         if transfer_email_target:
+            email_name = transfer_email_target.group(4).strip('[]')  # Remove brackets if present
             return PlayerAction(
                 player_id=transfer_email_target.group(2),
                 player_name=transfer_email_target.group(1).strip(),
                 action_type="money_transfer",
-                action_detail=f"Transferat {transfer_email_target.group(3)}$ lui {transfer_email_target.group(4)}",
+                action_detail=f"Transferat {transfer_email_target.group(3)}$ lui {email_name}",
                 target_player_id=transfer_email_target.group(5),
-                target_player_name=transfer_email_target.group(4),
+                target_player_name=email_name,
                 timestamp=timestamp,
                 raw_text=text,
             )
@@ -1914,6 +1954,102 @@ class Pro4KingsScraper:
                 action_detail=f"Trade cu {player2_name}",
                 target_player_id=player2_id,
                 target_player_name=player2_name,
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # This pattern is now handled by the improved transfer_fancy_name pattern above
+        
+        # 🔥 NEW PATTERN Q: Deposit with email-style username (no space before parenthesis)
+        # Handles both bracketed [email@protected] and normal email@protected formats
+        # Example: "Jucatorul[email protected](137592) a depozitat suma de 61.000.000$ (taxa 610.000$)."
+        deposit_email_nospace = re.search(
+            r"Jucatorul\s*(\[[^\]]+\]|[^\s(]+@[^\s(]+)\((\d+)\)\s+a\s+depozitat\s+suma\s+de\s+([\d.,]+)\s*(?:\(de\))?\s*\$\s*\(taxa\s+([\d.,]+)\$\)",
+            text, re.IGNORECASE
+        )
+        if deposit_email_nospace:
+            email_name = deposit_email_nospace.group(1).strip('[]')  # Remove brackets if present
+            return PlayerAction(
+                player_id=deposit_email_nospace.group(2),
+                player_name=email_name,
+                action_type="money_deposit",
+                action_detail=f"Depozitat {deposit_email_nospace.group(3)}$ (taxa {deposit_email_nospace.group(4)}$)",
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN R: Contract with email-style player name (simpler approach)
+        # Handles both: "Contract[email protected](ID) Name(ID)" and "Contract Name(ID)[email@domain](ID)"
+        #  Also handles bracketed [email@domain], normal email@domain, and regular names
+        # Example: "Contract[email protected](137592) Mihai(137922)." or "Contract Mihai(137922)[email protected](137592)."
+        contract_email_simple = re.search(
+            r"Contract\s*(.+?)\((\d+)\)\s*(\[[^\]]+\]|[^\s(]+@[^\s(]+|[\w\s]+)?\s*\((\d+)\)",
+            text, re.IGNORECASE
+        )
+        if contract_email_simple:
+            player1_name = contract_email_simple.group(1).strip().strip('[]') if contract_email_simple.group(1) else None
+            player1_id = contract_email_simple.group(2)
+            player2_name_or_email = contract_email_simple.group(3)
+            player2_id = contract_email_simple.group(4)
+            
+            # If player2_name_or_email is None, it might be just "(ID)" after player1
+            if player2_name_or_email:
+                player2_name = player2_name_or_email.strip().strip('[]')
+            else:
+                player2_name = None
+            
+            return PlayerAction(
+                player_id=player1_id,
+                player_name=player1_name,
+                action_type="vehicle_contract",
+                action_detail=f"Contract cu {player2_name or 'ID:'+player2_id}: Vehicle transfer",
+                target_player_id=player2_id,
+                target_player_name=player2_name,
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 NEW PATTERN S: Contract with ID-only first player
+        # Example: "Contract (131960) Crissu(168172). ('131960' [Issi Weeny XC, ], '168172' [])"
+        contract_idonly_first = re.search(
+            r"Contract\s+\((\d+)\)\s+(.+?)\((\d+)\)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if contract_idonly_first:
+            # Extract exchange details if present
+            exchange_detail = ""
+            exchange_match = re.findall(r"'(\d+)'\s*\[([^\]]*)\]", text)
+            if exchange_match and contract_idonly_first.group(1) in [ex[0] for ex in exchange_match]:
+                for ex_id, ex_items in exchange_match:
+                    if ex_id == contract_idonly_first.group(1):
+                        exchange_detail = f"Gave: {ex_items.strip().rstrip(', ')}"
+                        break
+            
+            return PlayerAction(
+                player_id=contract_idonly_first.group(1),
+                player_name=None,
+                action_type="vehicle_contract",
+                action_detail=f"Contract cu {contract_idonly_first.group(2).strip()}: {exchange_detail or 'Vehicle transfer'}",
+                target_player_id=contract_idonly_first.group(3),
+                target_player_name=contract_idonly_first.group(2).strip(),
+                timestamp=timestamp,
+                raw_text=text,
+            )
+        
+        # 🔥 PATTERN 31: Any "Jucatorul" action not matched above - use GREEDY name match
+        # This is now placed AFTER all specific patterns so they have priority
+        # Changed from [^(]+ to .+ to handle names with parentheses like "King pt voi ! (tag)"
+        generic_match = re.search(
+            r"Jucatorul\s+(.+)\((\d+)\)\s+(.+?)(?:\.|$)",
+            text, re.IGNORECASE
+        )
+        if generic_match:
+            action_text = generic_match.group(3).strip()
+            return PlayerAction(
+                player_id=generic_match.group(2),
+                player_name=generic_match.group(1).strip(),
+                action_type="other",
+                action_detail=action_text[:200],
                 timestamp=timestamp,
                 raw_text=text,
             )
